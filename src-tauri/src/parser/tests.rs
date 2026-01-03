@@ -1,0 +1,377 @@
+use super::ast::Node;
+use super::compiler::{Compiler, CompilerConfig};
+use super::lexer::Lexer;
+use super::wordtokenizer::WordTokenizer;
+
+// ============================================================================
+// Lexer Tests
+// ============================================================================
+
+#[test]
+fn test_lexer_plain_text() {
+    let mut lexer = Lexer::new("hello world");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Text(t) if t == "hello world"));
+}
+
+#[test]
+fn test_lexer_line_break_simple() {
+    // Note: // consumes following non-whitespace as line number
+    let mut lexer = Lexer::new("hello// world");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 3);
+    assert!(matches!(&doc.nodes[0], Node::Text(t) if t == "hello"));
+    assert!(matches!(&doc.nodes[1], Node::LineBreak(None)));
+    assert!(matches!(&doc.nodes[2], Node::Text(t) if t == " world"));
+}
+
+#[test]
+fn test_lexer_line_break_with_number() {
+    let mut lexer = Lexer::new("hello//5 world");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 3);
+    assert!(matches!(&doc.nodes[1], Node::LineBreak(Some(n)) if n == "5"));
+}
+
+#[test]
+fn test_lexer_page_break() {
+    let mut lexer = Lexer::new("hello///1r world");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 3);
+    assert!(matches!(&doc.nodes[1], Node::PageBreak(n) if n == "1r"));
+}
+
+#[test]
+fn test_lexer_abbreviation() {
+    let mut lexer = Lexer::new(".abbr[dr]{doctor}");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Abbreviation { abbr, expansion } if abbr == "dr" && expansion == "doctor"));
+}
+
+#[test]
+fn test_lexer_gap_without_quantity() {
+    let mut lexer = Lexer::new("[...]");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Gap { quantity: None }));
+}
+
+#[test]
+fn test_lexer_gap_with_quantity() {
+    let mut lexer = Lexer::new("[...3]");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Gap { quantity: Some(3) }));
+}
+
+#[test]
+fn test_lexer_supplied() {
+    let mut lexer = Lexer::new("<missing>");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Supplied(t) if t == "missing"));
+}
+
+#[test]
+fn test_lexer_deletion() {
+    let mut lexer = Lexer::new("-{removed}-");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Deletion(t) if t == "removed"));
+}
+
+#[test]
+fn test_lexer_addition() {
+    let mut lexer = Lexer::new("+{added}+");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Addition(t) if t == "added"));
+}
+
+#[test]
+fn test_lexer_note() {
+    let mut lexer = Lexer::new("^{margin note}");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Note(t) if t == "margin note"));
+}
+
+#[test]
+fn test_lexer_unclear() {
+    let mut lexer = Lexer::new("?{illegible}?");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Unclear(t) if t == "illegible"));
+}
+
+#[test]
+fn test_lexer_entity() {
+    let mut lexer = Lexer::new(":thorn:");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Entity(name) if name == "thorn"));
+}
+
+#[test]
+fn test_lexer_word_continuation() {
+    // Note: ~// consumes following non-whitespace as line number
+    let mut lexer = Lexer::new("hel~// lo");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 4);
+    assert!(matches!(&doc.nodes[0], Node::Text(t) if t == "hel"));
+    assert!(matches!(&doc.nodes[1], Node::WordContinuation));
+    assert!(matches!(&doc.nodes[2], Node::LineBreak(None)));
+    assert!(matches!(&doc.nodes[3], Node::Text(t) if t == " lo"));
+}
+
+#[test]
+fn test_lexer_word_boundary() {
+    let mut lexer = Lexer::new("word1|word2");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 3);
+    assert!(matches!(&doc.nodes[1], Node::WordBoundary));
+}
+
+#[test]
+fn test_lexer_complex_input() {
+    let input = "//1 :eth:is is .abbr[a]{abbrev} test// with [...] gaps";
+    let mut lexer = Lexer::new(input);
+    let doc = lexer.parse().unwrap();
+    // Should have: LineBreak, Entity, Text, Abbreviation, Text, LineBreak, Text, Gap, Text
+    assert!(doc.nodes.len() >= 5);
+}
+
+// ============================================================================
+// Word Tokenizer Tests
+// ============================================================================
+
+#[test]
+fn test_word_tokenizer_simple_words() {
+    let tokenizer = WordTokenizer::new();
+    let nodes = vec![Node::Text("hello world".to_string())];
+    let result = tokenizer.tokenize(nodes);
+
+    // Should produce 2 Word nodes
+    assert_eq!(result.len(), 2);
+    assert!(matches!(&result[0], Node::Word(_)));
+    assert!(matches!(&result[1], Node::Word(_)));
+}
+
+#[test]
+fn test_word_tokenizer_punctuation() {
+    let tokenizer = WordTokenizer::new();
+    let nodes = vec![Node::Text("hello, world.".to_string())];
+    let result = tokenizer.tokenize(nodes);
+
+    // Should produce: Word(hello), Punctuation(,), Word(world), Punctuation(.)
+    assert_eq!(result.len(), 4);
+    assert!(matches!(&result[0], Node::Word(_)));
+    assert!(matches!(&result[1], Node::Punctuation(_)));
+    assert!(matches!(&result[2], Node::Word(_)));
+    assert!(matches!(&result[3], Node::Punctuation(_)));
+}
+
+#[test]
+fn test_word_tokenizer_with_line_break() {
+    let tokenizer = WordTokenizer::new();
+    let nodes = vec![
+        Node::Text("hello".to_string()),
+        Node::LineBreak(None),
+        Node::Text(" world".to_string()),
+    ];
+    let result = tokenizer.tokenize(nodes);
+
+    // "hello" + LineBreak in one word (heuristic), then "world" in another
+    // Result: Word(hello, LineBreak), Word(world)
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_word_tokenizer_explicit_continuation() {
+    let tokenizer = WordTokenizer::new();
+    let nodes = vec![
+        Node::Text("hel".to_string()),
+        Node::WordContinuation,
+        Node::LineBreak(None),
+        Node::Text("lo".to_string()),
+    ];
+    let result = tokenizer.tokenize(nodes);
+
+    // Should produce one word containing all parts
+    assert_eq!(result.len(), 1);
+    assert!(matches!(&result[0], Node::Word(children) if children.len() >= 2));
+}
+
+// ============================================================================
+// Compiler Tests
+// ============================================================================
+
+#[test]
+fn test_compiler_plain_text() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("hello world").unwrap();
+    assert_eq!(result, "hello world");
+}
+
+#[test]
+fn test_compiler_line_break() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("hello// world").unwrap();
+    assert!(result.contains("<lb/>\n"));
+}
+
+#[test]
+fn test_compiler_line_break_with_number() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("hello//5 world").unwrap();
+    assert!(result.contains("<lb n=\"5\"/>"));
+}
+
+#[test]
+fn test_compiler_auto_line_numbers() {
+    let config = CompilerConfig {
+        word_wrap: false,
+        auto_line_numbers: true,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+    let result = compiler.compile("line1// line2// line3").unwrap();
+    assert!(result.contains("<lb n=\"1\"/>"));
+    assert!(result.contains("<lb n=\"2\"/>"));
+}
+
+#[test]
+fn test_compiler_page_break() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("hello///1r world").unwrap();
+    assert!(result.contains("<pb n=\"1r\"/>"));
+}
+
+#[test]
+fn test_compiler_abbreviation() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile(".abbr[dr]{doctor}").unwrap();
+    assert!(result.contains("<choice><abbr>dr</abbr><expan>doctor</expan></choice>"));
+}
+
+#[test]
+fn test_compiler_gap() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("[...3]").unwrap();
+    assert!(result.contains("<gap reason=\"illegible\" quantity=\"3\" unit=\"chars\"/>"));
+}
+
+#[test]
+fn test_compiler_supplied() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("<missing>").unwrap();
+    assert!(result.contains("<supplied>missing</supplied>"));
+}
+
+#[test]
+fn test_compiler_deletion() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("-{removed}-").unwrap();
+    assert!(result.contains("<del>removed</del>"));
+}
+
+#[test]
+fn test_compiler_addition() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("+{added}+").unwrap();
+    assert!(result.contains("<add>added</add>"));
+}
+
+#[test]
+fn test_compiler_note() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("^{note}").unwrap();
+    assert!(result.contains("<note>note</note>"));
+}
+
+#[test]
+fn test_compiler_unclear() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("?{unclear}?").unwrap();
+    assert!(result.contains("<unclear>unclear</unclear>"));
+}
+
+#[test]
+fn test_compiler_entity() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile(":thorn:").unwrap();
+    assert_eq!(result, "&thorn;");
+}
+
+#[test]
+fn test_compiler_word_wrap() {
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+    let result = compiler.compile("hello world").unwrap();
+    assert!(result.contains("<w>hello</w>"));
+    assert!(result.contains("<w>world</w>"));
+}
+
+#[test]
+fn test_compiler_punctuation_wrap() {
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+    let result = compiler.compile("hello, world.").unwrap();
+    assert!(result.contains("<w>hello</w>"));
+    assert!(result.contains("<pc>,</pc>"));
+    assert!(result.contains("<w>world</w>"));
+    assert!(result.contains("<pc>.</pc>"));
+}
+
+#[test]
+fn test_compiler_xml_escaping() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("<a & b>").unwrap();
+    // The <a & b> should be parsed as supplied text, so inner & is escaped
+    assert!(result.contains("&amp;"));
+}
+
+#[test]
+fn test_compiler_newlines_in_output() {
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+    let result = compiler.compile("hello world").unwrap();
+    // Each <w> should be followed by newline
+    assert!(result.contains("</w>\n"));
+}
+
+// ============================================================================
+// Integration Tests
+// ============================================================================
+
+#[test]
+fn test_full_pipeline_menota_style() {
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: true,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+
+    let input = "//1 :eth:at is .abbr[go:d:]{good}// word";
+    let result = compiler.compile(input).unwrap();
+
+    // Should have line breaks with numbers
+    assert!(result.contains("<lb n=\"1\"/>"));
+    assert!(result.contains("<lb n=\"2\"/>"));
+    // Should have entity reference
+    assert!(result.contains("&eth;"));
+    // Should have abbreviation
+    assert!(result.contains("<choice>"));
+    // Should have word wrapping
+    assert!(result.contains("<w>"));
+}
