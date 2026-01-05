@@ -93,7 +93,7 @@ tei-scribe/
 - **Built-in templates:** `src-tauri/src/template/manager.rs`
 - **Main UI:** `src/routes/+page.svelte`
 - **Editor component:** `src/lib/components/Editor.svelte`
-- **Syntax highlighting:** `src/lib/parser/highlighter.ts`
+- **Syntax highlighting:** `src/lib/parser/highlighter.ts`, `src/lib/parser/tei-dsl.grammar`
 
 ## Current Implementation Status
 
@@ -107,11 +107,10 @@ tei-scribe/
 - File I/O (open, save, export)
 - Split-pane UI with CodeMirror editor
 - Entity browser with search/filter and category selection
-- Syntax highlighting (stream-based)
+- Syntax highlighting (Lezer grammar-based)
 - Auto-preview with debounce
 
 **Not Yet Implemented:**
-- Full Lezer grammar for syntax highlighting
 - Settings/template persistence
 - Multi-level transcription (`<me:facs>`, `<me:dipl>`, `<me:norm>`)
 - User documentation

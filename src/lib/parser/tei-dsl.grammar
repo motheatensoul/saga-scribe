@@ -1,0 +1,155 @@
+// TEI-DSL Lezer Grammar
+// Syntax highlighting grammar for manuscript transcription DSL
+
+@top Document { element* }
+
+element {
+  WordContinuationPageBreak |
+  WordContinuationLineBreak |
+  PageBreak |
+  LineBreak |
+  Abbreviation |
+  Gap |
+  Supplied |
+  Deletion |
+  Addition |
+  Note |
+  Unclear |
+  Entity |
+  WordBoundary |
+  Text
+}
+
+// Word continuation must come before regular breaks (longer match first)
+WordContinuationPageBreak { wordContinuationPageBreak }
+WordContinuationLineBreak { wordContinuationLineBreak }
+
+PageBreak { pageBreak }
+LineBreak { lineBreak }
+
+// .abbr[abbreviated]{expansion}
+Abbreviation { abbrKeyword BracketContent BraceContent }
+
+// [...] or [...n] for gaps/lacunae
+Gap { gap }
+
+// <supplied text>
+Supplied { suppliedOpen SuppliedContent suppliedClose }
+SuppliedContent { suppliedContent }
+
+// -{deleted text}-
+Deletion { deletionOpen DeletionContent deletionClose }
+DeletionContent { bracedContent }
+
+// +{added text}+
+Addition { additionOpen AdditionContent additionClose }
+AdditionContent { bracedContent }
+
+// ^{note text}
+Note { noteOpen NoteContent noteClose }
+NoteContent { bracedContent }
+
+// ?{unclear text}?
+Unclear { unclearOpen UnclearContent unclearClose }
+UnclearContent { bracedContent }
+
+// :entity_name:
+Entity { entity }
+
+// | word boundary marker
+WordBoundary { wordBoundary }
+
+// Plain text (anything else)
+Text { text }
+
+// Bracket/brace content for abbreviations
+BracketContent { bracketContent }
+BraceContent { braceContent }
+
+@tokens {
+  // Word continuation + page/line break (must be before regular breaks)
+  // Note: line break patterns must NOT match a third / to avoid conflict with page breaks
+  wordContinuationPageBreak { "~///" ![ \t\n\r]* }
+  wordContinuationLineBreak { "~//" ![/ \t\n\r]* }
+
+  // Page break: /// followed by page number (non-whitespace)
+  pageBreak { "///" ![ \t\n\r]* }
+
+  // Line break: // optionally followed by line number (but not a third /)
+  lineBreak { "//" ![/ \t\n\r]* }
+
+  // Abbreviation keyword
+  abbrKeyword { ".abbr" }
+
+  // Bracket content for abbreviation [...]
+  bracketContent { "[" ![}\]]* "]" }
+
+  // Brace content for abbreviation {...}
+  braceContent { "{" ![}\]]* "}" }
+
+  // Gap: [...] or [...n]
+  gap { "[..." $[0-9]* "]" }
+
+  // Supplied: <...>
+  suppliedOpen { "<" }
+  suppliedClose { ">" }
+  suppliedContent { ![<>]+ }
+
+  // Deletion: -{...}-
+  deletionOpen { "-{" }
+  deletionClose { "}-" }
+
+  // Addition: +{...}+
+  additionOpen { "+{" }
+  additionClose { "}+" }
+
+  // Note: ^{...}
+  noteOpen { "^{" }
+  noteClose { "}" }
+
+  // Unclear: ?{...}?
+  unclearOpen { "?{" }
+  unclearClose { "}?" }
+
+  // Braced content (for deletion, addition, note, unclear)
+  bracedContent { ![}]+ }
+
+  // Entity reference :name:
+  entity { ":" $[a-zA-Z0-9_]+ ":" }
+
+  // Word boundary
+  wordBoundary { "|" }
+
+  // Plain text - everything else except special starting chars
+  // Each alternative handles a special char that doesn't start its construct
+  text {
+    ![/<\-+^?:|~\[.]+ |  // Normal text (no special chars)
+    "." ![a] | "." |     // Period (not before 'a' for .abbr, or at end)
+    "/" ![/] |           // Slash not followed by another slash
+    "~" ![/] |           // Tilde not followed by slashes
+    "-" ![{] |           // Dash not followed by brace
+    "+" ![{] |           // Plus not followed by brace
+    "?" ![{] |           // Question mark not followed by brace
+    ":" ![a-zA-Z0-9_] |  // Colon not followed by entity name char
+    "[" ![.]             // Bracket not followed by period (for gap)
+  }
+
+  @precedence {
+    wordContinuationPageBreak,
+    wordContinuationLineBreak,
+    pageBreak,
+    lineBreak,
+    gap,
+    abbrKeyword,
+    entity,
+    deletionOpen,
+    additionOpen,
+    noteOpen,
+    unclearOpen,
+    suppliedOpen,
+    wordBoundary,
+    text
+  }
+}
+
+@detectDelim

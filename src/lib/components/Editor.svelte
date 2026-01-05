@@ -4,7 +4,7 @@
     import { EditorState } from '@codemirror/state';
     import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
     import { editor } from '$lib/stores/editor';
-    import { teiDslLanguage, teiDslHighlighting } from '$lib/parser/highlighter';
+    import { teiDsl, teiDslHighlighting } from '$lib/parser/highlighter';
 
     let { onchange }: { onchange?: (content: string) => void } = $props();
 
@@ -19,7 +19,7 @@
                 highlightActiveLineGutter(),
                 history(),
                 keymap.of([...defaultKeymap, ...historyKeymap]),
-                teiDslLanguage,
+                teiDsl,
                 teiDslHighlighting,
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {

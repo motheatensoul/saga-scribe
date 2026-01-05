@@ -4,8 +4,9 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
-		"dev": "vite dev",
-		"build": "vite build",
+		"build:grammar": "lezer-generator src/lib/parser/tei-dsl.grammar -o src/lib/parser/tei-dsl-parser.js",
+		"dev": "bun run build:grammar && vite dev",
+		"build": "bun run build:grammar && vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -15,6 +16,7 @@
 		"tauri:build": "tauri build"
 	},
 	"devDependencies": {
+		"@lezer/generator": "^1.8.0",
 		"@sveltejs/adapter-auto": "^7.0.0",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.49.1",
@@ -31,6 +33,7 @@
 		"@codemirror/state": "^6.5.3",
 		"@codemirror/view": "^6.39.8",
 		"@lezer/highlight": "^1.2.3",
+		"@lezer/lr": "^1.4.6",
 		"@tauri-apps/api": "^2.9.1",
 		"@tauri-apps/plugin-dialog": "^2.4.2",
 		"@tauri-apps/plugin-fs": "^2.4.4",

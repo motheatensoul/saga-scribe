@@ -1,9 +1,10 @@
-import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+import { HighlightStyle, syntaxHighlighting, LRLanguage, LanguageSupport } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
-import { StreamLanguage } from '@codemirror/language';
+import { styleTags } from '@lezer/highlight';
+import { parser } from './tei-dsl-parser.js';
 
 /**
- * TEI-DSL syntax tokens for custom highlighting
+ * TEI-DSL syntax highlighting styles
  */
 export const teiDslHighlightStyle = HighlightStyle.define([
     // Keywords/commands like .abbr
@@ -26,112 +27,75 @@ export const teiDslHighlightStyle = HighlightStyle.define([
     { tag: tags.atom, color: '#005cc5', fontWeight: 'bold' },
     // Word markers ~ |
     { tag: tags.separator, color: '#6f42c1', fontWeight: 'bold' },
+    // Gap [...]
+    { tag: tags.special(tags.string), color: '#6f42c1', fontStyle: 'italic' },
 ]);
 
 /**
- * Simple stream-based parser for TEI-DSL syntax highlighting
- * A full Lezer grammar would be better for production use
+ * Configure the parser with syntax highlighting tags
  */
-const teiDslParser = StreamLanguage.define({
-    token(stream) {
-        // Page break ///
-        if (stream.match('///')) {
-            stream.eatWhile(/[^\s]/);
-            return 'processingInstruction';
-        }
+const parserWithMetadata = parser.configure({
+    props: [
+        styleTags({
+            // Breaks and continuations
+            PageBreak: tags.processingInstruction,
+            LineBreak: tags.processingInstruction,
+            WordContinuationPageBreak: tags.separator,
+            WordContinuationLineBreak: tags.separator,
 
-        // Line break //
-        if (stream.match('//')) {
-            return 'processingInstruction';
-        }
+            // Abbreviation
+            'Abbreviation/...': tags.keyword,
+            BracketContent: tags.string,
+            BraceContent: tags.string,
 
-        // Abbreviation .abbr[...]{...}
-        if (stream.match('.abbr')) {
-            return 'keyword';
-        }
+            // Gap
+            Gap: tags.special(tags.string),
 
-        // Gap [...] or [...n]
-        if (stream.match('[...')) {
-            stream.eatWhile(/[0-9]/);
-            stream.eat(']');
-            return 'processingInstruction';
-        }
+            // Supplied
+            Supplied: tags.inserted,
+            SuppliedContent: tags.inserted,
 
-        // Note ^{...}
-        if (stream.match('^{')) {
-            stream.eatWhile(/[^}]/);
-            stream.eat('}');
-            return 'comment';
-        }
+            // Deletion
+            Deletion: tags.deleted,
+            DeletionContent: tags.deleted,
 
-        // Unclear ?{...}?
-        if (stream.match('?{')) {
-            stream.eatWhile(/[^}]/);
-            stream.eat('}');
-            stream.eat('?');
-            return 'emphasis';
-        }
+            // Addition
+            Addition: tags.changed,
+            AdditionContent: tags.changed,
 
-        // Deletion -{...}-
-        if (stream.match('-{')) {
-            stream.eatWhile(/[^}]/);
-            stream.eat('}');
-            stream.eat('-');
-            return 'deleted';
-        }
+            // Note
+            Note: tags.comment,
+            NoteContent: tags.comment,
 
-        // Addition +{...}+
-        if (stream.match('+{')) {
-            stream.eatWhile(/[^}]/);
-            stream.eat('}');
-            stream.eat('+');
-            return 'changed';
-        }
+            // Unclear
+            Unclear: tags.emphasis,
+            UnclearContent: tags.emphasis,
 
-        // Supplied <...>
-        if (stream.eat('<')) {
-            stream.eatWhile(/[^>]/);
-            stream.eat('>');
-            return 'inserted';
-        }
+            // Entity
+            Entity: tags.atom,
 
-        // Bracket content
-        if (stream.eat('[') || stream.eat('{')) {
-            stream.eatWhile(/[^\]\}]/);
-            stream.eat(/[\]\}]/);
-            return 'string';
-        }
+            // Word boundary
+            WordBoundary: tags.separator,
+        }),
+    ],
+});
 
-        // Entity :name:
-        if (stream.eat(':')) {
-            if (stream.eatWhile(/[a-zA-Z0-9_]/)) {
-                if (stream.eat(':')) {
-                    return 'atom';
-                }
-            }
-            // Not a valid entity, backtrack effect handled by returning null
-            return null;
-        }
-
-        // Word continuation ~// or ~///
-        if (stream.match('~///')) {
-            stream.eatWhile(/[^\s]/);
-            return 'separator';
-        }
-        if (stream.match('~//')) {
-            return 'separator';
-        }
-
-        // Word boundary |
-        if (stream.eat('|')) {
-            return 'separator';
-        }
-
-        // Regular text
-        stream.next();
-        return null;
+/**
+ * TEI-DSL language definition using Lezer parser
+ */
+export const teiDslLanguage = LRLanguage.define({
+    parser: parserWithMetadata,
+    languageData: {
+        commentTokens: { block: { open: '^{', close: '}' } },
     },
 });
 
-export const teiDslLanguage = teiDslParser;
+/**
+ * Full language support including the parser and highlighting
+ */
+export const teiDsl = new LanguageSupport(teiDslLanguage);
+
+/**
+ * Syntax highlighting extension
+ */
 export const teiDslHighlighting = syntaxHighlighting(teiDslHighlightStyle);
