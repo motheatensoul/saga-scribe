@@ -8,6 +8,7 @@ export interface Template {
     footer: string;
     wordWrap: boolean;
     autoLineNumbers: boolean;
+    multiLevel: boolean;
 }
 
 function createTemplateStore() {

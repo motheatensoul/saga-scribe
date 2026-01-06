@@ -12,7 +12,7 @@
     import { entityStore } from '$lib/stores/entities';
     import { settings } from '$lib/stores/settings';
     import { errorStore, errorCounts } from '$lib/stores/errors';
-    import { listTemplates, compileDsl, loadEntities } from '$lib/tauri';
+    import { listTemplates, compileDsl, loadEntities, loadTextFile } from '$lib/tauri';
     import { resolveResource, appDataDir } from '@tauri-apps/api/path';
 
     let editorComponent: Editor;
@@ -22,18 +22,41 @@
     let showErrorPanel = $state(false);
     let compileTimeout: ReturnType<typeof setTimeout>;
     let entitiesJson = $state<string | null>(null);
+    let normalizerJson = $state<string | null>(null);
 
     onMount(async () => {
         errorStore.info('App', 'Application starting...');
+
+        // Load settings first
+        try {
+            errorStore.info('Settings', 'Loading settings...');
+            await settings.load();
+            errorStore.info('Settings', 'Settings loaded');
+        } catch (e) {
+            errorStore.error('Settings', 'Failed to load settings', String(e));
+        }
 
         // Load templates
         try {
             errorStore.info('Templates', 'Loading templates...');
             const templates = await listTemplates();
             templateStore.setTemplates(templates);
-            if (templates.length > 0) {
-                templateStore.setActive(templates[0]);
+
+            // Try to restore the previously active template
+            const savedTemplateId = $settings.activeTemplateId;
+            let activeTemplate = savedTemplateId
+                ? templates.find((t) => t.id === savedTemplateId)
+                : null;
+
+            // Fall back to first template if saved one not found
+            if (!activeTemplate && templates.length > 0) {
+                activeTemplate = templates[0];
             }
+
+            if (activeTemplate) {
+                templateStore.setActive(activeTemplate);
+            }
+
             errorStore.info('Templates', `Loaded ${templates.length} templates`);
         } catch (e) {
             errorStore.error('Templates', 'Failed to load templates', String(e));
@@ -76,6 +99,29 @@
             entityStore.setError('Could not find entity definitions file');
         }
 
+        // Load normalizer dictionary for multi-level transcription
+        const normalizerResourcePath = await resolveResource('normalizer/menota-levels.json');
+        const normalizerDevPath = normalizerResourcePath.replace(
+            /src-tauri\/target\/[^/]+\/normalizer\/menota-levels\.json$/,
+            'static/normalizer/menota-levels.json'
+        );
+        const normalizerPaths = [normalizerResourcePath, normalizerDevPath];
+
+        for (const path of normalizerPaths) {
+            try {
+                errorStore.info('Normalizer', `Trying to load from: ${path}`);
+                normalizerJson = await loadTextFile(path);
+                errorStore.info('Normalizer', `Loaded normalizer dictionary from ${path}`);
+                break;
+            } catch (e) {
+                errorStore.warning('Normalizer', `Failed to load from ${path}`, String(e));
+            }
+        }
+
+        if (!normalizerJson) {
+            errorStore.warning('Normalizer', 'Could not load normalizer dictionary - multi-level output may not work correctly');
+        }
+
         errorStore.info('App', 'Application ready');
     });
 
@@ -94,7 +140,9 @@
                         {
                             wordWrap: template.wordWrap,
                             autoLineNumbers: template.autoLineNumbers,
+                            multiLevel: template.multiLevel,
                             entitiesJson: entitiesJson ?? undefined,
+                            normalizerJson: normalizerJson ?? undefined,
                         }
                     );
                 } catch (e) {

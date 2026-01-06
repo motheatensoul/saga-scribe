@@ -21,6 +21,8 @@ The project uses a custom domain-specific language as shorthand, which is compil
 | `///n` | `<pb n="n"/>` | Page break (n = page number) |
 | `.abbr[abbr]{expansion}` | `<choice><abbr>abbr</abbr><expan>expansion</expan></choice>` | Abbreviation |
 | `[...]` or `[...n]` | `<gap reason="illegible" quantity="n" unit="chars"/>` | Gap/lacuna |
+| `[...<text>]` | `<gap/><supplied>text</supplied>` | Gap with supplied reading |
+| `[...n<text>]` | `<gap quantity="n"/><supplied>text</supplied>` | Gap with quantity and supplied |
 | `<text>` | `<supplied>text</supplied>` | Supplied/reconstructed text |
 | `-{text}-` | `<del>text</del>` | Deletion |
 | `+{text}+` | `<add>text</add>` | Addition |
@@ -46,5 +48,9 @@ and
 This project is licensed under [GPL-v3-or-later](LICENSE).
 
 See [LICENSES](static/fonts/LICENSES.md) for further licenses of used fonts.
+
+## AI Assistance
+
+This project is developed with assistance from [Claude Code](https://claude.com/claude-code). AI-assisted commits are attributed with the `Co-Authored-By: Claude` tag.
 
 Made with love in Norway.

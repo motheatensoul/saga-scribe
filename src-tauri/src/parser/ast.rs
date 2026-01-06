@@ -11,9 +11,12 @@ pub enum Node {
     PageBreak(String),
     /// Abbreviation with expansion: .abbr[abbr]{expansion}
     Abbreviation { abbr: String, expansion: String },
-    /// Gap/lacuna: [...] or [...n]
-    Gap { quantity: Option<u32> },
-    /// Supplied text: <text>
+    /// Gap/lacuna: [...] or [...n] or [...<text>] or [...n<text>]
+    Gap {
+        quantity: Option<u32>,
+        supplied: Option<String>,
+    },
+    /// Supplied text (standalone): <text>
     Supplied(String),
     /// Deletion: -{text}-
     Deletion(String),

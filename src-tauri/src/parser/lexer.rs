@@ -52,13 +52,20 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
-            // Gap: [...] or [...n]
+            // Gap: [...] or [...n] or [...<text>] or [...n<text>]
             if remaining.starts_with("[...") {
                 self.flush_text(&mut doc, &mut text_buf);
                 self.pos += 4;
                 let quantity = self.parse_optional_number();
+                // Check for optional supplied text: <text>
+                let supplied = if self.current_char() == Some('<') {
+                    self.advance(); // skip '<'
+                    Some(self.consume_until('>')?)
+                } else {
+                    None
+                };
                 self.expect(']')?;
-                doc.push(Node::Gap { quantity });
+                doc.push(Node::Gap { quantity, supplied });
                 continue;
             }
 
@@ -153,7 +160,7 @@ impl<'a> Lexer<'a> {
 
             // Regular character
             text_buf.push(self.current_char().unwrap());
-            self.pos += 1;
+            self.advance();
         }
 
         self.flush_text(&mut doc, &mut text_buf);
@@ -170,13 +177,20 @@ impl<'a> Lexer<'a> {
         self.input[self.pos..].chars().next()
     }
 
+    /// Advance position by one character, handling multi-byte UTF-8 correctly
+    fn advance(&mut self) {
+        if let Some(c) = self.current_char() {
+            self.pos += c.len_utf8();
+        }
+    }
+
     fn consume_until_whitespace(&mut self) -> String {
         let start = self.pos;
         while self.pos < self.input.len() {
             if self.current_char().map_or(true, |c| c.is_whitespace()) {
                 break;
             }
-            self.pos += 1;
+            self.advance();
         }
         self.input[start..self.pos].to_string()
     }
@@ -190,13 +204,13 @@ impl<'a> Lexer<'a> {
                 depth -= 1;
                 if depth == 0 {
                     let result = self.input[start..self.pos].to_string();
-                    self.pos += 1;
+                    self.advance();
                     return Ok(result);
                 }
             } else if c == '{' || c == '[' || c == '<' {
                 depth += 1;
             }
-            self.pos += 1;
+            self.advance();
         }
         Err(format!("Unclosed bracket, expected '{}'", end))
     }
@@ -206,17 +220,17 @@ impl<'a> Lexer<'a> {
         while self.pos < self.input.len() {
             if self.current_char() == Some(end) {
                 let result = self.input[start..self.pos].to_string();
-                self.pos += 1;
+                self.advance();
                 return Ok(result);
             }
-            self.pos += 1;
+            self.advance();
         }
         Err(format!("Expected '{}'", end))
     }
 
     fn expect(&mut self, c: char) -> Result<(), String> {
         if self.current_char() == Some(c) {
-            self.pos += 1;
+            self.advance();
             Ok(())
         } else {
             Err(format!(
@@ -233,7 +247,7 @@ impl<'a> Lexer<'a> {
             if !self.current_char().map_or(false, |c| c.is_ascii_digit()) {
                 break;
             }
-            self.pos += 1;
+            self.advance();
         }
         if start == self.pos {
             None
@@ -251,14 +265,14 @@ impl<'a> Lexer<'a> {
         if self.current_char() != Some(':') {
             return None;
         }
-        self.pos += 1;
+        self.advance();
 
         // Collect entity name (alphanumeric + underscore)
         let name_start = self.pos;
         while self.pos < self.input.len() {
             match self.current_char() {
                 Some(c) if c.is_alphanumeric() || c == '_' => {
-                    self.pos += 1;
+                    self.advance();
                 }
                 _ => break,
             }
@@ -277,7 +291,7 @@ impl<'a> Lexer<'a> {
         }
 
         let name = self.input[name_start..self.pos].to_string();
-        self.pos += 1; // consume closing colon
+        self.advance(); // consume closing colon
 
         Some(name)
     }

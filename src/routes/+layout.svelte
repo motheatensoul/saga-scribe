@@ -12,9 +12,7 @@
 	/* Junicode font for MUFI/MENOTA character support */
 	@font-face {
 		font-family: 'Junicode';
-		src: url('/fonts/Junicode.woff2') format('woff2'),
-			 url('/fonts/Junicode.woff') format('woff'),
-			 url('/fonts/Junicode.ttf') format('truetype');
+		src: url('/fonts/Junicode.woff2') format('woff2');
 		font-weight: normal;
 		font-style: normal;
 		font-display: swap;
@@ -22,19 +20,7 @@
 
 	@font-face {
 		font-family: 'Junicode';
-		src: url('/fonts/Junicode-Bold.woff2') format('woff2'),
-			 url('/fonts/Junicode-Bold.woff') format('woff'),
-			 url('/fonts/Junicode-Bold.ttf') format('truetype');
-		font-weight: bold;
-		font-style: normal;
-		font-display: swap;
-	}
-
-	@font-face {
-		font-family: 'Junicode';
-		src: url('/fonts/Junicode-Italic.woff2') format('woff2'),
-			 url('/fonts/Junicode-Italic.woff') format('woff'),
-			 url('/fonts/Junicode-Italic.ttf') format('truetype');
+		src: url('/fonts/JunicodeVF-Italic.woff2') format('woff2');
 		font-weight: normal;
 		font-style: italic;
 		font-display: swap;

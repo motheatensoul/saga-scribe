@@ -39,9 +39,11 @@ tei-scribe/
 │   │   ├── parser/               # lexer.rs, ast.rs, compiler.rs, wordtokenizer.rs
 │   │   ├── commands/             # Tauri commands: parse, template, file, entities
 │   │   ├── template/manager.rs   # Template system with built-in TEI P5 & MENOTA
+│   │   ├── normalizer/           # Level dictionary for multi-level transcription
 │   │   └── entities/registry.rs  # Entity lookup system
 │   └── tauri.conf.json
-└── static/entities/menota.json   # ~1,980 MENOTA/MUFI character entities
+├── static/entities/menota.json   # ~1,980 MENOTA/MUFI character entities
+└── static/normalizer/menota-levels.json  # Multi-level derivation mappings
 ```
 
 ## DSL Syntax Reference
@@ -53,6 +55,8 @@ tei-scribe/
 | `///n` | `<pb n="n"/>` | Page break (n = page number) |
 | `.abbr[abbr]{expansion}` | `<choice><abbr>abbr</abbr><expan>expansion</expan></choice>` | Abbreviation |
 | `[...]` or `[...n]` | `<gap reason="illegible" quantity="n" unit="chars"/>` | Gap/lacuna |
+| `[...<text>]` | `<gap/><supplied>text</supplied>` | Gap with supplied reading |
+| `[...n<text>]` | `<gap quantity="n"/><supplied>text</supplied>` | Gap with quantity and supplied |
 | `<text>` | `<supplied>text</supplied>` | Supplied/reconstructed text |
 | `-{text}-` | `<del>text</del>` | Deletion |
 | `+{text}+` | `<add>text</add>` | Addition |
@@ -68,6 +72,13 @@ tei-scribe/
 - Punctuation (`.,:;!?()[]`) is wrapped in `<pc>` tags
 - Each `<w>` and `<pc>` tag is followed by a newline for readability
 
+**Multi-Level Transcription (MENOTA, when enabled):**
+- Each `<w>` and `<pc>` contains three nested levels: `<me:facs>`, `<me:dipl>`, `<me:norm>`
+- **Facsimile level:** Shows entity references and abbreviated forms
+- **Diplomatic level:** Resolves entities to characters, expands abbreviations, removes combining marks
+- **Normalized level:** Applies character normalization (e.g., long s → s, ligatures expanded)
+- Old Norse characters (ð, þ, æ) are preserved on all levels
+
 ## Parsing Pipeline
 
 1. **Lexer** (`lexer.rs`): Tokenizes DSL → AST nodes
@@ -78,10 +89,11 @@ tei-scribe/
 
 | Command | Purpose |
 |---------|---------|
-| `compile_dsl` | Compile DSL to TEI-XML |
+| `compile_dsl` | Compile DSL to TEI-XML (with multiLevel and normalizerJson options) |
 | `list_templates` / `get_template` / `save_template` | Template CRUD |
-| `open_file` / `save_file` / `export_tei` | File operations |
+| `open_file` / `save_file` / `export_tei` / `load_text_file` | File operations |
 | `load_entities` / `get_entity` / `list_entity_names` | Entity system |
+| `load_settings` / `save_settings` | Settings persistence |
 
 ## Key Files for Common Tasks
 
@@ -90,6 +102,8 @@ tei-scribe/
 - **Word tokenization:** `src-tauri/src/parser/wordtokenizer.rs`
 - **AST node types:** `src-tauri/src/parser/ast.rs`
 - **Entity definitions:** `static/entities/menota.json`
+- **Normalizer dictionary:** `static/normalizer/menota-levels.json`
+- **Level dictionary logic:** `src-tauri/src/normalizer/dictionary.rs`
 - **Built-in templates:** `src-tauri/src/template/manager.rs`
 - **Main UI:** `src/routes/+page.svelte`
 - **Editor component:** `src/lib/components/Editor.svelte`
@@ -103,16 +117,17 @@ tei-scribe/
 - Punctuation tokenization with `<pc>` tag wrapping
 - Line numbering: manual (`//5`) and automatic (template option)
 - Entity system with MENOTA/MUFI support (~1,980 chars) - outputs as `&entity;`
-- Template system (TEI P5, MENOTA built-in) with wordWrap and autoLineNumbers options
+- Template system (TEI P5, MENOTA built-in) with wordWrap, autoLineNumbers, and multiLevel options
+- Multi-level MENOTA transcription (`<me:facs>`, `<me:dipl>`, `<me:norm>`)
+- Gap with supplied text syntax: `[...<text>]` and `[...n<text>]`
 - File I/O (open, save, export)
 - Split-pane UI with CodeMirror editor
 - Entity browser with search/filter and category selection
 - Syntax highlighting (Lezer grammar-based)
 - Auto-preview with debounce
+- Settings persistence (fontSize, theme, autoPreview, previewDelay, activeTemplateId)
 
 **Not Yet Implemented:**
-- Settings/template persistence
-- Multi-level transcription (`<me:facs>`, `<me:dipl>`, `<me:norm>`)
 - User documentation
 
 ## Testing
@@ -122,7 +137,7 @@ Run Rust tests with:
 cd src-tauri && cargo test
 ```
 
-38 tests cover the parser, lexer, word tokenizer, and compiler.
+51 tests cover the parser, lexer, word tokenizer, compiler, normalizer, and multi-level features.
 
 ## Debugging
 
@@ -140,9 +155,8 @@ The app uses **Junicode** for rendering MUFI (Medieval Unicode Font Initiative) 
 - **Location:** `static/fonts/`
 
 To set up fonts, download Junicode and place the following files in `static/fonts/`:
-- `Junicode.woff2` (or .woff/.ttf)
-- `Junicode-Bold.woff2` (optional)
-- `Junicode-Italic.woff2` (optional)
+- `Junicode.woff2` (required - regular weight)
+- `JunicodeVF-Italic.woff2` (optional - italic variant)
 
 ## Development Commands
 

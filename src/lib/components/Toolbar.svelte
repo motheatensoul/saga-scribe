@@ -2,6 +2,7 @@
     import { open, save } from '@tauri-apps/plugin-dialog';
     import { editor, fileName } from '$lib/stores/editor';
     import { templateStore } from '$lib/stores/template';
+    import { settings } from '$lib/stores/settings';
     import { openFile, saveFile, exportTei, listTemplates, compileDsl } from '$lib/tauri';
 
     let {
@@ -67,6 +68,7 @@
         const template = templates.find((t) => t.id === select.value);
         if (template) {
             templateStore.setActive(template);
+            settings.update({ activeTemplateId: template.id });
         }
     }
 </script>
@@ -81,7 +83,7 @@
     <div class="toolbar-group">
         <label>
             Template:
-            <select onchange={handleTemplateChange}>
+            <select onchange={handleTemplateChange} value={$templateStore.active?.id ?? ''}>
                 {#each $templateStore.templates as template}
                     <option value={template.id}>{template.name}</option>
                 {/each}

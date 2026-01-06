@@ -15,6 +15,8 @@ pub struct Template {
     pub word_wrap: bool,
     #[serde(default)]
     pub auto_line_numbers: bool,
+    #[serde(default)]
+    pub multi_level: bool,
 }
 
 pub struct TemplateManager {
@@ -104,6 +106,7 @@ impl TemplateManager {
                 .to_string(),
             word_wrap: false,
             auto_line_numbers: false,
+            multi_level: false,
         }
     }
 
@@ -149,6 +152,7 @@ impl TemplateManager {
                 .to_string(),
             word_wrap: true,
             auto_line_numbers: true,
+            multi_level: true,
         }
     }
 }

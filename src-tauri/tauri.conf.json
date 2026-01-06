@@ -36,7 +36,8 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../static/entities/*"
+      "../static/entities/*",
+      "../static/normalizer/*"
     ]
   }
 }

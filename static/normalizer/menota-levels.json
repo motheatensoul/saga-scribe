@@ -1,0 +1,76 @@
+{
+  "version": "1.0",
+  "description": "MENOTA multi-level transcription derivation mappings for Old Norse",
+
+  "diplomatic": {
+    "description": "Transformations from facsimile to diplomatic level",
+    "rules": {
+      "expand_abbreviations": true,
+      "remove_combining_marks": true,
+      "resolve_entities": true
+    },
+    "combining_marks": [
+      "combgrave",
+      "combacute",
+      "combcirc",
+      "combtilde",
+      "combmacr",
+      "combbreve",
+      "combdot",
+      "combuml",
+      "combhook",
+      "combring",
+      "combdblac",
+      "combsgvertl",
+      "combdbvertl",
+      "combcomma",
+      "combdotbl",
+      "combced",
+      "combogon",
+      "combtildevert",
+      "combastbl",
+      "combdblbrevebl",
+      "combdbltilde"
+    ]
+  },
+
+  "normalized": {
+    "description": "Transformations from diplomatic to normalized level",
+    "rules": {
+      "standardize_characters": true
+    },
+    "character_mappings": {
+      "ſ": "s",
+      "ꝑ": "p",
+      "ꝓ": "k",
+      "ꝗ": "q",
+      "ꝙ": "q",
+      "ꝛ": "r",
+      "ꝝ": "r",
+      "ꝟ": "v",
+      "ꝡ": "v",
+      "ƿ": "w",
+      "ꝥ": "þ",
+      "ꝧ": "þ",
+      "ȝ": "g",
+      "Ƿ": "W",
+      "Ꝥ": "Þ"
+    },
+    "ligature_expansions": {
+      "æ": "æ",
+      "œ": "œ",
+      "Æ": "Æ",
+      "Œ": "Œ",
+      "ﬀ": "ff",
+      "ﬁ": "fi",
+      "ﬂ": "fl",
+      "ﬃ": "ffi",
+      "ﬄ": "ffl"
+    }
+  },
+
+  "preserved_characters": {
+    "description": "Characters preserved across all levels (Old Norse)",
+    "list": ["ð", "þ", "æ", "ø", "å", "Ð", "Þ", "Æ", "Ø", "Å"]
+  }
+}

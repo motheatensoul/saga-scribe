@@ -21,6 +21,7 @@
             footer: '',
             wordWrap: false,
             autoLineNumbers: false,
+            multiLevel: false,
         };
         isCreating = true;
     }
@@ -75,6 +76,10 @@
             <label class="checkbox-label">
                 <input type="checkbox" bind:checked={editingTemplate.autoLineNumbers} />
                 Automatic line numbering (&lt;lb n="..."&gt;)
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" bind:checked={editingTemplate.multiLevel} />
+                Multi-level output (MENOTA me:facs/me:dipl/me:norm)
             </label>
             <div class="form-actions">
                 <button onclick={handleCancel}>Cancel</button>

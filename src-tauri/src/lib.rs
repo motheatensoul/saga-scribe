@@ -1,6 +1,8 @@
 mod commands;
 pub mod entities;
+mod normalizer;
 mod parser;
+mod settings;
 mod template;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,9 +24,12 @@ pub fn run() {
             commands::file::open_file,
             commands::file::save_file,
             commands::file::export_tei,
+            commands::file::load_text_file,
             commands::template::list_templates,
             commands::template::get_template,
             commands::template::save_template,
+            commands::settings::load_settings,
+            commands::settings::save_settings,
             commands::parse::compile_dsl,
             commands::entities::load_entities,
             commands::entities::get_entity,

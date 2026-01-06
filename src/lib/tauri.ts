@@ -2,6 +2,22 @@ import { invoke } from '@tauri-apps/api/core';
 import type { Template } from './stores/template';
 import type { Entity, EntityMap } from './stores/entities';
 
+export interface Settings {
+    fontSize: number;
+    theme: string;
+    autoPreview: boolean;
+    previewDelay: number;
+    activeTemplateId: string | null;
+}
+
+export async function loadSettings(): Promise<Settings> {
+    return invoke('load_settings');
+}
+
+export async function saveSettings(settings: Settings): Promise<void> {
+    return invoke('save_settings', { settings });
+}
+
 export interface FileContent {
     path: string;
     content: string;
@@ -19,6 +35,10 @@ export async function exportTei(path: string, teiContent: string): Promise<void>
     return invoke('export_tei', { path, teiContent });
 }
 
+export async function loadTextFile(path: string): Promise<string> {
+    return invoke('load_text_file', { path });
+}
+
 export async function listTemplates(): Promise<Template[]> {
     return invoke('list_templates');
 }
@@ -34,7 +54,9 @@ export async function saveTemplate(template: Template): Promise<void> {
 export interface CompileOptions {
     wordWrap?: boolean;
     autoLineNumbers?: boolean;
+    multiLevel?: boolean;
     entitiesJson?: string;
+    normalizerJson?: string;
 }
 
 export async function compileDsl(
@@ -49,7 +71,9 @@ export async function compileDsl(
         templateFooter,
         wordWrap: options?.wordWrap ?? false,
         autoLineNumbers: options?.autoLineNumbers ?? false,
+        multiLevel: options?.multiLevel ?? false,
         entitiesJson: options?.entitiesJson ?? null,
+        normalizerJson: options?.normalizerJson ?? null,
     });
 }
 

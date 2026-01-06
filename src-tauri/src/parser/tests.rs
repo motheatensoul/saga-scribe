@@ -55,7 +55,7 @@ fn test_lexer_gap_without_quantity() {
     let mut lexer = Lexer::new("[...]");
     let doc = lexer.parse().unwrap();
     assert_eq!(doc.nodes.len(), 1);
-    assert!(matches!(&doc.nodes[0], Node::Gap { quantity: None }));
+    assert!(matches!(&doc.nodes[0], Node::Gap { quantity: None, supplied: None }));
 }
 
 #[test]
@@ -63,7 +63,7 @@ fn test_lexer_gap_with_quantity() {
     let mut lexer = Lexer::new("[...3]");
     let doc = lexer.parse().unwrap();
     assert_eq!(doc.nodes.len(), 1);
-    assert!(matches!(&doc.nodes[0], Node::Gap { quantity: Some(3) }));
+    assert!(matches!(&doc.nodes[0], Node::Gap { quantity: Some(3), supplied: None }));
 }
 
 #[test]
@@ -141,6 +141,33 @@ fn test_lexer_complex_input() {
     let doc = lexer.parse().unwrap();
     // Should have: LineBreak, Entity, Text, Abbreviation, Text, LineBreak, Text, Gap, Text
     assert!(doc.nodes.len() >= 5);
+}
+
+#[test]
+fn test_lexer_utf8_characters() {
+    // Test that multi-byte UTF-8 characters don't cause panics
+    let mut lexer = Lexer::new("Þörður með öðrum");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Text(t) if t == "Þörður með öðrum"));
+}
+
+#[test]
+fn test_lexer_utf8_with_constructs() {
+    // Test UTF-8 mixed with DSL constructs
+    let mut lexer = Lexer::new("hér er .abbr[skáld]{skáldskapur} og <ævintýri>");
+    let doc = lexer.parse().unwrap();
+    assert!(doc.nodes.len() >= 4); // Text, Abbreviation, Text, Supplied
+    assert!(matches!(&doc.nodes[0], Node::Text(t) if t == "hér er "));
+}
+
+#[test]
+fn test_lexer_utf8_in_brackets() {
+    // Test UTF-8 inside bracketed content
+    let mut lexer = Lexer::new(".abbr[þ]{þorn}");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Abbreviation { abbr, expansion } if abbr == "þ" && expansion == "þorn"));
 }
 
 // ============================================================================
@@ -234,6 +261,7 @@ fn test_compiler_auto_line_numbers() {
     let config = CompilerConfig {
         word_wrap: false,
         auto_line_numbers: true,
+        multi_level: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("line1// line2// line3").unwrap();
@@ -309,6 +337,7 @@ fn test_compiler_word_wrap() {
     let config = CompilerConfig {
         word_wrap: true,
         auto_line_numbers: false,
+        multi_level: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello world").unwrap();
@@ -321,6 +350,7 @@ fn test_compiler_punctuation_wrap() {
     let config = CompilerConfig {
         word_wrap: true,
         auto_line_numbers: false,
+        multi_level: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello, world.").unwrap();
@@ -343,6 +373,7 @@ fn test_compiler_newlines_in_output() {
     let config = CompilerConfig {
         word_wrap: true,
         auto_line_numbers: false,
+        multi_level: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello world").unwrap();
@@ -359,6 +390,7 @@ fn test_full_pipeline_menota_style() {
     let config = CompilerConfig {
         word_wrap: true,
         auto_line_numbers: true,
+        multi_level: false,
     };
     let mut compiler = Compiler::new().with_config(config);
 
@@ -374,4 +406,110 @@ fn test_full_pipeline_menota_style() {
     assert!(result.contains("<choice>"));
     // Should have word wrapping
     assert!(result.contains("<w>"));
+}
+
+// ============================================================================
+// Multi-Level Tests
+// ============================================================================
+
+#[test]
+fn test_lexer_gap_with_supplied() {
+    let mut lexer = Lexer::new("[...<missing>]");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Gap { quantity: None, supplied: Some(s) } if s == "missing"));
+}
+
+#[test]
+fn test_lexer_gap_with_quantity_and_supplied() {
+    let mut lexer = Lexer::new("[...3<abc>]");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Gap { quantity: Some(3), supplied: Some(s) } if s == "abc"));
+}
+
+#[test]
+fn test_compiler_gap_with_supplied() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("[...<text>]").unwrap();
+    assert!(result.contains("<gap reason=\"illegible\"/>"));
+    assert!(result.contains("<supplied>text</supplied>"));
+}
+
+#[test]
+fn test_compiler_gap_with_quantity_and_supplied() {
+    let mut compiler = Compiler::new();
+    let result = compiler.compile("[...5<lost>]").unwrap();
+    assert!(result.contains("<gap reason=\"illegible\" quantity=\"5\" unit=\"chars\"/>"));
+    assert!(result.contains("<supplied>lost</supplied>"));
+}
+
+#[test]
+fn test_compiler_multi_level_word() {
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+    let result = compiler.compile("hello").unwrap();
+
+    // Should have nested levels inside <w>
+    assert!(result.contains("<w>"));
+    assert!(result.contains("<me:facs>"));
+    assert!(result.contains("<me:dipl>"));
+    assert!(result.contains("<me:norm>"));
+    assert!(result.contains("</w>"));
+}
+
+#[test]
+fn test_compiler_multi_level_punctuation() {
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+    let result = compiler.compile(",").unwrap();
+
+    // Should have nested levels inside <pc>
+    assert!(result.contains("<pc>"));
+    assert!(result.contains("<me:facs>"));
+    assert!(result.contains("<me:dipl>"));
+    assert!(result.contains("<me:norm>"));
+    assert!(result.contains("</pc>"));
+}
+
+#[test]
+fn test_compiler_multi_level_abbreviation() {
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+    let result = compiler.compile(".abbr[dr]{doctor}").unwrap();
+
+    // Facsimile shows abbreviated form
+    assert!(result.contains("<me:facs>dr</me:facs>"));
+    // Diplomatic and normalized show expansion
+    assert!(result.contains("<me:dipl>doctor</me:dipl>"));
+    assert!(result.contains("<me:norm>doctor</me:norm>"));
+}
+
+#[test]
+fn test_compiler_multi_level_entity() {
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+    let result = compiler.compile(":eth:").unwrap();
+
+    // Facsimile shows entity reference
+    assert!(result.contains("<me:facs>&eth;</me:facs>"));
+    // Without entities registry, diplomatic and normalized fall back to entity reference
+    assert!(result.contains("<me:dipl>&eth;</me:dipl>"));
+    assert!(result.contains("<me:norm>&eth;</me:norm>"));
 }
