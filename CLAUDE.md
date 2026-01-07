@@ -43,7 +43,8 @@ tei-scribe/
 │   │   └── entities/registry.rs  # Entity lookup system
 │   └── tauri.conf.json
 ├── static/entities/menota.json   # ~1,980 MENOTA/MUFI character entities
-└── static/normalizer/menota-levels.json  # Multi-level derivation mappings
+├── static/normalizer/menota-levels.json  # Multi-level derivation mappings
+└── static/normalizer/entity-base-letters.json  # Diplomatic normalization mappings
 ```
 
 ## DSL Syntax Reference
@@ -79,6 +80,16 @@ tei-scribe/
 - **Normalized level:** Applies character normalization (e.g., long s → s, ligatures expanded)
 - Old Norse characters (ð, þ, æ) are preserved on all levels
 
+**Diplomatic Normalization Rules:**
+Entity mappings in `entity-base-letters.json` follow Old Norse diplomatic conventions:
+- **Preserve:** Old Norse letters (ð, þ, æ, œ, ø), diacritics (acute, macron, umlaut, ogonek, cedilla, ring)
+- **Normalize to acute:** grave → acute, double acute → single acute
+- **Strip:** circumflex, tilde, breve, dot above/below, caron
+- **Normalize forms:** Special letter forms (long s → s, open o → o, insular/rotunda → base letter)
+- **Ligatures:** Meaningful (æ, œ) preserved; orthographic (ff, st) expanded to components
+
+Users can override any mapping via the Entity Browser's custom mapping editor.
+
 ## Parsing Pipeline
 
 1. **Lexer** (`lexer.rs`): Tokenizes DSL → AST nodes
@@ -93,6 +104,7 @@ tei-scribe/
 | `list_templates` / `get_template` / `save_template` | Template CRUD |
 | `open_file` / `save_file` / `export_tei` / `load_text_file` | File operations |
 | `load_entities` / `get_entity` / `list_entity_names` | Entity system |
+| `load_custom_mappings` / `save_entity_mapping` / `remove_entity_mapping` | Custom entity mappings |
 | `load_settings` / `save_settings` | Settings persistence |
 
 ## Key Files for Common Tasks
@@ -102,8 +114,11 @@ tei-scribe/
 - **Word tokenization:** `src-tauri/src/parser/wordtokenizer.rs`
 - **AST node types:** `src-tauri/src/parser/ast.rs`
 - **Entity definitions:** `static/entities/menota.json`
+- **Entity base mappings:** `static/normalizer/entity-base-letters.json`
+- **Custom mappings manager:** `src-tauri/src/entities/custom_mappings.rs`
 - **Normalizer dictionary:** `static/normalizer/menota-levels.json`
 - **Level dictionary logic:** `src-tauri/src/normalizer/dictionary.rs`
+- **Mapping generator script:** `scripts/generate-entity-mappings.js`
 - **Built-in templates:** `src-tauri/src/template/manager.rs`
 - **Main UI:** `src/routes/+page.svelte`
 - **Editor component:** `src/lib/components/Editor.svelte`
@@ -122,7 +137,8 @@ tei-scribe/
 - Gap with supplied text syntax: `[...<text>]` and `[...n<text>]`
 - File I/O (open, save, export)
 - Split-pane UI with CodeMirror editor
-- Entity browser with search/filter and category selection
+- Entity browser with search/filter, category selection, and custom mapping editor
+- Custom entity mappings with diplomatic normalization defaults (persisted to app data)
 - Syntax highlighting (Lezer grammar-based)
 - Auto-preview with debounce
 - Settings persistence (fontSize, theme, autoPreview, previewDelay, activeTemplateId)

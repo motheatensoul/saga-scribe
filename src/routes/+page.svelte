@@ -12,7 +12,7 @@
     import { entityStore } from '$lib/stores/entities';
     import { settings } from '$lib/stores/settings';
     import { errorStore, errorCounts } from '$lib/stores/errors';
-    import { listTemplates, compileDsl, loadEntities, loadTextFile } from '$lib/tauri';
+    import { listTemplates, compileDsl, loadEntities, loadTextFile, loadCustomMappings } from '$lib/tauri';
     import { resolveResource, appDataDir } from '@tauri-apps/api/path';
 
     let editorComponent: Editor;
@@ -94,6 +94,41 @@
             errorStore.info('Entities', `Loaded ${entityCount} entities from ${loadedFrom}`);
             entityStore.setEntities(entities);
             entitiesJson = JSON.stringify({ version: '1.0', name: 'MENOTA', entities });
+
+            // Load base entity mappings (diplomatic normalization defaults)
+            const baseMappingsResourcePath = await resolveResource('normalizer/entity-base-letters.json');
+            const baseMappingsDevPath = baseMappingsResourcePath.replace(
+                /src-tauri\/target\/[^/]+\/normalizer\/entity-base-letters\.json$/,
+                'static/normalizer/entity-base-letters.json'
+            );
+            const baseMappingsPaths = [baseMappingsResourcePath, baseMappingsDevPath];
+
+            for (const path of baseMappingsPaths) {
+                try {
+                    errorStore.info('Entities', `Trying to load base mappings from: ${path}`);
+                    const baseMappingsText = await loadTextFile(path);
+                    const baseMappingsData = JSON.parse(baseMappingsText);
+                    const mappings = baseMappingsData.mappings || {};
+                    const mappingsCount = Object.keys(mappings).length;
+                    errorStore.info('Entities', `Loaded ${mappingsCount} base entity mappings from ${path}`);
+                    entityStore.setBaseMappings(mappings);
+                    break;
+                } catch (e) {
+                    errorStore.warning('Entities', `Failed to load base mappings from ${path}`, String(e));
+                }
+            }
+
+            // Load custom entity mappings (user overrides)
+            try {
+                const customMappings = await loadCustomMappings();
+                const customCount = Object.keys(customMappings).length;
+                if (customCount > 0) {
+                    errorStore.info('Entities', `Loaded ${customCount} custom entity mappings`);
+                    entityStore.setCustomMappings(customMappings);
+                }
+            } catch (e) {
+                errorStore.warning('Entities', 'Failed to load custom mappings', String(e));
+            }
         } else {
             errorStore.error('Entities', 'Failed to load entities from any path');
             entityStore.setError('Could not find entity definitions file');
@@ -171,7 +206,7 @@
     <Toolbar onopen={handleOpen} />
 
     <div class="flex-1 overflow-hidden">
-        <Splitpanes>
+        <Splitpanes theme="themed">
             <Pane minSize={20}>
                 <div class="flex flex-col h-full">
                     <div class="flex justify-between items-center px-4 py-2 bg-base-200 border-b border-base-300 font-medium text-sm">
@@ -249,26 +284,32 @@
 </div>
 
 <style>
-    :global(.splitpanes) {
+    /* Splitpanes with custom theme */
+    :global(.splitpanes.themed) {
         height: 100%;
     }
 
-    :global(.splitpanes__splitter) {
-        background-color: var(--color-base-300);
-        position: relative;
+    :global(.splitpanes.themed .splitpanes__pane) {
+        background-color: transparent;
     }
 
-    :global(.splitpanes__splitter:hover) {
+    :global(.splitpanes.themed .splitpanes__splitter) {
+        background-color: var(--color-base-300);
+        position: relative;
+        flex-shrink: 0;
+    }
+
+    :global(.splitpanes.themed .splitpanes__splitter:hover) {
         background-color: var(--color-primary);
     }
 
-    :global(.splitpanes--horizontal > .splitpanes__splitter) {
-        width: 4px;
+    :global(.splitpanes.themed.splitpanes--vertical > .splitpanes__splitter) {
+        width: 6px;
         cursor: col-resize;
     }
 
-    :global(.splitpanes--vertical > .splitpanes__splitter) {
-        height: 4px;
+    :global(.splitpanes.themed.splitpanes--horizontal > .splitpanes__splitter) {
+        height: 6px;
         cursor: row-resize;
     }
 </style>

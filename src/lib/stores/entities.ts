@@ -11,13 +11,19 @@ export interface EntityMap {
     [name: string]: Entity;
 }
 
+interface EntityStoreState {
+    entities: EntityMap;
+    baseMappings: Record<string, string>;  // Default diplomatic mappings from entity-base-letters.json
+    customMappings: Record<string, string>; // User overrides
+    loaded: boolean;
+    error: string | null;
+}
+
 function createEntityStore() {
-    const { subscribe, set, update } = writable<{
-        entities: EntityMap;
-        loaded: boolean;
-        error: string | null;
-    }>({
+    const { subscribe, set, update } = writable<EntityStoreState>({
         entities: {},
+        baseMappings: {},
+        customMappings: {},
         loaded: false,
         error: null,
     });
@@ -25,10 +31,24 @@ function createEntityStore() {
     return {
         subscribe,
         setEntities: (entities: EntityMap) =>
-            set({ entities, loaded: true, error: null }),
+            update((state) => ({ ...state, entities, loaded: true, error: null })),
         setError: (error: string) =>
             update((state) => ({ ...state, error, loaded: false })),
-        reset: () => set({ entities: {}, loaded: false, error: null }),
+        setBaseMappings: (mappings: Record<string, string>) =>
+            update((state) => ({ ...state, baseMappings: mappings })),
+        setCustomMappings: (mappings: Record<string, string>) =>
+            update((state) => ({ ...state, customMappings: mappings })),
+        setCustomMapping: (entity: string, translation: string) =>
+            update((state) => ({
+                ...state,
+                customMappings: { ...state.customMappings, [entity]: translation },
+            })),
+        removeCustomMapping: (entity: string) =>
+            update((state) => {
+                const { [entity]: _, ...rest } = state.customMappings;
+                return { ...state, customMappings: rest };
+            }),
+        reset: () => set({ entities: {}, baseMappings: {}, customMappings: {}, loaded: false, error: null }),
     };
 }
 

@@ -89,3 +89,20 @@ export async function getEntity(path: string, name: string): Promise<Entity | nu
 export async function listEntityNames(path: string): Promise<string[]> {
     return invoke('list_entity_names', { path });
 }
+
+// Custom entity mapping functions
+export async function loadCustomMappings(): Promise<Record<string, string>> {
+    return invoke('load_custom_mappings');
+}
+
+export async function saveEntityMapping(entity: string, translation: string): Promise<void> {
+    return invoke('save_entity_mapping', { entity, translation });
+}
+
+export async function removeEntityMapping(entity: string): Promise<void> {
+    return invoke('remove_entity_mapping', { entity });
+}
+
+export async function clearCustomMappings(): Promise<void> {
+    return invoke('clear_custom_mappings');
+}

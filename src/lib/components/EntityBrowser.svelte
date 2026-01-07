@@ -1,10 +1,13 @@
 <script lang="ts">
     import { entityStore, entityNames, type Entity } from '$lib/stores/entities';
+    import { saveEntityMapping, removeEntityMapping } from '$lib/tauri';
 
     let { oninsert, onclose }: { oninsert?: (text: string) => void; onclose?: () => void } = $props();
 
     let searchQuery = $state('');
     let selectedCategory = $state<string | null>(null);
+    let selectedEntity = $state<string | null>(null);
+    let editingTranslation = $state('');
 
     // Get unique categories
     const categories = $derived.by(() => {
@@ -33,6 +36,44 @@
 
     function handleInsert(name: string) {
         oninsert?.(`:${name}:`);
+    }
+
+    function handleSelect(name: string) {
+        if (selectedEntity === name) {
+            selectedEntity = null;
+        } else {
+            selectedEntity = name;
+            // Initialize editing value with custom mapping, base mapping, or entity char
+            editingTranslation = $entityStore.customMappings[name] ?? $entityStore.baseMappings[name] ?? $entityStore.entities[name]?.char ?? '';
+        }
+    }
+
+    async function handleSaveMapping(name: string) {
+        if (!editingTranslation.trim()) return;
+
+        try {
+            await saveEntityMapping(name, editingTranslation.trim());
+            entityStore.setCustomMapping(name, editingTranslation.trim());
+        } catch (e) {
+            console.error('Failed to save mapping:', e);
+        }
+    }
+
+    async function handleResetMapping(name: string) {
+        try {
+            await removeEntityMapping(name);
+            entityStore.removeCustomMapping(name);
+            // Reset editing field to base mapping or original char
+            editingTranslation = $entityStore.baseMappings[name] ?? $entityStore.entities[name]?.char ?? '';
+        } catch (e) {
+            console.error('Failed to remove mapping:', e);
+        }
+    }
+
+    function handleKeydown(e: KeyboardEvent, name: string) {
+        if (e.key === 'Enter') {
+            handleSaveMapping(name);
+        }
     }
 </script>
 
@@ -64,15 +105,61 @@
     {:else}
         <div class="overflow-y-auto max-h-96 -mx-2">
             {#each filteredEntities as [name, entity]}
-                <button
-                    class="grid grid-cols-[2rem_1fr] grid-rows-2 gap-x-2 gap-y-0.5 w-full p-2 text-left rounded-lg hover:bg-base-200 cursor-pointer"
-                    onclick={() => handleInsert(name)}
-                    title={entity.description}
-                >
-                    <span class="row-span-2 text-2xl flex items-center justify-center" style="font-family: 'Junicode', serif;">{entity.char}</span>
-                    <span class="font-mono text-sm text-primary font-medium">:{name}:</span>
-                    <span class="text-xs opacity-70 truncate">{entity.description}</span>
-                </button>
+                {@const hasCustomMapping = name in $entityStore.customMappings}
+                {@const isSelected = selectedEntity === name}
+                <div class="border-b border-base-200 last:border-b-0">
+                    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+                    <div
+                        class="grid grid-cols-[2rem_1fr_auto] grid-rows-2 gap-x-2 gap-y-0.5 w-full p-2 text-left rounded-lg hover:bg-base-200 cursor-pointer"
+                        class:bg-base-200={isSelected}
+                        onclick={() => handleSelect(name)}
+                        title={entity.description}
+                    >
+                        <span class="row-span-2 text-2xl flex items-center justify-center" style="font-family: 'Junicode', serif;">{entity.char}</span>
+                        <span class="font-mono text-sm text-primary font-medium flex items-center gap-2">
+                            :{name}:
+                            {#if hasCustomMapping}
+                                <span class="badge badge-xs badge-accent">custom</span>
+                            {/if}
+                        </span>
+                        <button
+                            class="row-span-2 btn btn-ghost btn-xs"
+                            onclick={(e) => { e.stopPropagation(); handleInsert(name); }}
+                            title="Insert entity"
+                        >
+                            +
+                        </button>
+                        <span class="text-xs opacity-70 truncate">{entity.description}</span>
+                    </div>
+
+                    {#if isSelected}
+                        <div class="px-2 pb-2 pt-1 bg-base-200 rounded-b-lg">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs opacity-70 whitespace-nowrap">Translation:</span>
+                                <input
+                                    type="text"
+                                    bind:value={editingTranslation}
+                                    onblur={() => handleSaveMapping(name)}
+                                    onkeydown={(e) => handleKeydown(e, name)}
+                                    class="input input-bordered input-xs flex-1 font-mono"
+                                    placeholder="Base letter..."
+                                />
+                                {#if hasCustomMapping}
+                                    <button
+                                        class="btn btn-ghost btn-xs"
+                                        onclick={() => handleResetMapping(name)}
+                                        title="Reset to default"
+                                    >
+                                        Reset
+                                    </button>
+                                {/if}
+                            </div>
+                            <div class="text-xs opacity-50 mt-1">
+                                Default: {$entityStore.baseMappings[name] ?? entity.char} | Char: {entity.char} | Unicode: {entity.unicode}
+                            </div>
+                        </div>
+                    {/if}
+                </div>
             {:else}
                 <div class="text-center py-8 opacity-70">No entities found</div>
             {/each}
@@ -81,5 +168,8 @@
 
     <div class="pt-4 border-t border-base-300 text-xs opacity-70">
         {filteredEntities.length} entities
+        {#if Object.keys($entityStore.customMappings).length > 0}
+            | {Object.keys($entityStore.customMappings).length} custom mappings
+        {/if}
     </div>
 </div>

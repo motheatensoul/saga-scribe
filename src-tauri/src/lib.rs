@@ -34,6 +34,10 @@ pub fn run() {
             commands::entities::load_entities,
             commands::entities::get_entity,
             commands::entities::list_entity_names,
+            commands::entities::load_custom_mappings,
+            commands::entities::save_entity_mapping,
+            commands::entities::remove_entity_mapping,
+            commands::entities::clear_custom_mappings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
