@@ -220,6 +220,27 @@ To set up fonts, download Junicode and place the following files in `static/font
 bun install          # Install dependencies
 bun run dev          # Run in development mode
 bun run build        # Build for production
+bun run check        # Run Svelte type checking
+bun run clean        # Clear Vite/.svelte-kit caches
 bun run tauri dev    # Run Tauri app in dev mode
 bun run tauri build  # Build Tauri app
+```
+
+## Claude Code Notes
+
+**Cargo command quirk:** The Bash tool has an issue with `cd ... && cargo` chains - they fail with exit code 127 even though cargo is in PATH at `/usr/bin/cargo`.
+
+Workarounds (in order of preference):
+1. **Use `bash -c` wrapper:** `bash -c 'cd src-tauri && cargo test'`
+2. **Use semicolon:** `cd src-tauri; cargo test` (doesn't stop on cd failure)
+3. **Avoid cd entirely:** Run from project root with paths
+
+```bash
+# These work:
+cargo --version
+bash -c 'cd src-tauri && cargo check'
+cd src-tauri; cargo test
+
+# This fails (exit 127):
+cd src-tauri && cargo check
 ```
