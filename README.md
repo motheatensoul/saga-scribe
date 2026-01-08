@@ -1,4 +1,4 @@
-# TEI-Scribe
+# Saga-Scribe
 
 A desktop application for scholarly manuscript transcription, producing TEI-XML with MENOTA (Medieval Nordic Text Archive) extensions.
 
@@ -45,8 +45,8 @@ A desktop application for scholarly manuscript transcription, producing TEI-XML 
 As the project is currently in alpha, you'll need to build from source:
 
 ```bash
-git clone https://github.com/motheatensoul/tei-scribe
-cd tei-scribe
+git clone https://github.com/motheatensoul/saga-scribe
+cd saga-scribe
 bun install
 bun run tauri dev    # Development mode
 bun run tauri build  # Production build
