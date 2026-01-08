@@ -1,4 +1,4 @@
-# TEI-Scribe User Guide
+# Saga-Scribe User Guide
 
 This guide explains how to use Saga-Scribe for manuscript transcription.
 
