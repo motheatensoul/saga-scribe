@@ -15,17 +15,26 @@ pub struct InflectedForm {
     pub analysis: String,
     /// Part of speech / word class
     pub part_of_speech: String,
+    /// Facsimile-level form (with entity references resolved to glyphs)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facsimile: Option<String>,
+    /// Diplomatic-level form (base letters, abbreviations expanded)
+    /// This is the primary lookup key for matching orthographic variants
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diplomatic: Option<String>,
     /// Canonical normalized form for <me:norm> level (user-provided)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normalized: Option<String>,
 }
 
 /// Store for user-built inflection mappings
-/// Maps wordforms to their possible lemmas and analyses
+/// Maps diplomatic-level wordforms to their possible lemmas and analyses.
+/// Using diplomatic form as the key catches orthographic variants that resolve
+/// to the same base letters (e.g., open o vs closed o both → ǫ).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct InflectionStore {
-    /// Map from normalized wordform to list of possible analyses
-    /// (one wordform can map to multiple lemmas, e.g., "var" could be past of "vera" or "verja")
+    /// Map from diplomatic wordform (lowercase) to list of possible analyses
+    /// One wordform can map to multiple lemmas (e.g., "var" could be past of "vera" or "verja")
     forms: HashMap<String, Vec<InflectedForm>>,
 }
 
@@ -114,6 +123,16 @@ impl InflectionStore {
     pub fn clear(&mut self) {
         self.forms.clear();
     }
+
+    /// Get the total number of wordform entries
+    pub fn entry_count(&self) -> usize {
+        self.forms.len()
+    }
+
+    /// Get the total number of inflection mappings (across all wordforms)
+    pub fn mapping_count(&self) -> usize {
+        self.forms.values().map(|v| v.len()).sum()
+    }
 }
 
 #[cfg(test)]
@@ -131,6 +150,8 @@ mod tests {
                 lemma: "kona".to_string(),
                 analysis: "nom.pl.f".to_string(),
                 part_of_speech: "commonNoun".to_string(),
+                facsimile: None,
+                diplomatic: Some("konur".to_string()),
                 normalized: None,
             },
         );
@@ -157,6 +178,8 @@ mod tests {
                 lemma: "vera".to_string(),
                 analysis: "pret.ind.1/3sg".to_string(),
                 part_of_speech: "verb".to_string(),
+                facsimile: None,
+                diplomatic: Some("var".to_string()),
                 normalized: None,
             },
         );
@@ -167,6 +190,8 @@ mod tests {
                 lemma: "verja".to_string(),
                 analysis: "pret.ind.1/3sg".to_string(),
                 part_of_speech: "verb".to_string(),
+                facsimile: None,
+                diplomatic: Some("var".to_string()),
                 normalized: None,
             },
         );
@@ -184,6 +209,8 @@ mod tests {
             lemma: "kona".to_string(),
             analysis: "nom.pl.f".to_string(),
             part_of_speech: "commonNoun".to_string(),
+            facsimile: None,
+            diplomatic: Some("konur".to_string()),
             normalized: None,
         };
 
@@ -205,6 +232,8 @@ mod tests {
                 lemma: "kona".to_string(),
                 analysis: "nom.pl.f".to_string(),
                 part_of_speech: "commonNoun".to_string(),
+                facsimile: None,
+                diplomatic: Some("konur".to_string()),
                 normalized: None,
             },
         );

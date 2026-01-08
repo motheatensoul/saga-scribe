@@ -14,8 +14,9 @@
     import { entityStore } from '$lib/stores/entities';
     import { settings } from '$lib/stores/settings';
     import { errorStore, errorCounts } from '$lib/stores/errors';
-    import { listTemplates, compileDsl, loadEntities, loadTextFile, loadCustomMappings, loadOnpHeadwords, loadInflections, saveProject, openProject, exportTei, openFile } from '$lib/tauri';
+    import { listTemplates, compileDsl, loadEntities, loadTextFile, loadCustomMappings, loadOnpHeadwords, loadInflections, saveProject, openProject, exportTei, openFile, exportInflections } from '$lib/tauri';
     import { dictionaryStore, inflectionStore, sessionLemmaStore } from '$lib/stores/dictionary';
+    import { lemmatizationHistory, canUndo, canRedo } from '$lib/stores/lemmatizationHistory';
     import { resolveResource, appDataDir } from '@tauri-apps/api/path';
 
     let editorComponent: Editor;
@@ -24,7 +25,8 @@
     let showEntityBrowser = $state(false);
     let showErrorPanel = $state(false);
     let showLemmatizer = $state(false);
-    let selectedWord = $state<string | null>(null);
+    let selectedWordFacsimile = $state<string | null>(null);
+    let selectedWordDiplomatic = $state<string | null>(null);
     let selectedWordIndex = $state<number>(-1);
     let selectedWordElement = $state<HTMLElement | null>(null);
     let compileTimeout: ReturnType<typeof setTimeout>;
@@ -259,8 +261,9 @@
         showEntityBrowser = false;
     }
 
-    function handleWordClick(word: string, wordIndex: number, element: HTMLElement) {
-        selectedWord = word;
+    function handleWordClick(facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) {
+        selectedWordFacsimile = facsimile;
+        selectedWordDiplomatic = diplomatic;
         selectedWordIndex = wordIndex;
         selectedWordElement = element;
         showLemmatizer = true;
@@ -268,7 +271,8 @@
 
     function handleLemmatizerClose() {
         showLemmatizer = false;
-        selectedWord = null;
+        selectedWordFacsimile = null;
+        selectedWordDiplomatic = null;
         selectedWordIndex = -1;
         selectedWordElement = null;
     }
@@ -279,6 +283,51 @@
         // Trigger immediate recompile to update TEI output with new lemma
         // Use doCompile directly to bypass autoPreview check and delay
         doCompile($editor.content);
+    }
+
+    // Undo/redo for lemmatization
+    function handleLemmaUndo() {
+        const action = lemmatizationHistory.undo();
+        if (!action) return;
+
+        // Revert the action (without pushing to history again)
+        if (action.type === 'confirm') {
+            // Undo a confirm: restore previous state
+            if (action.previousMapping) {
+                sessionLemmaStore.confirm(action.wordIndex, action.previousMapping);
+            } else {
+                sessionLemmaStore.unconfirm(action.wordIndex);
+            }
+        } else {
+            // Undo an unconfirm: restore the mapping
+            if (action.previousMapping) {
+                sessionLemmaStore.confirm(action.wordIndex, action.previousMapping);
+            }
+        }
+
+        // Recompile to reflect changes
+        doCompile($editor.content);
+        errorStore.info('Undo', `Undid lemmatization for word #${action.wordIndex}`);
+    }
+
+    function handleLemmaRedo() {
+        const action = lemmatizationHistory.redo();
+        if (!action) return;
+
+        // Reapply the action (without pushing to history again)
+        if (action.type === 'confirm') {
+            // Redo a confirm: apply the mapping
+            if (action.mapping) {
+                sessionLemmaStore.confirm(action.wordIndex, action.mapping);
+            }
+        } else {
+            // Redo an unconfirm: remove the mapping
+            sessionLemmaStore.unconfirm(action.wordIndex);
+        }
+
+        // Recompile to reflect changes
+        doCompile($editor.content);
+        errorStore.info('Redo', `Redid lemmatization for word #${action.wordIndex}`);
     }
 
     // Project file handling
@@ -302,7 +351,8 @@
                 editor.setFile(pathStr, project.source);
                 editorComponent?.setContent(project.source);
 
-                // Restore session confirmations
+                // Clear lemmatization history and session confirmations
+                lemmatizationHistory.clear();
                 sessionLemmaStore.clear();
                 for (const [indexStr, mapping] of Object.entries(project.confirmations)) {
                     const index = parseInt(indexStr, 10);
@@ -326,7 +376,8 @@
                 editor.setFile(file.path, file.content);
                 editorComponent?.setContent(file.content);
 
-                // Clear session confirmations for new file
+                // Clear history and session confirmations for new file
+                lemmatizationHistory.clear();
                 sessionLemmaStore.clear();
 
                 await doCompile(file.content);
@@ -402,6 +453,21 @@
         }
     }
 
+    async function handleExportDictionary() {
+        const path = await save({
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+            defaultPath: 'inflections.json',
+        });
+        if (!path) return;
+
+        try {
+            const count = await exportInflections(path);
+            errorStore.info('Export', `Exported ${count} inflection entries to ${path}`);
+        } catch (e) {
+            errorStore.error('Export', `Failed to export dictionary: ${e}`);
+        }
+    }
+
     // Keyboard shortcuts
     function handleKeydown(event: KeyboardEvent) {
         if (event.ctrlKey || event.metaKey) {
@@ -411,6 +477,14 @@
             } else if (event.key === 'o') {
                 event.preventDefault();
                 handleOpenProject();
+            } else if (event.shiftKey && (event.key === 'z' || event.key === 'Z')) {
+                // Ctrl+Shift+Z: Undo lemmatization
+                event.preventDefault();
+                handleLemmaUndo();
+            } else if (event.shiftKey && (event.key === 'y' || event.key === 'Y')) {
+                // Ctrl+Shift+Y: Redo lemmatization
+                event.preventDefault();
+                handleLemmaRedo();
             }
         }
     }
@@ -419,7 +493,7 @@
 <svelte:window on:keydown={handleKeydown} />
 
 <div class="flex flex-col h-screen overflow-hidden bg-base-100">
-    <Toolbar onopen={handleOpenProject} onsave={handleSaveProject} onexportxml={handleExportXml} />
+    <Toolbar onopen={handleOpenProject} onsave={handleSaveProject} onexportxml={handleExportXml} onexportdict={handleExportDictionary} onundo={handleLemmaUndo} onredo={handleLemmaRedo} />
 
     <div class="flex-1 overflow-hidden">
         <Splitpanes theme="themed">
@@ -498,12 +572,12 @@
         </div>
     {/if}
 
-    {#if showLemmatizer && selectedWord && selectedWordIndex >= 0}
+    {#if showLemmatizer && selectedWordDiplomatic && selectedWordIndex >= 0}
         <div class="modal modal-open">
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
             <div class="modal-backdrop" role="none" onclick={handleLemmatizerClose}></div>
             <div class="modal-box max-w-2xl">
-                <Lemmatizer word={selectedWord} wordIndex={selectedWordIndex} onclose={handleLemmatizerClose} onsave={handleLemmatizerSave} />
+                <Lemmatizer facsimile={selectedWordFacsimile || ''} diplomatic={selectedWordDiplomatic} wordIndex={selectedWordIndex} onclose={handleLemmatizerClose} onsave={handleLemmatizerSave} />
             </div>
         </div>
     {/if}

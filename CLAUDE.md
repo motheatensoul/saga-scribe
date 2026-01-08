@@ -110,7 +110,7 @@ Users can override any mapping via the Entity Browser's custom mapping editor.
 | `load_settings` / `save_settings` | Settings persistence |
 | `load_onp_headwords` / `lookup_lemma` / `search_lemma_prefix` | ONP dictionary lookup |
 | `fetch_onp_full_entry` / `get_onp_entry` | Fetch full entry from ONP API |
-| `load_inflections` / `add_inflection` / `remove_inflection` | User inflection mappings |
+| `load_inflections` / `add_inflection` / `remove_inflection` / `export_inflections` | User inflection mappings (keyed by diplomatic form) |
 | `save_project` / `open_project` | Project archive (.teis) save/load |
 
 ## Key Files for Common Tasks
@@ -132,6 +132,7 @@ Users can override any mapping via the Entity Browser's custom mapping editor.
 - **ONP dictionary:** `src-tauri/src/dictionary/onp.rs`
 - **Inflection store:** `src-tauri/src/dictionary/inflections.rs`
 - **Dictionary store (frontend):** `src/lib/stores/dictionary.ts`
+- **Lemmatization history (undo/redo):** `src/lib/stores/lemmatizationHistory.ts`
 - **Rendered text view:** `src/lib/components/RenderedText.svelte`
 - **Lemmatizer component:** `src/lib/components/Lemmatizer.svelte`
 - **File commands (project archive):** `src-tauri/src/commands/file.rs`
@@ -156,7 +157,7 @@ Users can override any mapping via the Entity Browser's custom mapping editor.
 - Auto-preview with debounce
 - Settings persistence (fontSize, theme, autoPreview, previewDelay, activeTemplateId)
 - ONP dictionary integration (~65k headwords from ELEXIS API)
-- User inflection mappings (persisted, for lemmatization)
+- User inflection mappings (keyed by diplomatic form, stores facs/dipl/norm levels)
 - Rendered text view with clickable words for lemmatization
 - Lemmatization popup with ONP search and morphological analysis (editable existing mappings)
 - Per-word-instance lemma confirmations (session-based, stored in project archive)
@@ -164,11 +165,12 @@ Users can override any mapping via the Entity Browser's custom mapping editor.
 - ARIA roles for accessibility
 - Project archive format (.teis) bundling source, XML output, and confirmations
 - Keyboard shortcuts: Ctrl+S (save project), Ctrl+O (open project)
+- Undo/redo for lemmatization: Ctrl+Shift+Z (undo), Ctrl+Shift+Y (redo)
+- Batch export of inflection dictionary (Export Dict button in toolbar)
 - User documentation (`docs/user-guide.md`)
 
 **Not Yet Implemented:**
-- Undo/redo for lemmatization changes
-- Batch export of inflection dictionary
+- Proper user settings menu
 
 ## Testing
 

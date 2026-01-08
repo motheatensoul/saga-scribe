@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import type { OnpEntry, InflectedForm } from '$lib/tauri';
+import { lemmatizationHistory } from './lemmatizationHistory';
 
 interface DictionaryStoreState {
     loaded: boolean;
@@ -196,6 +197,54 @@ function createSessionLemmaStore() {
         },
         // Clear all session mappings (e.g., when opening a new file)
         clear: () => set({ mappings: {} }),
+
+        // History-aware confirm: records action for undo/redo
+        confirmWithHistory: (wordIndex: number, mapping: SessionLemmaMapping) => {
+            let previousMapping: SessionLemmaMapping | null = null;
+
+            // Get previous state before updating
+            update((state) => {
+                previousMapping = state.mappings[wordIndex] || null;
+                return {
+                    ...state,
+                    mappings: {
+                        ...state.mappings,
+                        [wordIndex]: mapping,
+                    },
+                };
+            });
+
+            // Push to history
+            lemmatizationHistory.pushAction({
+                type: 'confirm',
+                wordIndex,
+                mapping,
+                previousMapping,
+            });
+        },
+
+        // History-aware unconfirm: records action for undo/redo
+        unconfirmWithHistory: (wordIndex: number) => {
+            let previousMapping: SessionLemmaMapping | null = null;
+
+            update((state) => {
+                previousMapping = state.mappings[wordIndex] || null;
+                if (!previousMapping) return state;
+
+                const newMappings = { ...state.mappings };
+                delete newMappings[wordIndex];
+                return { ...state, mappings: newMappings };
+            });
+
+            if (previousMapping) {
+                lemmatizationHistory.pushAction({
+                    type: 'unconfirm',
+                    wordIndex,
+                    mapping: null,
+                    previousMapping,
+                });
+            }
+        },
     };
 }
 

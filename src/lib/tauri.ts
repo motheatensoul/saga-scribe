@@ -146,9 +146,11 @@ export interface OnpFullEntry {
 export interface InflectedForm {
     onp_id: string;
     lemma: string;
-    analysis: string;
+    analysis: string;        // MENOTA me:msa morphological analysis
     part_of_speech: string;
-    normalized?: string;
+    facsimile?: string;      // Facsimile-level form (glyphs resolved)
+    diplomatic?: string;     // Diplomatic-level form (base letters, abbr expanded) - lookup key
+    normalized?: string;     // me:norm level canonical form
 }
 
 export interface InflectionStore {
@@ -191,12 +193,15 @@ export async function lookupInflection(wordform: string): Promise<InflectedForm[
 }
 
 // Add an inflection mapping
+// wordform should be the diplomatic-level form for consistent lookups
 export async function addInflection(
     wordform: string,
     onpId: string,
     lemma: string,
     analysis: string,
     partOfSpeech: string,
+    facsimile?: string,
+    diplomatic?: string,
     normalized?: string
 ): Promise<void> {
     return invoke('add_inflection', {
@@ -205,6 +210,8 @@ export async function addInflection(
         lemma,
         analysis,
         partOfSpeech,
+        facsimile: facsimile || null,
+        diplomatic: diplomatic || null,
         normalized: normalized || null,
     });
 }
@@ -225,6 +232,11 @@ export async function removeInflection(
 // Clear all inflection mappings
 export async function clearInflections(): Promise<void> {
     return invoke('clear_inflections');
+}
+
+// Export inflection dictionary to a file (returns number of entries exported)
+export async function exportInflections(path: string): Promise<number> {
+    return invoke('export_inflections', { path });
 }
 
 // Check if ONP registry is loaded

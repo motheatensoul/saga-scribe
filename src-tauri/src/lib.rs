@@ -55,6 +55,7 @@ pub fn run() {
             commands::dictionary::add_inflection,
             commands::dictionary::remove_inflection,
             commands::dictionary::clear_inflections,
+            commands::dictionary::export_inflections,
             commands::dictionary::is_onp_loaded,
             commands::dictionary::get_onp_stats,
         ])

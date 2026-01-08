@@ -94,6 +94,7 @@ pub fn lookup_inflection(app: AppHandle, wordform: String) -> Result<Vec<Inflect
 }
 
 /// Add an inflection mapping
+/// The `wordform` parameter should be the diplomatic-level form for consistent lookups.
 #[tauri::command(rename_all = "camelCase")]
 pub fn add_inflection(
     app: AppHandle,
@@ -102,11 +103,13 @@ pub fn add_inflection(
     lemma: String,
     analysis: String,
     part_of_speech: String,
+    facsimile: Option<String>,
+    diplomatic: Option<String>,
     normalized: Option<String>,
 ) -> Result<(), String> {
     info!(
-        "Adding inflection: {} -> {} ({}) [norm: {:?}]",
-        wordform, lemma, analysis, normalized
+        "Adding inflection: {} -> {} ({}) [facs: {:?}, dipl: {:?}, norm: {:?}]",
+        wordform, lemma, analysis, facsimile, diplomatic, normalized
     );
 
     let mut store = InflectionStore::load(&app)?;
@@ -117,6 +120,8 @@ pub fn add_inflection(
             lemma,
             analysis,
             part_of_speech,
+            facsimile,
+            diplomatic,
             normalized,
         },
     );
@@ -160,4 +165,19 @@ pub fn get_onp_stats(state: State<OnpState>) -> Result<(usize, usize), String> {
     let guard = state.0.lock().unwrap();
     let registry = guard.as_ref().ok_or("ONP registry not loaded")?;
     Ok((registry.len(), 0)) // (headword count, placeholder for future stats)
+}
+
+/// Export inflection dictionary to a file
+#[tauri::command]
+pub fn export_inflections(app: AppHandle, path: String) -> Result<usize, String> {
+    info!("Exporting inflection dictionary to: {}", path);
+
+    let store = InflectionStore::load(&app)?;
+    let count = store.entry_count();
+
+    let content = serde_json::to_string_pretty(&store).map_err(|e| e.to_string())?;
+    std::fs::write(&path, content).map_err(|e| format!("Failed to write file: {}", e))?;
+
+    info!("Exported {} inflection entries", count);
+    Ok(count)
 }

@@ -3,15 +3,22 @@
     import { editor, fileName } from '$lib/stores/editor';
     import { templateStore } from '$lib/stores/template';
     import { settings } from '$lib/stores/settings';
+    import { canUndo, canRedo } from '$lib/stores/lemmatizationHistory';
 
     let {
         onopen,
         onsave,
         onexportxml,
+        onexportdict,
+        onundo,
+        onredo,
     }: {
         onopen?: () => void;  // Parent handles opening (shows dialog, loads project)
         onsave?: () => void;  // Parent handles saving (shows dialog if needed, saves project)
         onexportxml?: () => void;  // Parent handles XML export
+        onexportdict?: () => void;  // Parent handles dictionary export
+        onundo?: () => void;  // Undo lemmatization
+        onredo?: () => void;  // Redo lemmatization
     } = $props();
 
     async function handleTemplateChange(e: Event) {
@@ -30,6 +37,7 @@
         <button class="btn btn-primary btn-sm" onclick={onopen} title="Open project (Ctrl+O)">Open</button>
         <button class="btn btn-primary btn-sm" onclick={onsave} title="Save project (Ctrl+S)">Save</button>
         <button class="btn btn-ghost btn-sm" onclick={onexportxml} title="Export TEI-XML to separate file">Export XML</button>
+        <button class="btn btn-ghost btn-sm" onclick={onexportdict} title="Export inflection dictionary to JSON">Export Dict</button>
     </div>
 
     <div class="flex items-center gap-2 ml-4">
@@ -45,7 +53,24 @@
         </select>
     </div>
 
-    <div class="ml-auto flex items-center gap-1">
+    <div class="ml-auto flex items-center gap-2">
+        <button
+            class="btn btn-ghost btn-sm"
+            onclick={onundo}
+            disabled={!$canUndo}
+            title="Undo lemmatization (Ctrl+Shift+Z)"
+        >
+            Undo
+        </button>
+        <button
+            class="btn btn-ghost btn-sm"
+            onclick={onredo}
+            disabled={!$canRedo}
+            title="Redo lemmatization (Ctrl+Shift+Y)"
+        >
+            Redo
+        </button>
+        <div class="divider divider-horizontal mx-0"></div>
         <span class="text-sm opacity-70">{$fileName}</span>
         {#if $editor.isDirty}
             <span class="text-warning font-bold">*</span>

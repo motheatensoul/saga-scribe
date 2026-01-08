@@ -7,7 +7,7 @@
         onwordclick,
     }: {
         content?: string;
-        onwordclick?: (word: string, wordIndex: number, element: HTMLElement) => void;
+        onwordclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) => void;
     } = $props();
 
     interface TextToken {
@@ -230,8 +230,10 @@
 
     function handleWordClick(token: TextToken, event: MouseEvent) {
         const target = event.currentTarget as HTMLElement;
-        // Use diplomatic form for lemmatization lookup, include word index
-        onwordclick?.(token.diplomatic || token.displayText, token.wordIndex ?? -1, target);
+        // Pass both facsimile (displayText) and diplomatic forms for lemmatization
+        const facsimile = token.displayText;
+        const diplomatic = token.diplomatic || token.displayText;
+        onwordclick?.(facsimile, diplomatic, token.wordIndex ?? -1, target);
     }
 
     function hasKnownLemma(word: string): boolean {

@@ -14,12 +14,14 @@
     } from '$lib/tauri';
 
     let {
-        word,
+        facsimile,
+        diplomatic,
         wordIndex,
         onclose,
         onsave,
     }: {
-        word: string;
+        facsimile: string;   // Facsimile-level form (for display/storage)
+        diplomatic: string;  // Diplomatic-level form (for lookup)
         wordIndex: number;
         onclose?: () => void;
         onsave?: (wordIndex: number, lemma: string, msa: string) => void;
@@ -108,8 +110,8 @@
         { code: 'fI', label: 'Infinitive' },
     ];
 
-    // Search state
-    let searchQuery = $state(word);
+    // Search state - use diplomatic form for searching
+    let searchQuery = $state(diplomatic);
     let searchResults = $state<OnpEntry[]>([]);
     let isSearching = $state(false);
     let searchTimeout: ReturnType<typeof setTimeout>;
@@ -236,8 +238,8 @@
         return result;
     }
 
-    // Auto-suggest normalized form when word is selected
-    let suggestedNorm = $derived(suggestNormalized(word));
+    // Auto-suggest normalized form based on diplomatic level
+    let suggestedNorm = $derived(suggestNormalized(diplomatic));
 
     // Check if this word instance already has a session confirmation
     let sessionConfirmation = $derived($sessionLemmaStore.mappings[wordIndex]);
@@ -263,7 +265,8 @@
 
     async function loadExistingMappings() {
         try {
-            existingMappings = await lookupInflection(word);
+            // Look up by diplomatic form for consistent matching
+            existingMappings = await lookupInflection(diplomatic);
         } catch (e) {
             console.error('Failed to load existing mappings:', e);
         }
@@ -341,28 +344,33 @@
         const normForm = normalizedForm.trim() || suggestedNorm;
 
         try {
-            console.log('Saving inflection...', { word, wordIndex, lemma: selectedEntry.lemma, msa: msaString, normalized: normForm });
+            console.log('Saving inflection...', { facsimile, diplomatic, wordIndex, lemma: selectedEntry.lemma, msa: msaString, normalized: normForm });
 
-            // Save to persistent inflection store (by wordform) for future suggestions
+            // Save to persistent inflection store (by diplomatic form for consistent lookup)
             await addInflection(
-                word,
+                diplomatic,  // Key by diplomatic form
                 selectedEntry.id,
                 selectedEntry.lemma,
                 msaString,
                 wordClass,
+                facsimile,   // Store facsimile
+                diplomatic,  // Store diplomatic
                 normForm
             );
 
-            inflectionStore.addMapping(word, {
+            inflectionStore.addMapping(diplomatic, {
                 onp_id: selectedEntry.id,
                 lemma: selectedEntry.lemma,
                 analysis: msaString,
                 part_of_speech: wordClass,
+                facsimile,
+                diplomatic,
                 normalized: normForm,
             });
 
             // Save to session store (by word index) for this specific instance
-            sessionLemmaStore.confirm(wordIndex, {
+            // Use history-aware method for undo/redo support
+            sessionLemmaStore.confirmWithHistory(wordIndex, {
                 lemma: selectedEntry.lemma,
                 msa: msaString,
                 normalized: normForm,
@@ -379,8 +387,9 @@
 
     async function handleRemoveMapping(mapping: InflectedForm) {
         try {
-            await removeInflection(word, mapping.onp_id, mapping.analysis);
-            inflectionStore.removeMapping(word, mapping.onp_id, mapping.analysis);
+            // Remove by diplomatic form (the lookup key)
+            await removeInflection(diplomatic, mapping.onp_id, mapping.analysis);
+            inflectionStore.removeMapping(diplomatic, mapping.onp_id, mapping.analysis);
 
             // Clear selection if this was the selected mapping
             const mappingKey = `${mapping.onp_id}-${mapping.analysis}`;
@@ -535,8 +544,11 @@
 <div class="flex flex-col gap-4 max-h-[80vh] overflow-y-auto">
     <div class="flex items-center justify-between sticky top-0 bg-base-100 pb-2">
         <div>
-            <h3 class="font-bold text-lg">Lemmatize: <span class="text-primary">{word}</span></h3>
+            <h3 class="font-bold text-lg">Lemmatize: <span class="text-primary">{facsimile}</span></h3>
             <span class="text-xs opacity-60">Word #{wordIndex}</span>
+            {#if facsimile !== diplomatic}
+                <span class="text-xs opacity-60 ml-2">(dipl: {diplomatic})</span>
+            {/if}
             {#if sessionConfirmation}
                 <span class="badge badge-success badge-xs ml-2">confirmed</span>
             {/if}
@@ -836,7 +848,7 @@
                             {/if}
                         </div>
                         <div class="text-xs opacity-60 mt-1">
-                            Diplomatic: {word} → Suggested: {suggestedNorm}
+                            Diplomatic: {diplomatic} → Suggested: {suggestedNorm}
                         </div>
                     </div>
                 {/if}
