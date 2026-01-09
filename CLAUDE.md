@@ -185,7 +185,7 @@ Users can override any mapping via the Entity Browser's custom mapping editor.
 - XSLT support for rendering from XML
 - Export to additional formats (HTML, PDF)
 - Collapsible sections in editor for long documents
-- Word-level annotations beyond lemmatization
+- Word- and character-level annotations beyond lemmatization
 - Manuscript metadata editor (beyond template header)
 - Custom entity set management (add/remove entities beyond MENOTA)
 - Performance optimization for large manuscripts (>10k lines)
