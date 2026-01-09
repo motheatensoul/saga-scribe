@@ -27,7 +27,7 @@ pub fn get_system_theme() -> String {
 
         // Try busctl first (more common, comes with systemd)
         if let Ok(output) = Command::new("busctl")
-            .args(&[
+            .args([
                 "--user",
                 "call",
                 "org.freedesktop.portal.Desktop",
@@ -57,7 +57,7 @@ pub fn get_system_theme() -> String {
 
         // Fallback: Try dbus-send
         if let Ok(output) = Command::new("dbus-send")
-            .args(&[
+            .args([
                 "--session",
                 "--print-reply=literal",
                 "--dest=org.freedesktop.portal.Desktop",
@@ -85,7 +85,7 @@ pub fn get_system_theme() -> String {
 
         // Fallback: Try gsettings for GNOME users (legacy)
         if let Ok(output) = Command::new("gsettings")
-            .args(&["get", "org.gnome.desktop.interface", "color-scheme"])
+            .args(["get", "org.gnome.desktop.interface", "color-scheme"])
             .output()
         {
             if output.status.success() {
@@ -105,7 +105,7 @@ pub fn get_system_theme() -> String {
 
         // Last resort: Try gtk-theme-name
         if let Ok(output) = Command::new("gsettings")
-            .args(&["get", "org.gnome.desktop.interface", "gtk-theme"])
+            .args(["get", "org.gnome.desktop.interface", "gtk-theme"])
             .output()
         {
             if output.status.success() {

@@ -43,7 +43,7 @@ impl TemplateManager {
         // Load user templates
         if let Ok(entries) = fs::read_dir(&self.templates_dir) {
             for entry in entries.flatten() {
-                if entry.path().extension().map_or(false, |e| e == "json") {
+                if entry.path().extension().is_some_and(|e| e == "json") {
                     if let Ok(content) = fs::read_to_string(entry.path()) {
                         if let Ok(template) = serde_json::from_str::<Template>(&content) {
                             templates.push(template);

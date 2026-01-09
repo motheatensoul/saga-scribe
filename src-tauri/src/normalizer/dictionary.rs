@@ -25,7 +25,7 @@ struct EntityMappingsJson {
 }
 
 /// Dictionary for deriving diplomatic and normalized levels from facsimile
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct LevelDictionary {
     /// Entity names that are combining marks (to be removed at diplomatic level)
     combining_marks: HashSet<String>,
@@ -114,16 +114,16 @@ impl LevelDictionary {
     }
 }
 
-impl Default for LevelDictionary {
-    fn default() -> Self {
-        Self {
-            combining_marks: HashSet::new(),
-            char_mappings: HashMap::new(),
-            ligature_mappings: HashMap::new(),
-            entity_mappings: HashMap::new(),
-        }
-    }
-}
+// impl Default for LevelDictionary {
+//     fn default() -> Self {
+//         Self {
+//             combining_marks: HashSet::new(),
+//             char_mappings: HashMap::new(),
+//             ligature_mappings: HashMap::new(),
+//             entity_mappings: HashMap::new(),
+//         }
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

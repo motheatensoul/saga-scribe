@@ -253,7 +253,7 @@ impl<'a> Lexer<'a> {
     fn parse_optional_number(&mut self) -> Option<u32> {
         let start = self.pos;
         while self.pos < self.input.len() {
-            if !self.current_char().map_or(false, |c| c.is_ascii_digit()) {
+            if !self.current_char().is_some_and(|c| c.is_ascii_digit()) {
                 break;
             }
             self.advance();
