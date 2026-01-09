@@ -1,30 +1,55 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
-    import { Splitpanes, Pane } from 'svelte-splitpanes';
-    import { open, save } from '@tauri-apps/plugin-dialog';
-    import Editor from '$lib/components/Editor.svelte';
-    import Preview from '$lib/components/Preview.svelte';
-    import Toolbar from '$lib/components/Toolbar.svelte';
-    import TemplateManager from '$lib/components/TemplateManager.svelte';
-    import EntityBrowser from '$lib/components/EntityBrowser.svelte';
-    import Lemmatizer from '$lib/components/Lemmatizer.svelte';
-    import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-    import { editor } from '$lib/stores/editor';
-    import { templateStore } from '$lib/stores/template';
-    import { entityStore } from '$lib/stores/entities';
-    import { settings } from '$lib/stores/settings';
-    import { errorStore, errorCounts } from '$lib/stores/errors';
-    import { listTemplates, compileDsl, loadEntities, loadTextFile, loadCustomMappings, loadOnpHeadwords, loadInflections, saveProject, openProject, exportTei, openFile, exportInflections } from '$lib/tauri';
-    import { dictionaryStore, inflectionStore, sessionLemmaStore } from '$lib/stores/dictionary';
-    import { lemmatizationHistory, canUndo, canRedo } from '$lib/stores/lemmatizationHistory';
-    import { resolveResource, appDataDir } from '@tauri-apps/api/path';
+    import { onMount } from "svelte";
+    import { Splitpanes, Pane } from "svelte-splitpanes";
+    import { open, save } from "@tauri-apps/plugin-dialog";
+    import Editor from "$lib/components/Editor.svelte";
+    import Preview from "$lib/components/Preview.svelte";
+    import Toolbar from "$lib/components/Toolbar.svelte";
+    import TemplateManager from "$lib/components/TemplateManager.svelte";
+    import EntityBrowser from "$lib/components/EntityBrowser.svelte";
+    import Lemmatizer from "$lib/components/Lemmatizer.svelte";
+    import ErrorPanel from "$lib/components/ErrorPanel.svelte";
+    import SettingsDialog from "$lib/components/SettingsDialog.svelte";
+    import HelpDialog from "$lib/components/HelpDialog.svelte";
+    import { editor } from "$lib/stores/editor";
+    import { templateStore } from "$lib/stores/template";
+    import { entityStore } from "$lib/stores/entities";
+    import { settings } from "$lib/stores/settings";
+    import { errorStore, errorCounts } from "$lib/stores/errors";
+    import {
+        listTemplates,
+        compileDsl,
+        loadEntities,
+        loadTextFile,
+        loadCustomMappings,
+        loadOnpHeadwords,
+        loadInflections,
+        saveProject,
+        openProject,
+        exportTei,
+        openFile,
+        exportInflections,
+    } from "$lib/tauri";
+    import {
+        dictionaryStore,
+        inflectionStore,
+        sessionLemmaStore,
+    } from "$lib/stores/dictionary";
+    import {
+        lemmatizationHistory,
+        canUndo,
+        canRedo,
+    } from "$lib/stores/lemmatizationHistory";
+    import { resolveResource, appDataDir } from "@tauri-apps/api/path";
 
     let editorComponent: Editor;
-    let previewContent = $state('');
+    let previewContent = $state("");
     let showTemplateManager = $state(false);
     let showEntityBrowser = $state(false);
     let showErrorPanel = $state(false);
     let showLemmatizer = $state(false);
+    let showSettings = $state(false);
+    let showHelp = $state(false);
     let selectedWordFacsimile = $state<string | null>(null);
     let selectedWordDiplomatic = $state<string | null>(null);
     let selectedWordIndex = $state<number>(-1);
@@ -35,20 +60,20 @@
     let entityMappingsJson = $state<string | null>(null);
 
     onMount(async () => {
-        errorStore.info('App', 'Application starting...');
+        errorStore.info("App", "Application starting...");
 
         // Load settings first
         try {
-            errorStore.info('Settings', 'Loading settings...');
+            errorStore.info("Settings", "Loading settings...");
             await settings.load();
-            errorStore.info('Settings', 'Settings loaded');
+            errorStore.info("Settings", "Settings loaded");
         } catch (e) {
-            errorStore.error('Settings', 'Failed to load settings', String(e));
+            errorStore.error("Settings", "Failed to load settings", String(e));
         }
 
         // Load templates
         try {
-            errorStore.info('Templates', 'Loading templates...');
+            errorStore.info("Templates", "Loading templates...");
             const templates = await listTemplates();
             templateStore.setTemplates(templates);
 
@@ -67,65 +92,98 @@
                 templateStore.setActive(activeTemplate);
             }
 
-            errorStore.info('Templates', `Loaded ${templates.length} templates`);
+            errorStore.info(
+                "Templates",
+                `Loaded ${templates.length} templates`,
+            );
         } catch (e) {
-            errorStore.error('Templates', 'Failed to load templates', String(e));
+            errorStore.error(
+                "Templates",
+                "Failed to load templates",
+                String(e),
+            );
         }
 
         // Load default MENOTA entities
         // Try resource path (production), then derive static folder from resource path (development)
-        const resourcePath = await resolveResource('entities/menota.json');
+        const resourcePath = await resolveResource("entities/menota.json");
 
         // For development, the resource path is like: .../src-tauri/target/debug/entities/menota.json
         // We need: .../static/entities/menota.json
         const devPath = resourcePath.replace(
             /src-tauri\/target\/[^/]+\/entities\/menota\.json$/,
-            'static/entities/menota.json'
+            "static/entities/menota.json",
         );
 
         const entityPaths = [resourcePath, devPath];
 
         let entities = null;
-        let loadedFrom = '';
+        let loadedFrom = "";
 
         for (const path of entityPaths) {
             try {
-                errorStore.info('Entities', `Trying to load from: ${path}`);
+                errorStore.info("Entities", `Trying to load from: ${path}`);
                 entities = await loadEntities(path);
                 loadedFrom = path;
                 break;
             } catch (e) {
-                errorStore.warning('Entities', `Failed to load from ${path}`, String(e));
+                errorStore.warning(
+                    "Entities",
+                    `Failed to load from ${path}`,
+                    String(e),
+                );
             }
         }
 
         if (entities) {
             const entityCount = Object.keys(entities).length;
-            errorStore.info('Entities', `Loaded ${entityCount} entities from ${loadedFrom}`);
+            errorStore.info(
+                "Entities",
+                `Loaded ${entityCount} entities from ${loadedFrom}`,
+            );
             entityStore.setEntities(entities);
-            entitiesJson = JSON.stringify({ version: '1.0', name: 'MENOTA', entities });
+            entitiesJson = JSON.stringify({
+                version: "1.0",
+                name: "MENOTA",
+                entities,
+            });
 
             // Load base entity mappings (diplomatic normalization defaults)
-            const baseMappingsResourcePath = await resolveResource('normalizer/entity-base-letters.json');
+            const baseMappingsResourcePath = await resolveResource(
+                "normalizer/entity-base-letters.json",
+            );
             const baseMappingsDevPath = baseMappingsResourcePath.replace(
                 /src-tauri\/target\/[^/]+\/normalizer\/entity-base-letters\.json$/,
-                'static/normalizer/entity-base-letters.json'
+                "static/normalizer/entity-base-letters.json",
             );
-            const baseMappingsPaths = [baseMappingsResourcePath, baseMappingsDevPath];
+            const baseMappingsPaths = [
+                baseMappingsResourcePath,
+                baseMappingsDevPath,
+            ];
 
             for (const path of baseMappingsPaths) {
                 try {
-                    errorStore.info('Entities', `Trying to load base mappings from: ${path}`);
+                    errorStore.info(
+                        "Entities",
+                        `Trying to load base mappings from: ${path}`,
+                    );
                     const baseMappingsText = await loadTextFile(path);
                     entityMappingsJson = baseMappingsText; // Store raw JSON for compiler
                     const baseMappingsData = JSON.parse(baseMappingsText);
                     const mappings = baseMappingsData.mappings || {};
                     const mappingsCount = Object.keys(mappings).length;
-                    errorStore.info('Entities', `Loaded ${mappingsCount} base entity mappings from ${path}`);
+                    errorStore.info(
+                        "Entities",
+                        `Loaded ${mappingsCount} base entity mappings from ${path}`,
+                    );
                     entityStore.setBaseMappings(mappings);
                     break;
                 } catch (e) {
-                    errorStore.warning('Entities', `Failed to load base mappings from ${path}`, String(e));
+                    errorStore.warning(
+                        "Entities",
+                        `Failed to load base mappings from ${path}`,
+                        String(e),
+                    );
                 }
             }
 
@@ -134,58 +192,92 @@
                 const customMappings = await loadCustomMappings();
                 const customCount = Object.keys(customMappings).length;
                 if (customCount > 0) {
-                    errorStore.info('Entities', `Loaded ${customCount} custom entity mappings`);
+                    errorStore.info(
+                        "Entities",
+                        `Loaded ${customCount} custom entity mappings`,
+                    );
                     entityStore.setCustomMappings(customMappings);
                 }
             } catch (e) {
-                errorStore.warning('Entities', 'Failed to load custom mappings', String(e));
+                errorStore.warning(
+                    "Entities",
+                    "Failed to load custom mappings",
+                    String(e),
+                );
             }
         } else {
-            errorStore.error('Entities', 'Failed to load entities from any path');
-            entityStore.setError('Could not find entity definitions file');
+            errorStore.error(
+                "Entities",
+                "Failed to load entities from any path",
+            );
+            entityStore.setError("Could not find entity definitions file");
         }
 
         // Load normalizer dictionary for multi-level transcription
-        const normalizerResourcePath = await resolveResource('normalizer/menota-levels.json');
+        const normalizerResourcePath = await resolveResource(
+            "normalizer/menota-levels.json",
+        );
         const normalizerDevPath = normalizerResourcePath.replace(
             /src-tauri\/target\/[^/]+\/normalizer\/menota-levels\.json$/,
-            'static/normalizer/menota-levels.json'
+            "static/normalizer/menota-levels.json",
         );
         const normalizerPaths = [normalizerResourcePath, normalizerDevPath];
 
         for (const path of normalizerPaths) {
             try {
-                errorStore.info('Normalizer', `Trying to load from: ${path}`);
+                errorStore.info("Normalizer", `Trying to load from: ${path}`);
                 normalizerJson = await loadTextFile(path);
-                errorStore.info('Normalizer', `Loaded normalizer dictionary from ${path}`);
+                errorStore.info(
+                    "Normalizer",
+                    `Loaded normalizer dictionary from ${path}`,
+                );
                 break;
             } catch (e) {
-                errorStore.warning('Normalizer', `Failed to load from ${path}`, String(e));
+                errorStore.warning(
+                    "Normalizer",
+                    `Failed to load from ${path}`,
+                    String(e),
+                );
             }
         }
 
         if (!normalizerJson) {
-            errorStore.warning('Normalizer', 'Could not load normalizer dictionary - multi-level output may not work correctly');
+            errorStore.warning(
+                "Normalizer",
+                "Could not load normalizer dictionary - multi-level output may not work correctly",
+            );
         }
 
         // Load ONP dictionary for lemmatization
-        const onpResourcePath = await resolveResource('dictionary/onp-headwords.json');
+        const onpResourcePath = await resolveResource(
+            "dictionary/onp-headwords.json",
+        );
         const onpDevPath = onpResourcePath.replace(
             /src-tauri\/target\/[^/]+\/dictionary\/onp-headwords\.json$/,
-            'static/dictionary/onp-headwords.json'
+            "static/dictionary/onp-headwords.json",
         );
         const onpPaths = [onpResourcePath, onpDevPath];
 
         dictionaryStore.setLoading();
         for (const path of onpPaths) {
             try {
-                errorStore.info('Dictionary', `Trying to load ONP headwords from: ${path}`);
+                errorStore.info(
+                    "Dictionary",
+                    `Trying to load ONP headwords from: ${path}`,
+                );
                 const count = await loadOnpHeadwords(path);
-                errorStore.info('Dictionary', `Loaded ${count} ONP headwords from ${path}`);
+                errorStore.info(
+                    "Dictionary",
+                    `Loaded ${count} ONP headwords from ${path}`,
+                );
                 dictionaryStore.setLoaded(count);
                 break;
             } catch (e) {
-                errorStore.warning('Dictionary', `Failed to load from ${path}`, String(e));
+                errorStore.warning(
+                    "Dictionary",
+                    `Failed to load from ${path}`,
+                    String(e),
+                );
             }
         }
 
@@ -194,14 +286,21 @@
             const store = await loadInflections();
             const count = Object.keys(store.forms).length;
             if (count > 0) {
-                errorStore.info('Dictionary', `Loaded ${count} user inflection mappings`);
+                errorStore.info(
+                    "Dictionary",
+                    `Loaded ${count} user inflection mappings`,
+                );
                 inflectionStore.setMappings(store.forms);
             }
         } catch (e) {
-            errorStore.warning('Dictionary', 'Failed to load inflection mappings', String(e));
+            errorStore.warning(
+                "Dictionary",
+                "Failed to load inflection mappings",
+                String(e),
+            );
         }
 
-        errorStore.info('App', 'Application ready');
+        errorStore.info("App", "Application ready");
     });
 
     async function doCompile(content: string) {
@@ -211,8 +310,13 @@
         try {
             // Use session store for lemma mappings - keyed by word INDEX
             // Only confirmed word instances get lemma attributes
-            const lemmaMappings: Record<number, { lemma: string; msa: string; normalized?: string }> = {};
-            for (const [indexStr, mapping] of Object.entries($sessionLemmaStore.mappings)) {
+            const lemmaMappings: Record<
+                number,
+                { lemma: string; msa: string; normalized?: string }
+            > = {};
+            for (const [indexStr, mapping] of Object.entries(
+                $sessionLemmaStore.mappings,
+            )) {
                 const index = parseInt(indexStr, 10);
                 lemmaMappings[index] = {
                     lemma: mapping.lemma,
@@ -221,7 +325,10 @@
                 };
             }
 
-            console.log('Compiling with session lemma mappings (by index):', lemmaMappings);
+            console.log(
+                "Compiling with session lemma mappings (by index):",
+                lemmaMappings,
+            );
 
             previewContent = await compileDsl(
                 content,
@@ -235,10 +342,11 @@
                     normalizerJson: normalizerJson ?? undefined,
                     entityMappingsJson: entityMappingsJson ?? undefined,
                     customMappings: $entityStore.customMappings,
-                    lemmaMappingsJson: Object.keys(lemmaMappings).length > 0
-                        ? JSON.stringify(lemmaMappings)
-                        : undefined,
-                }
+                    lemmaMappingsJson:
+                        Object.keys(lemmaMappings).length > 0
+                            ? JSON.stringify(lemmaMappings)
+                            : undefined,
+                },
             );
         } catch (e) {
             previewContent = `Error: ${e}`;
@@ -249,7 +357,10 @@
         if (!$settings.autoPreview) return;
 
         clearTimeout(compileTimeout);
-        compileTimeout = setTimeout(() => doCompile(content), $settings.previewDelay);
+        compileTimeout = setTimeout(
+            () => doCompile(content),
+            $settings.previewDelay,
+        );
     }
 
     function handleEditorChange(content: string) {
@@ -261,7 +372,12 @@
         showEntityBrowser = false;
     }
 
-    function handleWordClick(facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) {
+    function handleWordClick(
+        facsimile: string,
+        diplomatic: string,
+        wordIndex: number,
+        element: HTMLElement,
+    ) {
         selectedWordFacsimile = facsimile;
         selectedWordDiplomatic = diplomatic;
         selectedWordIndex = wordIndex;
@@ -277,9 +393,16 @@
         selectedWordElement = null;
     }
 
-    function handleLemmatizerSave(wordIndex: number, lemma?: string, msa?: string) {
-        console.log('handleLemmatizerSave called', { wordIndex, lemma, msa });
-        console.log('Current session lemma mappings:', $sessionLemmaStore.mappings);
+    function handleLemmatizerSave(
+        wordIndex: number,
+        lemma?: string,
+        msa?: string,
+    ) {
+        console.log("handleLemmatizerSave called", { wordIndex, lemma, msa });
+        console.log(
+            "Current session lemma mappings:",
+            $sessionLemmaStore.mappings,
+        );
         // Trigger immediate recompile to update TEI output with new lemma
         // Use doCompile directly to bypass autoPreview check and delay
         doCompile($editor.content);
@@ -291,23 +414,32 @@
         if (!action) return;
 
         // Revert the action (without pushing to history again)
-        if (action.type === 'confirm') {
+        if (action.type === "confirm") {
             // Undo a confirm: restore previous state
             if (action.previousMapping) {
-                sessionLemmaStore.confirm(action.wordIndex, action.previousMapping);
+                sessionLemmaStore.confirm(
+                    action.wordIndex,
+                    action.previousMapping,
+                );
             } else {
                 sessionLemmaStore.unconfirm(action.wordIndex);
             }
         } else {
             // Undo an unconfirm: restore the mapping
             if (action.previousMapping) {
-                sessionLemmaStore.confirm(action.wordIndex, action.previousMapping);
+                sessionLemmaStore.confirm(
+                    action.wordIndex,
+                    action.previousMapping,
+                );
             }
         }
 
         // Recompile to reflect changes
         doCompile($editor.content);
-        errorStore.info('Undo', `Undid lemmatization for word #${action.wordIndex}`);
+        errorStore.info(
+            "Undo",
+            `Undid lemmatization for word #${action.wordIndex}`,
+        );
     }
 
     function handleLemmaRedo() {
@@ -315,7 +447,7 @@
         if (!action) return;
 
         // Reapply the action (without pushing to history again)
-        if (action.type === 'confirm') {
+        if (action.type === "confirm") {
             // Redo a confirm: apply the mapping
             if (action.mapping) {
                 sessionLemmaStore.confirm(action.wordIndex, action.mapping);
@@ -327,15 +459,18 @@
 
         // Recompile to reflect changes
         doCompile($editor.content);
-        errorStore.info('Redo', `Redid lemmatization for word #${action.wordIndex}`);
+        errorStore.info(
+            "Redo",
+            `Redid lemmatization for word #${action.wordIndex}`,
+        );
     }
 
     // Project file handling
     async function handleOpenProject() {
         const path = await open({
             filters: [
-                { name: 'TEI Scribe Project', extensions: ['teis'] },
-                { name: 'DSL Source', extensions: ['dsl', 'txt'] },
+                { name: "TEI Scribe Project", extensions: ["teis"] },
+                { name: "DSL Source", extensions: ["dsl", "txt"] },
             ],
         });
         if (!path) return;
@@ -343,7 +478,7 @@
         const pathStr = path as string;
 
         try {
-            if (pathStr.endsWith('.teis')) {
+            if (pathStr.endsWith(".teis")) {
                 // Open project archive
                 const project = await openProject(pathStr);
 
@@ -354,14 +489,18 @@
                 // Clear lemmatization history and session confirmations
                 lemmatizationHistory.clear();
                 sessionLemmaStore.clear();
-                for (const [indexStr, mapping] of Object.entries(project.confirmations)) {
+                for (const [indexStr, mapping] of Object.entries(
+                    project.confirmations,
+                )) {
                     const index = parseInt(indexStr, 10);
                     sessionLemmaStore.confirm(index, mapping);
                 }
 
                 // Restore template if possible
                 const templates = $templateStore.templates;
-                const template = templates.find(t => t.id === project.manifest.template_id);
+                const template = templates.find(
+                    (t) => t.id === project.manifest.template_id,
+                );
                 if (template) {
                     templateStore.setActive(template);
                 }
@@ -369,7 +508,7 @@
                 // Trigger recompile
                 await doCompile(project.source);
 
-                errorStore.info('Project', `Opened project from ${pathStr}`);
+                errorStore.info("Project", `Opened project from ${pathStr}`);
             } else {
                 // Open plain DSL file (backwards compatibility)
                 const file = await openFile(pathStr);
@@ -382,26 +521,31 @@
 
                 await doCompile(file.content);
 
-                errorStore.info('File', `Opened DSL file from ${pathStr}`);
+                errorStore.info("File", `Opened DSL file from ${pathStr}`);
             }
         } catch (e) {
-            errorStore.error('Open', `Failed to open: ${e}`);
+            errorStore.error("Open", `Failed to open: ${e}`);
         }
     }
 
     async function handleSaveProject() {
         const template = $templateStore.active;
         if (!template) {
-            errorStore.warning('Save', 'Please select a template before saving');
+            errorStore.warning(
+                "Save",
+                "Please select a template before saving",
+            );
             return;
         }
 
         // Get save path (use existing or prompt for new)
         let path = $editor.filePath;
-        if (!path || !path.endsWith('.teis')) {
+        if (!path || !path.endsWith(".teis")) {
             path = await save({
-                filters: [{ name: 'TEI Scribe Project', extensions: ['teis'] }],
-                defaultPath: path ? path.replace(/\.[^.]+$/, '.teis') : undefined,
+                filters: [{ name: "TEI Scribe Project", extensions: ["teis"] }],
+                defaultPath: path
+                    ? path.replace(/\.[^.]+$/, ".teis")
+                    : undefined,
             });
         }
         if (!path) return;
@@ -411,7 +555,9 @@
             await doCompile($editor.content);
 
             // Serialize session confirmations
-            const confirmationsJson = JSON.stringify($sessionLemmaStore.mappings);
+            const confirmationsJson = JSON.stringify(
+                $sessionLemmaStore.mappings,
+            );
 
             // Save project archive
             await saveProject(
@@ -419,26 +565,31 @@
                 $editor.content,
                 previewContent,
                 confirmationsJson,
-                template.id
+                template.id,
             );
 
             editor.setFile(path, $editor.content);
-            errorStore.info('Project', `Saved project to ${path}`);
+            errorStore.info("Project", `Saved project to ${path}`);
         } catch (e) {
-            errorStore.error('Save', `Failed to save project: ${e}`);
+            errorStore.error("Save", `Failed to save project: ${e}`);
         }
     }
 
     async function handleExportXml() {
         const template = $templateStore.active;
         if (!template) {
-            errorStore.warning('Export', 'Please select a template before exporting');
+            errorStore.warning(
+                "Export",
+                "Please select a template before exporting",
+            );
             return;
         }
 
         const path = await save({
-            filters: [{ name: 'TEI-XML', extensions: ['xml'] }],
-            defaultPath: $editor.filePath ? $editor.filePath.replace(/\.[^.]+$/, '.xml') : undefined,
+            filters: [{ name: "TEI-XML", extensions: ["xml"] }],
+            defaultPath: $editor.filePath
+                ? $editor.filePath.replace(/\.[^.]+$/, ".xml")
+                : undefined,
         });
         if (!path) return;
 
@@ -447,41 +598,61 @@
             await doCompile($editor.content);
 
             await exportTei(path, previewContent);
-            errorStore.info('Export', `Exported TEI-XML to ${path}`);
+            errorStore.info("Export", `Exported TEI-XML to ${path}`);
         } catch (e) {
-            errorStore.error('Export', `Failed to export: ${e}`);
+            errorStore.error("Export", `Failed to export: ${e}`);
         }
     }
 
     async function handleExportDictionary() {
         const path = await save({
-            filters: [{ name: 'JSON', extensions: ['json'] }],
-            defaultPath: 'inflections.json',
+            filters: [{ name: "JSON", extensions: ["json"] }],
+            defaultPath: "inflections.json",
         });
         if (!path) return;
 
         try {
             const count = await exportInflections(path);
-            errorStore.info('Export', `Exported ${count} inflection entries to ${path}`);
+            errorStore.info(
+                "Export",
+                `Exported ${count} inflection entries to ${path}`,
+            );
         } catch (e) {
-            errorStore.error('Export', `Failed to export dictionary: ${e}`);
+            errorStore.error("Export", `Failed to export dictionary: ${e}`);
         }
     }
 
     // Keyboard shortcuts
     function handleKeydown(event: KeyboardEvent) {
+        // F1: Open help
+        if (event.key === "F1") {
+            event.preventDefault();
+            showHelp = true;
+            return;
+        }
+
         if (event.ctrlKey || event.metaKey) {
-            if (event.key === 's') {
+            if (event.key === "s") {
                 event.preventDefault();
                 handleSaveProject();
-            } else if (event.key === 'o') {
+            } else if (event.key === "o") {
                 event.preventDefault();
                 handleOpenProject();
-            } else if (event.shiftKey && (event.key === 'z' || event.key === 'Z')) {
+            } else if (event.key === "?" || event.key === "/") {
+                // Ctrl+? or Ctrl+/: Open help
+                event.preventDefault();
+                showHelp = true;
+            } else if (
+                event.shiftKey &&
+                (event.key === "z" || event.key === "Z")
+            ) {
                 // Ctrl+Shift+Z: Undo lemmatization
                 event.preventDefault();
                 handleLemmaUndo();
-            } else if (event.shiftKey && (event.key === 'y' || event.key === 'Y')) {
+            } else if (
+                event.shiftKey &&
+                (event.key === "y" || event.key === "Y")
+            ) {
                 // Ctrl+Shift+Y: Redo lemmatization
                 event.preventDefault();
                 handleLemmaRedo();
@@ -493,13 +664,24 @@
 <svelte:window on:keydown={handleKeydown} />
 
 <div class="flex flex-col h-screen overflow-hidden bg-base-100">
-    <Toolbar onopen={handleOpenProject} onsave={handleSaveProject} onexportxml={handleExportXml} onexportdict={handleExportDictionary} onundo={handleLemmaUndo} onredo={handleLemmaRedo} />
+    <Toolbar
+        onopen={handleOpenProject}
+        onsave={handleSaveProject}
+        onexportxml={handleExportXml}
+        onexportdict={handleExportDictionary}
+        onundo={handleLemmaUndo}
+        onredo={handleLemmaRedo}
+        onsettings={() => (showSettings = true)}
+        onhelp={() => (showHelp = true)}
+    />
 
     <div class="flex-1 overflow-hidden">
         <Splitpanes theme="themed">
             <Pane minSize={20}>
                 <div class="flex flex-col h-full">
-                    <div class="flex justify-between items-center px-4 py-2 bg-base-200 border-b border-base-300 font-medium text-sm">
+                    <div
+                        class="flex justify-between items-center px-4 py-2 bg-base-200 border-b border-base-300 font-medium text-sm"
+                    >
                         <span>DSL Editor</span>
                         <div class="flex gap-1">
                             <button
@@ -530,11 +712,17 @@
                             </button>
                         </div>
                     </div>
-                    <Editor bind:this={editorComponent} onchange={handleEditorChange} />
+                    <Editor
+                        bind:this={editorComponent}
+                        onchange={handleEditorChange}
+                    />
                 </div>
             </Pane>
             <Pane minSize={20}>
-                <Preview content={previewContent} onwordclick={handleWordClick} />
+                <Preview
+                    content={previewContent}
+                    onwordclick={handleWordClick}
+                />
             </Pane>
         </Splitpanes>
     </div>
@@ -542,9 +730,15 @@
     {#if showTemplateManager}
         <div class="modal modal-open">
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="modal-backdrop" role="none" onclick={() => (showTemplateManager = false)}></div>
+            <div
+                class="modal-backdrop"
+                role="none"
+                onclick={() => (showTemplateManager = false)}
+            ></div>
             <div class="modal-box">
-                <TemplateManager onclose={() => (showTemplateManager = false)} />
+                <TemplateManager
+                    onclose={() => (showTemplateManager = false)}
+                />
             </div>
         </div>
     {/if}
@@ -552,7 +746,11 @@
     {#if showEntityBrowser}
         <div class="modal modal-open">
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="modal-backdrop" role="none" onclick={() => (showEntityBrowser = false)}></div>
+            <div
+                class="modal-backdrop"
+                role="none"
+                onclick={() => (showEntityBrowser = false)}
+            ></div>
             <div class="modal-box max-w-4xl">
                 <EntityBrowser
                     oninsert={handleEntityInsert}
@@ -565,7 +763,11 @@
     {#if showErrorPanel}
         <div class="modal modal-open">
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="modal-backdrop" role="none" onclick={() => (showErrorPanel = false)}></div>
+            <div
+                class="modal-backdrop"
+                role="none"
+                onclick={() => (showErrorPanel = false)}
+            ></div>
             <div class="modal-box max-w-3xl">
                 <ErrorPanel onclose={() => (showErrorPanel = false)} />
             </div>
@@ -575,12 +777,25 @@
     {#if showLemmatizer && selectedWordDiplomatic && selectedWordIndex >= 0}
         <div class="modal modal-open">
             <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-            <div class="modal-backdrop" role="none" onclick={handleLemmatizerClose}></div>
+            <div
+                class="modal-backdrop"
+                role="none"
+                onclick={handleLemmatizerClose}
+            ></div>
             <div class="modal-box max-w-2xl">
-                <Lemmatizer facsimile={selectedWordFacsimile || ''} diplomatic={selectedWordDiplomatic} wordIndex={selectedWordIndex} onclose={handleLemmatizerClose} onsave={handleLemmatizerSave} />
+                <Lemmatizer
+                    facsimile={selectedWordFacsimile || ""}
+                    diplomatic={selectedWordDiplomatic}
+                    wordIndex={selectedWordIndex}
+                    onclose={handleLemmatizerClose}
+                    onsave={handleLemmatizerSave}
+                />
             </div>
         </div>
     {/if}
+
+    <SettingsDialog bind:isopen={showSettings} />
+    <HelpDialog bind:isopen={showHelp} />
 </div>
 
 <style>

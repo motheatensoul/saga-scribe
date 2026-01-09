@@ -1,11 +1,54 @@
 <!doctype html>
 <html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		%sveltekit.head%
-	</head>
-	<body data-sveltekit-preload-data="hover">
-		<div style="display: contents">%sveltekit.body%</div>
-	</body>
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script>
+            // Apply theme immediately to prevent flash
+            // Note: This runs before Tauri is initialized, so we can't use Tauri commands
+            // The proper theme will be applied after settings load
+            (function () {
+                try {
+                    // Try to load cached theme from localStorage
+                    const cachedTheme =
+                        localStorage.getItem("saga-scribe-theme");
+                    let theme = cachedTheme || "system";
+
+                    // Get effective theme
+                    let effectiveTheme = theme;
+                    if (theme === "system" || !theme) {
+                        // Fallback to media query for initial load
+                        // Note: On Linux, this may not always reflect GNOME settings
+                        // The Tauri backend will apply the correct theme after initialization
+                        effectiveTheme = window.matchMedia(
+                            "(prefers-color-scheme: dark)",
+                        ).matches
+                            ? "dark"
+                            : "light";
+                    }
+
+                    // Apply DaisyUI theme
+                    const themeMap = {
+                        light: "caramellatte",
+                        dark: "coffee",
+                    };
+
+                    document.documentElement.setAttribute(
+                        "data-theme",
+                        themeMap[effectiveTheme],
+                    );
+                } catch (e) {
+                    // Fallback to light theme
+                    document.documentElement.setAttribute(
+                        "data-theme",
+                        "caramellatte",
+                    );
+                }
+            })();
+        </script>
+        %sveltekit.head%
+    </head>
+    <body data-sveltekit-preload-data="hover">
+        <div style="display: contents">%sveltekit.body%</div>
+    </body>
 </html>

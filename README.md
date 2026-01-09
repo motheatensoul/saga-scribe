@@ -12,6 +12,7 @@ A desktop application for scholarly manuscript transcription, producing TEI-XML 
 - **Lemmatization**: ONP dictionary integration with morphological analysis (me:msa)
 - **Project archives**: Bundle source, compiled XML, and lemma confirmations in .teis files
 - **Real-time preview**: See rendered text or XML as you type
+- **Settings menu**: Configure theme, font size, auto-preview, and default template
 
 ## Tech Stack
 
@@ -58,11 +59,21 @@ bun run tauri build  # Production build
 |----------|--------|
 | Ctrl+S | Save project (.teis archive) |
 | Ctrl+O | Open project or DSL file |
+| Ctrl+Shift+Z | Undo lemmatization |
+| Ctrl+Shift+Y | Redo lemmatization |
+| F1 | Open help dialog |
+| Ctrl+/ | Open help dialog (alternative) |
+
+The toolbar provides access to:
+- **Settings** (⚙️ icon): Appearance, editor, and template preferences
+- **Help** (? icon): Keyboard shortcuts, DSL syntax reference, and about information
 
 ## Documentation
 
 See `docs/user-guide.md` for detailed usage instructions including:
 - DSL syntax reference
+- Settings and preferences
+- Help system and keyboard shortcuts
 - Entity browser and custom mappings
 - Lemmatization workflow
 - Template configuration

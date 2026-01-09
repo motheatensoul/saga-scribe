@@ -23,6 +23,34 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Initialize window theme based on settings
+            use settings::SettingsManager;
+            use tauri::Manager;
+
+            let app_handle = app.handle();
+            if let Ok(manager) = SettingsManager::new(&app_handle) {
+                let settings = manager.load();
+                let theme_str = settings.theme;
+
+                // Determine effective theme
+                let effective_theme = if theme_str == "system" {
+                    commands::settings::get_system_theme()
+                } else {
+                    theme_str
+                };
+
+                // Set window theme
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    let window_theme = if effective_theme == "dark" {
+                        tauri::Theme::Dark
+                    } else {
+                        tauri::Theme::Light
+                    };
+                    let _ = window.set_theme(Some(window_theme));
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -37,6 +65,8 @@ pub fn run() {
             commands::template::save_template,
             commands::settings::load_settings,
             commands::settings::save_settings,
+            commands::settings::get_system_theme,
+            commands::settings::set_window_theme,
             commands::parse::compile_dsl,
             commands::entities::load_entities,
             commands::entities::get_entity,

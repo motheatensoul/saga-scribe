@@ -23,7 +23,7 @@ fn default_font_size() -> u32 {
 }
 
 fn default_theme() -> String {
-    "light".to_string()
+    "system".to_string()
 }
 
 fn default_auto_preview() -> bool {
@@ -52,10 +52,7 @@ pub struct SettingsManager {
 
 impl SettingsManager {
     pub fn new(app: &AppHandle) -> Result<Self, String> {
-        let app_data = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?;
+        let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
         fs::create_dir_all(&app_data).map_err(|e| e.to_string())?;
 

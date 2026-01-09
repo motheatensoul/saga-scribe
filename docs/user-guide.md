@@ -26,6 +26,63 @@ Saga-Scribe uses `.teis` project archives (ZIP format) that bundle:
 
 This means you never lose your lemmatization work when saving and reopening projects.
 
+## Settings
+
+Click the ⚙️ (gear) icon in the toolbar to open the Settings dialog.
+
+### Appearance Settings
+
+- **Theme**: Choose between Light, Dark, or System color schemes
+  - **System**: Automatically follows your operating system's theme preference
+    - On Linux: Uses xdg-desktop-portal (works with GNOME, KDE, XFCE, etc.)
+    - On macOS/Windows: Uses native system APIs
+  - **Light**: Always use the light theme (caramellatte)
+  - **Dark**: Always use the dark theme (coffee)
+- **Editor Font Size**: Adjust the font size in the DSL editor (10-24px)
+
+### Editor Settings
+
+- **Auto-preview**: Toggle automatic preview updates as you type
+- **Preview Delay**: Set the debounce delay (100-2000ms) before preview updates
+  - Only visible when auto-preview is enabled
+  - Lower values update faster but may impact performance on large documents
+
+### Default Template
+
+- **Active Template**: Select which template to use by default for new projects
+- Changes to the active template take effect immediately
+
+Settings are automatically saved when you click "Save Changes". Click "Reset to Defaults" to restore all settings to their original values.
+
+## Help System
+
+Press **F1** or click the **?** button in the toolbar to open the Help dialog. You can also use **Ctrl+/** (or **Cmd+/** on macOS).
+
+The Help dialog contains three tabs:
+
+### Keyboard Shortcuts
+
+A complete reference of all keyboard shortcuts for:
+- **Application shortcuts**: Save, Open, Undo/Redo lemmatization
+- **Editor shortcuts**: Standard CodeMirror editing commands
+
+| Shortcut | Action |
+|----------|--------|
+| Ctrl+S | Save project |
+| Ctrl+O | Open project |
+| Ctrl+Shift+Z | Undo lemmatization |
+| Ctrl+Shift+Y | Redo lemmatization |
+| F1 | Open help |
+| Escape | Close dialog |
+
+### DSL Syntax
+
+A quick reference table showing all DSL syntax elements and their TEI-XML output. Useful when you need to look up the correct notation for a specific element.
+
+### About
+
+Version information, feature summary, and license details.
+
 ## DSL Syntax
 
 The Domain-Specific Language (DSL) uses short notation that compiles to TEI-XML.

@@ -128,6 +128,8 @@ Users can override any mapping via the Entity Browser's custom mapping editor.
 - **Built-in templates:** `src-tauri/src/template/manager.rs`
 - **Main UI:** `src/routes/+page.svelte`
 - **Editor component:** `src/lib/components/Editor.svelte`
+- **Settings dialog:** `src/lib/components/SettingsDialog.svelte`
+- **Help dialog:** `src/lib/components/HelpDialog.svelte`
 - **Syntax highlighting:** `src/lib/parser/highlighter.ts`, `src/lib/parser/tei-dsl.grammar`
 - **ONP dictionary:** `src-tauri/src/dictionary/onp.rs`
 - **Inflection store:** `src-tauri/src/dictionary/inflections.rs`
@@ -168,9 +170,24 @@ Users can override any mapping via the Entity Browser's custom mapping editor.
 - Undo/redo for lemmatization: Ctrl+Shift+Z (undo), Ctrl+Shift+Y (redo)
 - Batch export of inflection dictionary (Export Dict button in toolbar)
 - User documentation (`docs/user-guide.md`)
+- Settings menu with UI for theme (light/dark/system), font size, auto-preview, preview delay, and default template
+- System theme option that respects OS dark/light mode preference via xdg-desktop-portal (Linux), native APIs (macOS/Windows)
+
+- Help system with keyboard shortcuts reference, DSL syntax guide, and about section (F1 or ? button)
 
 **Not Yet Implemented:**
-- Proper user settings menu
+- Template editing UI (currently templates are built-in or manually edited)
+- TEI-XML validation against schema
+- Search/replace functionality in editor
+- Editor undo/redo (CodeMirror has built-in support, needs UI integration)
+- Import from other transcription formats
+- XSLT support for rendering from XML
+- Export to additional formats (HTML, PDF)
+- Collapsible sections in editor for long documents
+- Word-level annotations beyond lemmatization
+- Manuscript metadata editor (beyond template header)
+- Custom entity set management (add/remove entities beyond MENOTA)
+- Performance optimization for large manuscripts (>10k lines)
 
 ## Testing
 
