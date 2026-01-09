@@ -1,11 +1,10 @@
 <script lang="ts">
     import { templateStore, type Template } from "$lib/stores/template";
-    import {
-        listTemplates,
-        saveTemplate,
-        deleteTemplate,
-    } from "$lib/tauri";
+    import { listTemplates, saveTemplate, deleteTemplate } from "$lib/tauri";
     import { errorStore } from "$lib/stores/errors";
+
+    //Icons
+    import { BookCopy, PencilRuler, X as CloseButton } from "@lucide/svelte";
 
     let {
         isopen = $bindable(false),
@@ -217,10 +216,7 @@
                 }
             }
 
-            errorStore.info(
-                "Template",
-                `Template "${template.name}" deleted`,
-            );
+            errorStore.info("Template", `Template "${template.name}" deleted`);
         } catch (e) {
             errorStore.error("Template", `Failed to delete: ${e}`);
         } finally {
@@ -269,7 +265,7 @@
                     onclick={handleClose}
                     aria-label="Close"
                 >
-                    ✕
+                    <CloseButton size="18" strokeWidth="3" />
                 </button>
             </div>
 
@@ -280,7 +276,7 @@
                     <div class="space-y-3">
                         {#each $templateStore.templates as template}
                             <div
-                                class="flex items-start justify-between p-4 bg-base-200 rounded-lg gap-4"
+                                class="flex items-center justify-between p-4 bg-base-200 rounded-lg gap-4"
                             >
                                 <div class="flex-1 min-w-0">
                                     <div class="flex items-center gap-2">
@@ -325,22 +321,23 @@
                                         {/if}
                                     </div>
                                 </div>
-                                <div class="flex gap-1 shrink-0">
+                                <div class="flex grow justify-end ">
                                     <button
-                                        class="btn btn-ghost btn-sm"
-                                        onclick={() => handleDuplicate(template)}
+                                        class="btn btn-ghost btn-sm hover:btn-accent"
+                                        onclick={() =>
+                                            handleDuplicate(template)}
                                         title="Duplicate template"
                                     >
-                                        📋
+                                        <BookCopy size="20" />
                                     </button>
                                     <button
-                                        class="btn btn-ghost btn-sm"
+                                        class="btn btn-ghost btn-sm hover:btn-accent"
                                         onclick={() => handleEdit(template)}
                                         title={isBuiltin(template.id)
                                             ? "Clone and customize"
                                             : "Edit template"}
                                     >
-                                        {isBuiltin(template.id) ? "🔧" : "✏️"}
+                                        <PencilRuler size="20" />
                                     </button>
                                     {#if !isBuiltin(template.id)}
                                         <button
@@ -386,7 +383,8 @@
                             <!-- ID (read-only for existing) -->
                             <div class="form-control">
                                 <label class="label" for="template-id">
-                                    <span class="label-text font-medium">ID</span
+                                    <span class="label-text font-medium"
+                                        >ID</span
                                     >
                                     <span class="label-text-alt"
                                         >Auto-generated from name</span
@@ -454,7 +452,9 @@
                                     <input
                                         type="checkbox"
                                         class="checkbox checkbox-sm checkbox-primary"
-                                        bind:checked={editingTemplate.autoLineNumbers}
+                                        bind:checked={
+                                            editingTemplate.autoLineNumbers
+                                        }
                                     />
                                     <div class="flex flex-col">
                                         <span class="label-text"
@@ -473,7 +473,9 @@
                                     <input
                                         type="checkbox"
                                         class="checkbox checkbox-sm checkbox-primary"
-                                        bind:checked={editingTemplate.multiLevel}
+                                        bind:checked={
+                                            editingTemplate.multiLevel
+                                        }
                                     />
                                     <div class="flex flex-col">
                                         <span class="label-text"
@@ -544,7 +546,10 @@
                     <button class="btn btn-outline" onclick={handleCreate}>
                         + New Template
                     </button>
-                    <button class="btn btn-ghost" onclick={() => (isopen = false)}>
+                    <button
+                        class="btn btn-ghost"
+                        onclick={() => (isopen = false)}
+                    >
                         Close
                     </button>
                 {:else}
@@ -560,7 +565,9 @@
                             <span class="loading loading-spinner loading-sm"
                             ></span>
                         {/if}
-                        {viewMode === "create" ? "Create Template" : "Save Changes"}
+                        {viewMode === "create"
+                            ? "Create Template"
+                            : "Save Changes"}
                     </button>
                 {/if}
             </div>

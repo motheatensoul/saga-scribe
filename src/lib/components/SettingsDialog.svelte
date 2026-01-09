@@ -2,6 +2,9 @@
     import { settings } from "$lib/stores/settings";
     import { templateStore } from "$lib/stores/template";
 
+    //Icons
+    import { X as CloseButton } from "@lucide/svelte";
+
     let {
         isopen = $bindable(false),
     }: {
@@ -85,7 +88,7 @@
                     onclick={handleCancel}
                     aria-label="Close settings"
                 >
-                    ✕
+                    <CloseButton size="16" strokeWidth="3" />
                 </button>
             </div>
 
@@ -214,7 +217,10 @@
                                         <span>1000ms</span>
                                         <span>2000ms</span>
                                     </div>
-                                    <label class="label" for="preview-delay-input">
+                                    <label
+                                        class="label"
+                                        for="preview-delay-input"
+                                    >
                                         <span class="label-text-alt"
                                             >Time to wait after typing before
                                             updating preview</span

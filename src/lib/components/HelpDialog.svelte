@@ -1,4 +1,7 @@
 <script lang="ts">
+    //Icons
+    import { X as CloseButton } from "@lucide/svelte";
+
     let {
         isopen = $bindable(false),
     }: {
@@ -131,34 +134,34 @@
             <div
                 class="flex items-center justify-between p-4 border-b border-base-300"
             >
-                <h2 id="help-title" class="text-xl font-bold">Help</h2>
+                <h2 id="help-title" class="text-xl font-bold px-3 xl:text-2xl">Help</h2>
                 <button
                     class="btn btn-ghost btn-sm btn-circle"
                     onclick={handleClose}
                     aria-label="Close help"
                 >
-                    ✕
+                    <CloseButton size="16" strokeWidth="3" />
                 </button>
             </div>
 
             <!-- Tabs -->
-            <div class="tabs tabs-bordered px-4 pt-2">
+            <div class="tabs tabs-border px-5 py-2 xl:px-6 xl:py-4 justify-center">
                 <button
-                    class="tab"
+                    class="tab text-md xl:text-lg font-semibold"
                     class:tab-active={activeTab === "shortcuts"}
                     onclick={() => (activeTab = "shortcuts")}
                 >
                     Keyboard Shortcuts
                 </button>
                 <button
-                    class="tab"
+                    class="tab text-md xl:text-lg font-semibold"
                     class:tab-active={activeTab === "dsl"}
                     onclick={() => (activeTab = "dsl")}
                 >
                     DSL Syntax
                 </button>
                 <button
-                    class="tab"
+                    class="tab text-md xl:text-lg font-semibold"
                     class:tab-active={activeTab === "about"}
                     onclick={() => (activeTab = "about")}
                 >
@@ -167,18 +170,20 @@
             </div>
 
             <!-- Content -->
-            <div class="p-4 overflow-y-auto flex-1">
+            <div class="py-4 px-8 overflow-y-auto flex-1">
                 {#if activeTab === "shortcuts"}
                     <div class="space-y-6">
                         <!-- Application Shortcuts -->
                         <section>
-                            <h3 class="text-lg font-semibold mb-3 text-primary">
+                            <h3
+                                class="text-lg font-semibold mb-3 text-primary xl:text-xl"
+                            >
                                 Application
                             </h3>
                             <div class="overflow-x-auto">
                                 <table class="table table-sm">
                                     <thead>
-                                        <tr>
+                                        <tr class="text-md xl:text-lg">
                                             <th class="w-1/3">Shortcut</th>
                                             <th>Action</th>
                                         </tr>
@@ -187,10 +192,12 @@
                                         {#each shortcuts as shortcut}
                                             <tr>
                                                 <td>
-                                                    <div class="flex gap-1">
+                                                    <div
+                                                        class="flex gap-1 text-sm xl:text-md"
+                                                    >
                                                         {#each shortcut.keys as key, i}
                                                             <kbd
-                                                                class="kbd kbd-sm"
+                                                                class="kbd kbd-sm xl:kbd-md"
                                                                 >{key}</kbd
                                                             >
                                                             {#if i < shortcut.keys.length - 1}
@@ -202,7 +209,9 @@
                                                         {/each}
                                                     </div>
                                                 </td>
-                                                <td>{shortcut.action}</td>
+                                                <td class="text-xs xl:text-sm">
+                                                    {shortcut.action}
+                                                </td>
                                             </tr>
                                         {/each}
                                     </tbody>
@@ -212,13 +221,13 @@
 
                         <!-- Editor Shortcuts -->
                         <section>
-                            <h3 class="text-lg font-semibold mb-3 text-primary">
+                            <h3 class="text-lg font-semibold mb-3 text-primary xl:text-xl">
                                 Editor
                             </h3>
                             <div class="overflow-x-auto">
                                 <table class="table table-sm">
                                     <thead>
-                                        <tr>
+                                        <tr class="text-md xl:text-lg">
                                             <th class="w-1/3">Shortcut</th>
                                             <th>Action</th>
                                         </tr>
@@ -227,10 +236,10 @@
                                         {#each editorShortcuts as shortcut}
                                             <tr>
                                                 <td>
-                                                    <div class="flex gap-1">
+                                                    <div class="flex gap-1 text-sm xl:text-md">
                                                         {#each shortcut.keys as key, i}
                                                             <kbd
-                                                                class="kbd kbd-sm"
+                                                                class="kbd kbd-sm xl:kbd-md"
                                                                 >{key}</kbd
                                                             >
                                                             {#if i < shortcut.keys.length - 1}
@@ -242,7 +251,9 @@
                                                         {/each}
                                                     </div>
                                                 </td>
-                                                <td>{shortcut.action}</td>
+                                                <td class="text-xs xl:text-sm">
+                                                    {shortcut.action}
+                                                </td>
                                             </tr>
                                         {/each}
                                     </tbody>
@@ -250,7 +261,7 @@
                             </div>
                         </section>
 
-                        <p class="text-sm text-base-content/70 mt-4">
+                        <p class="text-sm text-base-content/70 mt-4 xl:text-md">
                             <strong>Note:</strong> On macOS, use
                             <kbd class="kbd kbd-xs">Cmd</kbd> instead of
                             <kbd class="kbd kbd-xs">Ctrl</kbd>.
@@ -258,7 +269,7 @@
                     </div>
                 {:else if activeTab === "dsl"}
                     <div class="space-y-4">
-                        <p class="text-sm text-base-content/70">
+                        <p class="text-sm text-base-content/70 xl:text-md">
                             The DSL (Domain-Specific Language) provides
                             shorthand notation for TEI-XML transcription. Type
                             DSL syntax in the editor and it compiles to TEI-XML.
@@ -267,7 +278,7 @@
                         <div class="overflow-x-auto">
                             <table class="table table-sm">
                                 <thead>
-                                    <tr>
+                                    <tr class="text-sm xl:text-md ">
                                         <th>DSL Syntax</th>
                                         <th>TEI-XML Output</th>
                                         <th>Description</th>
@@ -374,7 +385,8 @@
                         <div class="space-y-2">
                             <h4 class="font-semibold">Documentation</h4>
                             <p class="text-sm text-base-content/70">
-                                See <code>docs/user-guide.md</code> for detailed documentation.
+                                See <code>docs/user-guide.md</code> for detailed
+                                documentation.
                             </p>
                         </div>
 

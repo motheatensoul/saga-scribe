@@ -1,6 +1,9 @@
 <script lang="ts">
     import { entityStore, entityNames, type Entity } from '$lib/stores/entities';
     import { saveEntityMapping, removeEntityMapping } from '$lib/tauri';
+    
+    //Icons
+    import { X as CloseButton } from '@lucide/svelte';
 
     let { oninsert, onclose }: { oninsert?: (text: string) => void; onclose?: () => void } = $props();
 
@@ -87,7 +90,9 @@
 <div>
     <div class="flex justify-between items-center mb-4">
         <h2 class="text-lg font-bold">Entity Browser</h2>
-        <button class="btn btn-ghost btn-sm" onclick={onclose} aria-label="Close">×</button>
+        <button class="btn btn-ghost btn-sm btn-circle" onclick={onclose} aria-label="Close">
+            <CloseButton size="16" strokeWidth="3" />
+        </button>
     </div>
 
     <div class="flex gap-2 mb-4">

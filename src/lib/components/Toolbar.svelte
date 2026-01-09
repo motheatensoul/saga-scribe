@@ -5,6 +5,16 @@
     import { settings } from "$lib/stores/settings";
     import { canUndo, canRedo } from "$lib/stores/lemmatizationHistory";
 
+    //Icons
+    import {
+        Settings as SettingsIcon,
+        BadgeQuestionMark as HelpIcon,
+        Save as SaveIcon,
+        FolderOpen as OpenIcon,
+        Undo as UndoIcon,
+        Redo as RedoIcon,
+    } from "@lucide/svelte";
+
     let {
         onopen,
         onsave,
@@ -39,31 +49,31 @@
 <div class="navbar bg-neutral text-neutral-content px-4 min-h-12">
     <div class="flex gap-2">
         <button
-            class="btn btn-primary btn-sm"
+            class="btn btn-primary hover:btn-secondary text-primary-content hover:text-seconary-content btn-sm xl:btn-md"
             onclick={onopen}
-            title="Open project (Ctrl+O)">Open</button
+            title="Open project (Ctrl+O)"><OpenIcon size="18" />Open</button
         >
         <button
-            class="btn btn-primary btn-sm"
+            class="btn btn-primary hover:btn-secondary text-primary-content hover:text-seconary-content btn-sm xl:btn-md"
             onclick={onsave}
-            title="Save project (Ctrl+S)">Save</button
+            title="Save project (Ctrl+S)"><SaveIcon size="18" />Save</button
         >
         <button
-            class="btn btn-ghost btn-sm"
+            class="btn btn-ghost btn-sm xl:btn-md"
             onclick={onexportxml}
             title="Export TEI-XML to separate file">Export XML</button
         >
         <button
-            class="btn btn-ghost btn-sm"
+            class="btn btn-ghost btn-sm xl:btn-md"
             onclick={onexportdict}
             title="Export inflection dictionary to JSON">Export Dict</button
         >
     </div>
 
     <div class="flex items-center gap-2 ml-4">
-        <span class="text-sm">Template:</span>
+        <span class="text-xs xl:text-sm font-bold">Template:</span>
         <select
-            class="select select-sm select-bordered bg-neutral-focus"
+            class="select select-sm select-bordered bg-neutral-focus text-primary text-xs lg:text-sm font-bold"
             onchange={handleTemplateChange}
             value={$templateStore.active?.id ?? ""}
         >
@@ -75,39 +85,39 @@
 
     <div class="ml-auto flex items-center gap-2">
         <button
-            class="btn btn-ghost btn-sm"
+            class="btn btn-ghost btn-sm xl:btn-md"
             onclick={onundo}
             disabled={!$canUndo}
             title="Undo lemmatization (Ctrl+Shift+Z)"
         >
-            Undo
+            <UndoIcon size="18" />Undo
         </button>
         <button
-            class="btn btn-ghost btn-sm"
+            class="btn btn-ghost btn-sm xl:btn-md"
             onclick={onredo}
             disabled={!$canRedo}
             title="Redo lemmatization (Ctrl+Shift+Y)"
         >
-            Redo
+            <RedoIcon size="18" />Redo
         </button>
         <div class="divider divider-horizontal mx-0"></div>
         <button
-            class="btn btn-ghost btn-sm btn-circle"
+            class="btn btn-ghost btn-sm btn-circle xl:btn-md"
             onclick={onhelp}
             title="Help (keyboard shortcuts, DSL reference)"
             aria-label="Open help"
         >
-            ?
+            <HelpIcon size="18" />
         </button>
         <button
-            class="btn btn-ghost btn-sm btn-circle"
+            class="btn btn-ghost btn-sm btn-circle xl:btn-md"
             onclick={onsettings}
             title="Settings"
             aria-label="Open settings"
         >
-            ⚙️
+            <SettingsIcon size="18" />
         </button>
-        <span class="text-sm opacity-70">{$fileName}</span>
+        <span class="text-sm opacity-70 xl:text-md">{$fileName}</span>
         {#if $editor.isDirty}
             <span class="text-warning font-bold">*</span>
         {/if}

@@ -41,6 +41,10 @@
         canRedo,
     } from "$lib/stores/lemmatizationHistory";
     import { resolveResource, appDataDir } from "@tauri-apps/api/path";
+    
+    //Icon imports
+    import { BookDashed, ScrollText, MessageCircleWarning  } from '@lucide/svelte';
+    
 
     let editorComponent: Editor;
     let previewContent = $state("");
@@ -682,32 +686,32 @@
                     <div
                         class="flex justify-between items-center px-4 py-2 bg-base-200 border-b border-base-300 font-medium text-sm"
                     >
-                        <span>DSL Editor</span>
+                        <span class="text-md xl:text-lg font-bold px-2">DSL Editor</span>
                         <div class="flex gap-1">
                             <button
-                                class="btn btn-ghost btn-xs"
+                                class="btn btn-ghost btn-xs xl:btn-sm text-xs xl:text-sm"
                                 title="Insert entity"
                                 onclick={() => (showEntityBrowser = true)}
                             >
                                 ꝥ
                             </button>
                             <button
-                                class="btn btn-ghost btn-xs"
+                                class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Manage templates"
                                 onclick={() => (showTemplateManager = true)}
                             >
-                                ⚙
+                                <BookDashed class="size-3/4" />
                             </button>
                             <button
-                                class="btn btn-ghost btn-xs"
+                                class="btn btn-ghost btn-xs xl:btn-sm"
                                 class:text-error={$errorCounts.error > 0}
                                 title="View logs"
                                 onclick={() => (showErrorPanel = true)}
                             >
                                 {#if $errorCounts.error > 0}
-                                    ✕
+                                    <MessageCircleWarning size="14" color="var(--color-error)"/>
                                 {:else}
-                                    ☰
+                                    <ScrollText class="size-3/4" color="var(--color-success)"/>
                                 {/if}
                             </button>
                         </div>
