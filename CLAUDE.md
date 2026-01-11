@@ -103,12 +103,57 @@ Uses **Junicode** (in `static/fonts/`) for MUFI characters.
 - **Cargo Command Quirk:** `cd src-tauri && cargo ...` fails. Use `cd src-tauri; cargo ...`.
 - **Bun:** Always use `bun` instead of `npm`.
 
+## Async Patterns (Critical for UI Responsiveness)
+
+Large manuscripts can have 50k+ tokens. Any synchronous operation processing this much data will freeze the UI and block CSS animations. Follow these patterns:
+
+### Frontend: Chunked Async Processing
+For any operation that processes large data (parsing, rendering, transforming):
+```typescript
+// Helper to yield to browser for smooth animations
+const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
+
+// Yield every N items to keep UI responsive
+async function processLargeData(items: Item[]) {
+    const YIELD_EVERY = 500;
+    for (let i = 0; i < items.length; i++) {
+        if (i % YIELD_EVERY === 0) {
+            await yieldToMain();
+        }
+        // Process item...
+    }
+}
+```
+
+### Loading Spinners
+Use SVG spinners with `<animateTransform>` instead of CSS animations - they're more reliable during heavy processing:
+```svelte
+<svg viewBox="0 0 50 50" width="48" height="48">
+    <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor"
+        stroke-width="4" stroke-linecap="round"
+        stroke-dasharray="90, 150" stroke-dashoffset="0" class="text-primary">
+        <animateTransform attributeName="transform" type="rotate"
+            from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/>
+    </circle>
+</svg>
+```
+
+### Backend: Tauri Commands
+All Tauri commands that do heavy work should:
+1. Use `#[tauri::command(async)]`
+2. Use `tauri::async_runtime::spawn_blocking()` for CPU-bound work
+
+### Key Files with Async Patterns
+- `src/lib/components/RenderedText.svelte` - Async XML parsing with `extractTokensAsync()`
+- `src-tauri/src/commands/parse.rs` - Async compile with `spawn_blocking()`
+- `src-tauri/src/commands/import.rs` - Async import with `spawn_blocking()`
+
 ## Missing features:
 
 - [x] Search/replace functionality in editor
 - [x] Editor undo/redo (CodeMirror has built-in support, needs UI integration)
-- Import from other transcription formats
-- XSLT support for rendering from XML
+- [x] Import from other transcription formats (TEI-XML, text)
+- [x] XSLT support for rendering from XML (browser-based XSLTProcessor)
 - Export to additional formats (HTML, PDF)
 - Collapsible sections in editor for long documents
 - Word- and character-level annotations beyond lemmatization

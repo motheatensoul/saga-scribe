@@ -50,6 +50,10 @@ export async function loadTextFile(path: string): Promise<string> {
   return invoke("load_text_file", { path });
 }
 
+/**
+ * Import a file and convert it to DSL format.
+ * The backend runs this on a separate async task to avoid blocking the UI.
+ */
 export async function importFile(path: string): Promise<string> {
   return invoke("import_file", { path });
 }

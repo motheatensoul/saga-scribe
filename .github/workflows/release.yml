@@ -90,6 +90,21 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxml2-dev
 
+      - name: Install dependencies (macos only)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          brew install libxml2
+          echo "PKG_CONFIG_PATH=$(brew --prefix libxml2)/lib/pkgconfig" >> $GITHUB_ENV
+
+      - name: Install dependencies (windows only)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          vcpkg integrate install
+          vcpkg install libxml2:x64-windows
+          echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+        shell: pwsh
+
       - name: Install frontend dependencies
         run: bun install
 

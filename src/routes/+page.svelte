@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, tick } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open, save } from "@tauri-apps/plugin-dialog";
     import Editor from "$lib/components/Editor.svelte";
@@ -311,52 +311,56 @@
         errorStore.info("App", "Application ready");
     });
 
-    async function doCompile(content: string) {
+    // Compile without updating UI - returns the result
+    async function compileOnly(content: string): Promise<string | null> {
         const template = $templateStore.active;
-        if (!template) return;
+        if (!template) return null;
 
+        // Use session store for lemma mappings - keyed by word INDEX
+        const lemmaMappings: Record<
+            number,
+            { lemma: string; msa: string; normalized?: string }
+        > = {};
+        for (const [indexStr, mapping] of Object.entries(
+            $sessionLemmaStore.mappings,
+        )) {
+            const index = parseInt(indexStr, 10);
+            lemmaMappings[index] = {
+                lemma: mapping.lemma,
+                msa: mapping.msa,
+                normalized: mapping.normalized,
+            };
+        }
+
+        const options = {
+            wordWrap: template.wordWrap,
+            autoLineNumbers: template.autoLineNumbers,
+            multiLevel: template.multiLevel,
+            wrapPages: template.wrapPages,
+            entitiesJson: entitiesJson ?? undefined,
+            normalizerJson: normalizerJson ?? undefined,
+            entityMappingsJson: entityMappingsJson ?? undefined,
+            customMappings: $entityStore.customMappings,
+            lemmaMappingsJson:
+                Object.keys(lemmaMappings).length > 0
+                    ? JSON.stringify(lemmaMappings)
+                    : undefined,
+        };
+
+        return await compileDsl(
+            content,
+            template.header,
+            template.footer,
+            options,
+        );
+    }
+
+    async function doCompile(content: string) {
         try {
-            // Use session store for lemma mappings - keyed by word INDEX
-            // Only confirmed word instances get lemma attributes
-            const lemmaMappings: Record<
-                number,
-                { lemma: string; msa: string; normalized?: string }
-            > = {};
-            for (const [indexStr, mapping] of Object.entries(
-                $sessionLemmaStore.mappings,
-            )) {
-                const index = parseInt(indexStr, 10);
-                lemmaMappings[index] = {
-                    lemma: mapping.lemma,
-                    msa: mapping.msa,
-                    normalized: mapping.normalized,
-                };
+            const result = await compileOnly(content);
+            if (result !== null) {
+                previewContent = result;
             }
-
-            console.log(
-                "Compiling with session lemma mappings (by index):",
-                lemmaMappings,
-            );
-
-            previewContent = await compileDsl(
-                content,
-                template.header,
-                template.footer,
-                {
-                    wordWrap: template.wordWrap,
-                    autoLineNumbers: template.autoLineNumbers,
-                    multiLevel: template.multiLevel,
-                    wrapPages: template.wrapPages,
-                    entitiesJson: entitiesJson ?? undefined,
-                    normalizerJson: normalizerJson ?? undefined,
-                    entityMappingsJson: entityMappingsJson ?? undefined,
-                    customMappings: $entityStore.customMappings,
-                    lemmaMappingsJson:
-                        Object.keys(lemmaMappings).length > 0
-                            ? JSON.stringify(lemmaMappings)
-                            : undefined,
-                },
-            );
         } catch (e) {
             previewContent = `Error: ${e}`;
         }
@@ -413,7 +417,8 @@
             $sessionLemmaStore.mappings,
         );
         // Trigger immediate recompile to update TEI output with new lemma
-        // Use doCompile directly to bypass autoPreview check and delay
+        // Cancel any pending auto-preview and compile directly
+        clearTimeout(compileTimeout);
         doCompile($editor.content);
     }
 
@@ -444,6 +449,7 @@
         }
 
         // Recompile to reflect changes
+        clearTimeout(compileTimeout);
         doCompile($editor.content);
         errorStore.info(
             "Undo",
@@ -467,6 +473,7 @@
         }
 
         // Recompile to reflect changes
+        clearTimeout(compileTimeout);
         doCompile($editor.content);
         errorStore.info(
             "Redo",
@@ -514,7 +521,8 @@
                     templateStore.setActive(template);
                 }
 
-                // Trigger recompile
+                // Cancel any pending auto-preview compile and trigger recompile
+                clearTimeout(compileTimeout);
                 await doCompile(project.source);
 
                 errorStore.info("Project", `Opened project from ${pathStr}`);
@@ -528,6 +536,8 @@
                 lemmatizationHistory.clear();
                 sessionLemmaStore.clear();
 
+                // Cancel any pending auto-preview compile
+                clearTimeout(compileTimeout);
                 await doCompile(file.content);
 
                 errorStore.info("File", `Opened DSL file from ${pathStr}`);
@@ -561,6 +571,7 @@
 
         try {
             // Ensure we have fresh compiled output
+            clearTimeout(compileTimeout);
             await doCompile($editor.content);
 
             // Serialize session confirmations
@@ -604,6 +615,7 @@
 
         try {
             // Ensure we have fresh compiled output
+            clearTimeout(compileTimeout);
             await doCompile($editor.content);
 
             await exportTei(path, previewContent);
@@ -641,29 +653,40 @@
         });
         if (!path) return;
 
+        const pathStr = path as string;
         isImporting = true;
-        
-        // Give the UI a moment to render the spinner
-        await new Promise(resolve => setTimeout(resolve, 50));
+
+        // Yield to let browser paint spinner before starting work
+        await tick();
+        await new Promise(resolve => setTimeout(resolve, 16));
 
         try {
-            const pathStr = path as string;
             const content = await importFile(pathStr);
-
-            // Set content and clear file path to treat as new unsaved project
-            // (avoids overwriting the original source file with DSL)
-            editorComponent?.setContent(content);
-            editor.setFile(null, content);
 
             // Clear history and session confirmations
             lemmatizationHistory.clear();
             sessionLemmaStore.clear();
+            clearTimeout(compileTimeout);
 
-            await doCompile(content);
+            const compiled = await compileOnly(content);
+
+            editorComponent?.setContent(content);
+
+            // Cancel the compile that setContent just triggered via onchange
+            clearTimeout(compileTimeout);
+
+            editor.setFile(null, content);
+
+            if (compiled !== null) {
+                previewContent = compiled;
+            }
+
             errorStore.info("Import", `Imported content from ${pathStr}`);
         } catch (e) {
             errorStore.error("Import", `Failed to import: ${e}`);
         } finally {
+            // Wait for RenderedText async parsing to complete before hiding spinner
+            await new Promise(resolve => setTimeout(resolve, 500));
             isImporting = false;
         }
     }
@@ -877,7 +900,30 @@
         <div class="modal modal-open">
             <div class="modal-backdrop bg-base-100/50"></div>
             <div class="modal-box bg-transparent shadow-none shadow-transparent border-none flex flex-col items-center justify-center overflow-hidden">
-                <span class="loading loading-spinner loading-lg text-primary"></span>
+                <!-- SVG spinner with explicit animation -->
+                <svg class="spinner-svg" viewBox="0 0 50 50" width="48" height="48">
+                    <circle
+                        cx="25"
+                        cy="25"
+                        r="20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="4"
+                        stroke-linecap="round"
+                        stroke-dasharray="90, 150"
+                        stroke-dashoffset="0"
+                        class="text-primary"
+                    >
+                        <animateTransform
+                            attributeName="transform"
+                            type="rotate"
+                            from="0 25 25"
+                            to="360 25 25"
+                            dur="1s"
+                            repeatCount="indefinite"
+                        />
+                    </circle>
+                </svg>
                 <p class="mt-4 font-bold text-lg text-base-content">Importing...</p>
             </div>
         </div>

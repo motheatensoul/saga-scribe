@@ -27,7 +27,126 @@
     // Access validation errors
     let validationState = $derived($validationStore);
 
-    let tokens = $derived(parseXml(content, entities));
+    // Async parsing state to avoid blocking UI
+    let tokens = $state<TextToken[]>([]);
+    let isRendering = $state(false);
+    let lastContent = $state('');
+    let isTruncated = $state(false);
+    let totalTokenCount = $state(0);
+
+    // Helper to yield to browser for smooth animations
+    const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
+
+    // React to content changes and parse asynchronously
+    $effect(() => {
+        const currentContent = content;
+        const currentEntities = entities;
+
+        if (currentContent === lastContent) return;
+        lastContent = currentContent;
+
+        if (!currentContent.trim()) {
+            tokens = [];
+            return;
+        }
+
+        isRendering = true;
+
+        // Use async IIFE for chunked parsing
+        (async () => {
+            // Yield first to let loading state render
+            await yieldToMain();
+
+            const result = await parseXmlAsync(currentContent, currentEntities);
+
+            // Limit tokens to prevent browser hang - large documents need virtualization
+            const MAX_TOKENS = 5000;
+            totalTokenCount = result.length;
+            if (result.length > MAX_TOKENS) {
+                tokens = result.slice(0, MAX_TOKENS);
+                isTruncated = true;
+            } else {
+                tokens = result;
+                isTruncated = false;
+            }
+            isRendering = false;
+        })();
+    });
+
+    // Async version of parseXml that yields to main thread periodically
+    async function parseXmlAsync(xml: string, entityDefs: EntityMap): Promise<TextToken[]> {
+        if (!xml.trim()) return [];
+
+        try {
+            // Strip XML declaration if present (breaks when wrapped)
+            let cleanXml = xml.replace(/<\?xml[^?]*\?>\s*/gi, '');
+
+            // Replace entity references with placeholders to avoid XML parsing errors
+            const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
+            const entityMap = new Map<string, string>();
+            let entityCounter = 0;
+
+            const sanitized = cleanXml.replace(entityPattern, (match, name) => {
+                const placeholder = `__ENTITY_${entityCounter}__`;
+                entityMap.set(placeholder, name);
+                entityCounter++;
+                return placeholder;
+            });
+
+            // Wrap in a root element with namespace declarations
+            const wrapped = `<root xmlns:me="http://www.menota.org/ns/1.0">${sanitized}</root>`;
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(wrapped, 'text/xml');
+
+            const parseError = doc.querySelector('parsererror');
+            if (parseError) {
+                console.warn('XML parse error:', parseError.textContent);
+                return [{ type: 'text', displayText: xml }];
+            }
+
+            const result: TextToken[] = [];
+            const root = doc.documentElement;
+
+            // Find the body content - try multiple approaches for namespaced XML
+            let body: Element | null = null;
+
+            // Try querySelector first
+            body = root.querySelector('body');
+
+            // If not found, try getElementsByTagName (works better with namespaces)
+            if (!body) {
+                const bodies = root.getElementsByTagName('body');
+                if (bodies.length > 0) {
+                    body = bodies[0];
+                }
+            }
+
+            // Fall back to text element
+            if (!body) {
+                body = root.querySelector('text') || root.getElementsByTagName('text')[0];
+            }
+
+            // Final fallback to root
+            const target = body || root;
+
+            // Use a counter object to track word index and yield progress
+            const wordCounter = { index: 0 };
+            const yieldCounter = { count: 0 };
+            const YIELD_EVERY = 500; // Yield every 500 tokens for smooth animation
+
+            await extractTokensAsync(target, result, entityMap, entityDefs, wordCounter, yieldCounter, YIELD_EVERY);
+
+            // If no tokens extracted, show a message
+            if (result.length === 0) {
+                return [{ type: 'text', displayText: '(No content in body)' }];
+            }
+
+            return result;
+        } catch (e) {
+            console.error('Parse error:', e);
+            return [{ type: 'text', displayText: `Parse error: ${e}` }];
+        }
+    }
 
     function parseXml(xml: string, entityDefs: EntityMap): TextToken[] {
         if (!xml.trim()) return [];
@@ -92,7 +211,7 @@
             if (result.length === 0) {
                 return [{ type: 'text', displayText: '(No content in body)' }];
             }
-            
+
             return result;
         } catch (e) {
             console.error('Parse error:', e);
@@ -233,6 +352,114 @@
         }
     }
 
+    // Async version of extractTokens that yields periodically
+    async function extractTokensAsync(
+        node: Node,
+        result: TextToken[],
+        entityMap: Map<string, string>,
+        entityDefs: EntityMap,
+        wordCounter: { index: number },
+        yieldCounter: { count: number },
+        yieldEvery: number
+    ): Promise<void> {
+        for (const child of node.childNodes) {
+            // Yield to main thread periodically
+            yieldCounter.count++;
+            if (yieldCounter.count % yieldEvery === 0) {
+                await yieldToMain();
+            }
+
+            if (child.nodeType === Node.TEXT_NODE) {
+                const text = child.textContent || '';
+                if (text.trim()) {
+                    result.push({
+                        type: 'text',
+                        displayText: resolveEntitiesToGlyphs(text, entityMap, entityDefs),
+                    });
+                }
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                const el = child as Element;
+                const tagName = el.localName;
+
+                switch (tagName) {
+                    case 'w': {
+                        const facsEl = el.querySelector('me\\:facs, facs');
+                        const diplEl = el.querySelector('me\\:dipl, dipl');
+                        const facsRaw = facsEl?.textContent || el.textContent || '';
+                        const diplRaw = diplEl?.textContent || facsRaw;
+                        const displayText = resolveEntitiesToGlyphs(facsRaw, entityMap, entityDefs).trim();
+                        const diplomatic = resolveEntitiesToGlyphs(diplRaw, entityMap, entityDefs).trim();
+                        const wordIndex = wordCounter.index;
+                        wordCounter.index++;
+
+                        if (displayText) {
+                            result.push({ type: 'word', displayText, diplomatic, wordIndex });
+                            result.push({ type: 'space', displayText: ' ' });
+                        }
+                        break;
+                    }
+                    case 'pc': {
+                        const facsEl = el.querySelector('me\\:facs, facs');
+                        const facsRaw = facsEl?.textContent || el.textContent || '';
+                        const displayText = resolveEntitiesToGlyphs(facsRaw, entityMap, entityDefs).trim();
+                        if (displayText) {
+                            result.push({ type: 'punctuation', displayText });
+                            result.push({ type: 'space', displayText: ' ' });
+                        }
+                        break;
+                    }
+                    case 'lb': {
+                        const n = el.getAttribute('n');
+                        result.push({ type: 'linebreak', displayText: '', lineNumber: n || undefined });
+                        break;
+                    }
+                    case 'pb': {
+                        const n = el.getAttribute('n');
+                        result.push({ type: 'pagebreak', displayText: '', pageNumber: n || undefined });
+                        break;
+                    }
+                    case 'gap': {
+                        const quantity = el.getAttribute('quantity') || '?';
+                        result.push({ type: 'text', displayText: `[…${quantity}]` });
+                        break;
+                    }
+                    case 'supplied': {
+                        const text = resolveEntitiesToGlyphs(el.textContent || '', entityMap, entityDefs);
+                        result.push({ type: 'text', displayText: `⟨${text}⟩` });
+                        break;
+                    }
+                    case 'unclear': {
+                        const text = resolveEntitiesToGlyphs(el.textContent || '', entityMap, entityDefs);
+                        result.push({ type: 'text', displayText: `${text}?` });
+                        break;
+                    }
+                    case 'del': {
+                        const text = resolveEntitiesToGlyphs(el.textContent || '', entityMap, entityDefs);
+                        result.push({ type: 'text', displayText: `⟦${text}⟧` });
+                        break;
+                    }
+                    case 'add': {
+                        const text = resolveEntitiesToGlyphs(el.textContent || '', entityMap, entityDefs);
+                        result.push({ type: 'text', displayText: `\\${text}/` });
+                        break;
+                    }
+                    case 'choice': {
+                        const abbr = el.querySelector('abbr')?.textContent || '';
+                        const text = resolveEntitiesToGlyphs(abbr, entityMap, entityDefs);
+                        if (text) {
+                            result.push({ type: 'text', displayText: text });
+                            result.push({ type: 'space', displayText: ' ' });
+                        }
+                        break;
+                    }
+                    default:
+                        // Recurse into other elements
+                        await extractTokensAsync(el, result, entityMap, entityDefs, wordCounter, yieldCounter, yieldEvery);
+                }
+            }
+        }
+    }
+
     function handleWordClick(token: TextToken, event: MouseEvent) {
         const target = event.currentTarget as HTMLElement;
         // Pass both facsimile (displayText) and diplomatic forms for lemmatization
@@ -283,6 +510,40 @@
          </div>
     {/if}
 
+    {#if isRendering}
+        <div class="flex flex-col items-center justify-center py-12">
+            <!-- SVG spinner with explicit animation for smooth rendering during async parsing -->
+            <svg viewBox="0 0 50 50" width="48" height="48">
+                <circle
+                    cx="25"
+                    cy="25"
+                    r="20"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="4"
+                    stroke-linecap="round"
+                    stroke-dasharray="90, 150"
+                    stroke-dashoffset="0"
+                    class="text-primary"
+                >
+                    <animateTransform
+                        attributeName="transform"
+                        type="rotate"
+                        from="0 25 25"
+                        to="360 25 25"
+                        dur="1s"
+                        repeatCount="indefinite"
+                    />
+                </circle>
+            </svg>
+            <p class="mt-4 text-base-content/70">Rendering preview...</p>
+        </div>
+    {:else}
+    {#if isTruncated}
+        <div class="alert alert-warning mb-4 text-sm">
+            <span>Large document: showing first 5,000 tokens of {totalTokenCount.toLocaleString()}. Use XML view for full content.</span>
+        </div>
+    {/if}
     {#each tokens as token, i}
         {#if token.type === 'word'}
             <button
@@ -313,6 +574,7 @@
             <span class="plain-text">{token.displayText}</span>
         {/if}
     {/each}
+    {/if}
 </div>
 
 <style>
