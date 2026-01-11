@@ -632,8 +632,6 @@
     }
 
     async function handleImport() {
-        console.log("[Import] handleImport called");
-
         const path = await open({
             filters: [
                 { name: "All Supported Formats", extensions: ["xml", "tei", "txt"] },
@@ -641,53 +639,26 @@
                 { name: "Text File", extensions: ["txt"] },
             ],
         });
-
-        console.log("[Import] File dialog closed, path:", path);
         if (!path) return;
 
         const pathStr = path as string;
-        console.log("[Import] Setting isImporting = true");
         isImporting = true;
 
-        // Use setTimeout to completely break out of the current execution context
-        // This ensures the UI can render and animate before any blocking occurs
-        console.log("[Import] Scheduling performImport via setTimeout");
-        setTimeout(() => {
-            console.log("[Import] setTimeout callback executing");
-            performImport(pathStr);
-        }, 0);
-        console.log("[Import] handleImport returning");
-    }
-
-    async function performImport(pathStr: string) {
         try {
-            console.log("[Import] performImport starting, calling importFile...");
-            console.time("[Import] importFile duration");
             const content = await importFile(pathStr);
-            console.timeEnd("[Import] importFile duration");
-            console.log("[Import] importFile returned, content length:", content.length);
 
-            console.log("[Import] Setting editor content...");
-            console.time("[Import] setContent duration");
             editorComponent?.setContent(content);
-            console.timeEnd("[Import] setContent duration");
-
             editor.setFile(null, content);
 
             // Clear history and session confirmations
             lemmatizationHistory.clear();
             sessionLemmaStore.clear();
 
-            console.log("[Import] Compiling...");
-            console.time("[Import] doCompile duration");
             await doCompile(content);
-            console.timeEnd("[Import] doCompile duration");
-
             errorStore.info("Import", `Imported content from ${pathStr}`);
         } catch (e) {
             errorStore.error("Import", `Failed to import: ${e}`);
         } finally {
-            console.log("[Import] Setting isImporting = false");
             isImporting = false;
         }
     }
