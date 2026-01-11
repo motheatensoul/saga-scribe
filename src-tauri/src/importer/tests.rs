@@ -4,16 +4,16 @@ use super::tei::parse;
 fn test_import_lb() {
     let xml = "<body>line 1<lb/>line 2<lb n=\"5\"/>line 3</body>";
     let dsl = parse(xml).unwrap();
-    // lb now adds a newline
-    assert_eq!(dsl, "line 1//\nline 2//5\nline 3");
+    // lb adds a newline BEFORE the marker
+    assert_eq!(dsl, "line 1\n//line 2\n//5line 3");
 }
 
 #[test]
 fn test_import_pb() {
     let xml = "<body>page 1<pb/>page 2<pb n=\"10v\"/>page 3</body>";
     let dsl = parse(xml).unwrap();
-    // pb now adds a newline
-    assert_eq!(dsl, "page 1///\npage 2///10v\npage 3");
+    // pb adds a newline BEFORE the marker
+    assert_eq!(dsl, "page 1\n///page 2\n///10vpage 3");
 }
 
 #[test]
@@ -48,5 +48,5 @@ fn test_import_del_add() {
 fn test_import_complex() {
     let xml = "<TEI><text><body><p>Line 1<lb/>Line 2</p></body></text></TEI>";
     let dsl = parse(xml).unwrap();
-    assert_eq!(dsl, "Line 1//\nLine 2");
+    assert_eq!(dsl, "Line 1\n//Line 2");
 }

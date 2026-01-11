@@ -65,6 +65,7 @@
     let entitiesJson = $state<string | null>(null);
     let normalizerJson = $state<string | null>(null);
     let entityMappingsJson = $state<string | null>(null);
+    let isImporting = $state(false);
 
     onMount(async () => {
         errorStore.info("App", "Application starting...");
@@ -640,6 +641,11 @@
         });
         if (!path) return;
 
+        isImporting = true;
+        
+        // Give the UI a moment to render the spinner
+        await new Promise(resolve => setTimeout(resolve, 50));
+
         try {
             const pathStr = path as string;
             const content = await importFile(pathStr);
@@ -657,6 +663,8 @@
             errorStore.info("Import", `Imported content from ${pathStr}`);
         } catch (e) {
             errorStore.error("Import", `Failed to import: ${e}`);
+        } finally {
+            isImporting = false;
         }
     }
 
@@ -861,6 +869,16 @@
                     onclose={handleLemmatizerClose}
                     onsave={handleLemmatizerSave}
                 />
+            </div>
+        </div>
+    {/if}
+
+    {#if isImporting}
+        <div class="modal modal-open">
+            <div class="modal-backdrop bg-base-100/50"></div>
+            <div class="modal-box bg-transparent shadow-none shadow-transparent border-none flex flex-col items-center justify-center overflow-hidden">
+                <span class="loading loading-spinner loading-lg text-primary"></span>
+                <p class="mt-4 font-bold text-lg text-base-content">Importing...</p>
             </div>
         </div>
     {/if}

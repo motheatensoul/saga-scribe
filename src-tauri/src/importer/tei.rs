@@ -48,18 +48,18 @@ fn process_node(node: &Node, output: &mut String) -> Result<(), String> {
             let name = node.get_name();
             match name.as_str() {
                 "lb" => {
+                    output.push('\n'); // Start with newline so // is at start of line
                     output.push_str("//");
                     if let Some(n) = node.get_property("n") {
                         output.push_str(&n);
                     }
-                    output.push('\n'); // Ensure new line in editor
                 },
                 "pb" => {
+                    output.push('\n'); // Start with newline so /// is at start of line
                     output.push_str("///");
                     if let Some(n) = node.get_property("n") {
                         output.push_str(&n);
                     }
-                    output.push('\n'); // Ensure new line in editor
                 },
                 "gap" => {
                     output.push_str("[...]");
