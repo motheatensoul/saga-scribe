@@ -17,7 +17,7 @@ function createEditorStore() {
         subscribe,
         setContent: (content: string) =>
             update((state) => ({ ...state, content, isDirty: true })),
-        setFile: (filePath: string, content: string) =>
+        setFile: (filePath: string | null, content: string) =>
             set({ content, filePath, isDirty: false }),
         markClean: () => update((state) => ({ ...state, isDirty: false })),
         reset: () => set({ content: '', filePath: null, isDirty: false }),

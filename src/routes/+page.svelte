@@ -29,6 +29,7 @@
         openProject,
         exportTei,
         openFile,
+        importFile,
         exportInflections,
     } from "$lib/tauri";
     import {
@@ -629,6 +630,36 @@
         }
     }
 
+    async function handleImport() {
+        const path = await open({
+            filters: [
+                { name: "All Supported Formats", extensions: ["xml", "tei", "txt"] },
+                { name: "TEI/XML", extensions: ["xml", "tei"] },
+                { name: "Text File", extensions: ["txt"] },
+            ],
+        });
+        if (!path) return;
+
+        try {
+            const pathStr = path as string;
+            const content = await importFile(pathStr);
+
+            // Set content and clear file path to treat as new unsaved project
+            // (avoids overwriting the original source file with DSL)
+            editorComponent?.setContent(content);
+            editor.setFile(null, content);
+
+            // Clear history and session confirmations
+            lemmatizationHistory.clear();
+            sessionLemmaStore.clear();
+
+            await doCompile(content);
+            errorStore.info("Import", `Imported content from ${pathStr}`);
+        } catch (e) {
+            errorStore.error("Import", `Failed to import: ${e}`);
+        }
+    }
+
     // Keyboard shortcuts
     function handleKeydown(event: KeyboardEvent) {
         // F1: Open help
@@ -673,6 +704,7 @@
 <div class="flex flex-col h-screen overflow-hidden bg-base-100">
     <Toolbar
         onopen={handleOpenProject}
+        onimport={handleImport}
         onsave={handleSaveProject}
         onexportxml={handleExportXml}
         onexportdict={handleExportDictionary}
