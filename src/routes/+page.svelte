@@ -43,12 +43,19 @@
         canRedo,
     } from "$lib/stores/lemmatizationHistory";
     import { resolveResource, appDataDir } from "@tauri-apps/api/path";
-    
-    //Icon imports
-    import { BookDashed, ScrollText, MessageCircleWarning, FileCheck, Undo, Redo, Search  } from '@lucide/svelte';
-    
 
-    let editorComponent: Editor;
+    //Icon imports
+    import {
+        BookDashed,
+        ScrollText,
+        MessageCircleWarning,
+        FileCheck,
+        Undo,
+        Redo,
+        Search,
+    } from "@lucide/svelte";
+
+    let editorComponent: Editor | null = $state<Editor | null>(null);
     let previewContent = $state("");
     let showTemplateManager = $state(false);
     let showEntityBrowser = $state(false);
@@ -66,6 +73,7 @@
     let normalizerJson = $state<string | null>(null);
     let entityMappingsJson = $state<string | null>(null);
     let isImporting = $state(false);
+    let isMounting: boolean = $state(true);
 
     onMount(async () => {
         errorStore.info("App", "Application starting...");
@@ -308,6 +316,7 @@
             );
         }
 
+        isMounting = false;
         errorStore.info("App", "Application ready");
     });
 
@@ -646,7 +655,10 @@
     async function handleImport() {
         const path = await open({
             filters: [
-                { name: "All Supported Formats", extensions: ["xml", "tei", "txt"] },
+                {
+                    name: "All Supported Formats",
+                    extensions: ["xml", "tei", "txt"],
+                },
                 { name: "TEI/XML", extensions: ["xml", "tei"] },
                 { name: "Text File", extensions: ["txt"] },
             ],
@@ -658,7 +670,7 @@
 
         // Yield to let browser paint spinner before starting work
         await tick();
-        await new Promise(resolve => setTimeout(resolve, 16));
+        await new Promise((resolve) => setTimeout(resolve, 16));
 
         try {
             const content = await importFile(pathStr);
@@ -686,7 +698,7 @@
             errorStore.error("Import", `Failed to import: ${e}`);
         } finally {
             // Wait for RenderedText async parsing to complete before hiding spinner
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise((resolve) => setTimeout(resolve, 500));
             isImporting = false;
         }
     }
@@ -732,6 +744,7 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
+
 <div class="flex flex-col h-screen overflow-hidden bg-base-100">
     <Toolbar
         onopen={handleOpenProject}
@@ -752,30 +765,37 @@
                     <div
                         class="flex justify-between items-center px-4 py-2 bg-base-200 border-b border-base-300 font-medium text-sm"
                     >
-                        <span class="text-md xl:text-lg font-bold px-2">DSL Editor</span>
+                        <span class="text-md xl:text-lg font-bold px-2"
+                            >DSL Editor</span
+                        >
                         <div class="flex gap-1">
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Undo (Ctrl+Z)"
-                                onclick={() => editorComponent?.triggerUndo()}
+                                onclick={() =>
+                                    editorComponent?.triggerUndo()}
                             >
                                 <Undo class="size-3/4" />
                             </button>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Redo (Ctrl+Y)"
-                                onclick={() => editorComponent?.triggerRedo()}
+                                onclick={() =>
+                                    editorComponent?.triggerRedo()}
                             >
                                 <Redo class="size-3/4" />
                             </button>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Search and Replace (Ctrl+Shift+F)"
-                                onclick={() => editorComponent?.triggerSearch()}
+                                onclick={() =>
+                                    editorComponent?.triggerSearch()}
                             >
                                 <Search class="size-3/4" />
                             </button>
-                            <div class="divider divider-horizontal mx-0 h-4 self-center"></div>
+                            <div
+                                class="divider divider-horizontal mx-0 h-4 self-center"
+                            ></div>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm text-xs xl:text-sm"
                                 title="Insert entity"
@@ -804,9 +824,15 @@
                                 onclick={() => (showErrorPanel = true)}
                             >
                                 {#if $errorCounts.error > 0}
-                                    <MessageCircleWarning size="14" color="var(--color-error)"/>
+                                    <MessageCircleWarning
+                                        size="14"
+                                        color="var(--color-error)"
+                                    />
                                 {:else}
-                                    <ScrollText class="size-3/4" color="var(--color-success)"/>
+                                    <ScrollText
+                                        class="size-3/4"
+                                        color="var(--color-success)"
+                                    />
                                 {/if}
                             </button>
                         </div>
@@ -899,9 +925,16 @@
     {#if isImporting}
         <div class="modal modal-open">
             <div class="modal-backdrop bg-base-100/50"></div>
-            <div class="modal-box bg-transparent shadow-none shadow-transparent border-none flex flex-col items-center justify-center overflow-hidden">
+            <div
+                class="modal-box bg-transparent shadow-none shadow-transparent border-none flex flex-col items-center justify-center overflow-hidden"
+            >
                 <!-- SVG spinner with explicit animation -->
-                <svg class="spinner-svg" viewBox="0 0 50 50" width="48" height="48">
+                <svg
+                    class="spinner-svg"
+                    viewBox="0 0 50 50"
+                    width="48"
+                    height="48"
+                >
                     <circle
                         cx="25"
                         cy="25"
@@ -924,7 +957,9 @@
                         />
                     </circle>
                 </svg>
-                <p class="mt-4 font-bold text-lg text-base-content">Importing...</p>
+                <p class="mt-4 font-bold text-lg text-base-content">
+                    Importing…
+                </p>
             </div>
         </div>
     {/if}
@@ -932,6 +967,7 @@
     <SettingsDialog bind:isopen={showSettings} />
     <HelpDialog bind:isopen={showHelp} />
 </div>
+
 
 <style>
     /* Splitpanes with custom theme */
