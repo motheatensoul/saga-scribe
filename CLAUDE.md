@@ -35,6 +35,7 @@
 - **Imports:** Use `$lib/` alias for local imports.
 - **Formatting:** 4 spaces indentation.
 - **Naming:** PascalCase for components (`Editor.svelte`), camelCase for functions/vars.
+- **Visual Style:** Refer to docs/UI_STANDARDS.md for our UI masterdoc. Style every new component as described.
 
 ### Backend (Rust)
 - **Style:** Standard Rust idioms (`rustfmt`). 4 spaces indentation.
@@ -154,10 +155,12 @@ All Tauri commands that do heavy work should:
 - [x] Editor undo/redo (CodeMirror has built-in support, needs UI integration)
 - [x] Import from other transcription formats (TEI-XML, text)
 - [x] XSLT support for rendering from XML (browser-based XSLTProcessor)
-- Export to additional formats (HTML, PDF)
-- Collapsible sections in editor for long documents
-- Word- and character-level annotations beyond lemmatization
+- [x] Text rendering performance (page-based chunking, removed 5k token limit)
+- Clean up README, docs to include new features
+- Collapsible sections in editor for long manuscripts
 - Manuscript metadata editor (beyond template header)
+- Word- and character-level annotations beyond lemmatization
+- Export to additional formats (HTML, PDF)
 - Custom entity set management (add/remove entities beyond MENOTA)
 - Performance optimization for large manuscripts (>10k lines)
 
