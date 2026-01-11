@@ -6,7 +6,7 @@
     import { search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from '@codemirror/search';
     import { foldGutter, foldKeymap } from '@codemirror/language';
     import { editor } from '$lib/stores/editor';
-    import { teiDsl, teiDslHighlighting } from '$lib/parser/highlighter';
+    import { teiDsl, teiDslHighlighting, teiDslFolding } from '$lib/parser/highlighter';
     import { teiLinter } from '$lib/parser/linter';
     import { lintGutter } from "@codemirror/lint";
     import { daisyExtensions } from '$lib/editor/theme';
@@ -28,6 +28,7 @@
                 search({ top: true }),
                 teiDsl,
                 teiDslHighlighting,
+                teiDslFolding,
                 teiLinter,
                 lintGutter(),
                 daisyExtensions,
