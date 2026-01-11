@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
+    import { onMount, tick } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open, save } from "@tauri-apps/plugin-dialog";
     import Editor from "$lib/components/Editor.svelte";
@@ -642,6 +642,10 @@
         if (!path) return;
 
         isImporting = true;
+
+        // Flush Svelte DOM updates and wait for browser paint
+        await tick();
+        await new Promise(r => requestAnimationFrame(r));
 
         try {
             const pathStr = path as string;

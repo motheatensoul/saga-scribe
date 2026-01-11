@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Template } from "./stores/template";
 import type { Entity, EntityMap } from "./stores/entities";
 
@@ -50,8 +51,46 @@ export async function loadTextFile(path: string): Promise<string> {
   return invoke("load_text_file", { path });
 }
 
+export interface ImportResult {
+  success: boolean;
+  content: string | null;
+  error: string | null;
+  path: string;
+}
+
+/**
+ * Import a file asynchronously. The backend processes the file on a background
+ * thread and emits an event when complete, keeping the UI responsive.
+ */
 export async function importFile(path: string): Promise<string> {
-  return invoke("import_file", { path });
+  return new Promise((resolve, reject) => {
+    let unlisten: UnlistenFn | null = null;
+
+    // Set up the event listener before invoking to avoid race conditions
+    listen<ImportResult>("import-complete", (event) => {
+      // Only handle events for our specific path
+      if (event.payload.path === path) {
+        if (unlisten) {
+          unlisten();
+        }
+        if (event.payload.success && event.payload.content !== null) {
+          resolve(event.payload.content);
+        } else {
+          reject(new Error(event.payload.error || "Import failed"));
+        }
+      }
+    }).then((unlistenFn) => {
+      unlisten = unlistenFn;
+
+      // Now invoke the command (fire-and-forget, no return value)
+      invoke("import_file", { path }).catch((err) => {
+        if (unlisten) {
+          unlisten();
+        }
+        reject(err);
+      });
+    });
+  });
 }
 
 export async function listTemplates(): Promise<Template[]> {
