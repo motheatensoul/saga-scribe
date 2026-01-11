@@ -64,32 +64,26 @@ export interface ImportResult {
  */
 export async function importFile(path: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    let unlisten: UnlistenFn | null = null;
+    let unlisten: UnlistenFn | undefined;
 
-    // Set up the event listener before invoking to avoid race conditions
+    // Set up listener for the result
     listen<ImportResult>("import-complete", (event) => {
-      // Only handle events for our specific path
       if (event.payload.path === path) {
-        if (unlisten) {
-          unlisten();
-        }
+        // Clean up listener
+        if (unlisten) unlisten();
+
         if (event.payload.success && event.payload.content !== null) {
           resolve(event.payload.content);
         } else {
           reject(new Error(event.payload.error || "Import failed"));
         }
       }
-    }).then((unlistenFn) => {
-      unlisten = unlistenFn;
-
-      // Now invoke the command (fire-and-forget, no return value)
-      invoke("import_file", { path }).catch((err) => {
-        if (unlisten) {
-          unlisten();
-        }
-        reject(err);
-      });
+    }).then((fn) => {
+      unlisten = fn;
     });
+
+    // Start the import (fire-and-forget, result comes via event)
+    invoke("import_file", { path });
   });
 }
 

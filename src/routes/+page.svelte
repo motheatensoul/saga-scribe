@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, tick } from "svelte";
+    import { onMount } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open, save } from "@tauri-apps/plugin-dialog";
     import Editor from "$lib/components/Editor.svelte";
@@ -641,14 +641,18 @@
         });
         if (!path) return;
 
+        const pathStr = path as string;
         isImporting = true;
 
-        // Flush Svelte DOM updates and wait for browser paint
-        await tick();
-        await new Promise(r => requestAnimationFrame(r));
+        // Use setTimeout to completely break out of the current execution context
+        // This ensures the UI can render and animate before any blocking occurs
+        setTimeout(() => {
+            performImport(pathStr);
+        }, 0);
+    }
 
+    async function performImport(pathStr: string) {
         try {
-            const pathStr = path as string;
             const content = await importFile(pathStr);
 
             // Set content and clear file path to treat as new unsaved project
