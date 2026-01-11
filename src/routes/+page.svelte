@@ -44,7 +44,7 @@
     import { resolveResource, appDataDir } from "@tauri-apps/api/path";
     
     //Icon imports
-    import { BookDashed, ScrollText, MessageCircleWarning, FileCheck  } from '@lucide/svelte';
+    import { BookDashed, ScrollText, MessageCircleWarning, FileCheck, Undo, Redo, Search  } from '@lucide/svelte';
     
 
     let editorComponent: Editor;
@@ -691,6 +691,28 @@
                     >
                         <span class="text-md xl:text-lg font-bold px-2">DSL Editor</span>
                         <div class="flex gap-1">
+                            <button
+                                class="btn btn-ghost btn-xs xl:btn-sm"
+                                title="Undo (Ctrl+Z)"
+                                onclick={() => editorComponent?.triggerUndo()}
+                            >
+                                <Undo class="size-3/4" />
+                            </button>
+                            <button
+                                class="btn btn-ghost btn-xs xl:btn-sm"
+                                title="Redo (Ctrl+Y)"
+                                onclick={() => editorComponent?.triggerRedo()}
+                            >
+                                <Redo class="size-3/4" />
+                            </button>
+                            <button
+                                class="btn btn-ghost btn-xs xl:btn-sm"
+                                title="Search and Replace (Ctrl+Shift+F)"
+                                onclick={() => editorComponent?.triggerSearch()}
+                            >
+                                <Search class="size-3/4" />
+                            </button>
+                            <div class="divider divider-horizontal mx-0 h-4 self-center"></div>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm text-xs xl:text-sm"
                                 title="Insert entity"

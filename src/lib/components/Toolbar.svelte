@@ -90,7 +90,7 @@
             disabled={!$canUndo}
             title="Undo lemmatization (Ctrl+Shift+Z)"
         >
-            <UndoIcon size="18" />Undo
+            <UndoIcon size="18" />Lemma Undo
         </button>
         <button
             class="btn btn-ghost btn-sm xl:btn-md"
@@ -98,7 +98,7 @@
             disabled={!$canRedo}
             title="Redo lemmatization (Ctrl+Shift+Y)"
         >
-            <RedoIcon size="18" />Redo
+            <RedoIcon size="18" />Lemma Redo
         </button>
         <div class="divider divider-horizontal mx-0"></div>
         <button
