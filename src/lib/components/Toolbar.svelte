@@ -11,12 +11,14 @@
         BadgeQuestionMark as HelpIcon,
         Save as SaveIcon,
         FolderOpen as OpenIcon,
+        FileUp as ImportIcon,
         Undo as UndoIcon,
         Redo as RedoIcon,
     } from "@lucide/svelte";
 
     let {
         onopen,
+        onimport,
         onsave,
         onexportxml,
         onexportdict,
@@ -26,6 +28,7 @@
         onhelp,
     }: {
         onopen?: () => void; // Parent handles opening (shows dialog, loads project)
+        onimport?: () => void; // Parent handles importing (shows dialog, converts content)
         onsave?: () => void; // Parent handles saving (shows dialog if needed, saves project)
         onexportxml?: () => void; // Parent handles XML export
         onexportdict?: () => void; // Parent handles dictionary export
@@ -52,6 +55,11 @@
             class="btn btn-primary hover:btn-secondary text-primary-content hover:text-seconary-content btn-sm xl:btn-md"
             onclick={onopen}
             title="Open project (Ctrl+O)"><OpenIcon size="18" />Open</button
+        >
+        <button
+            class="btn btn-primary hover:btn-secondary text-primary-content hover:text-seconary-content btn-sm xl:btn-md"
+            onclick={onimport}
+            title="Import from other format (XML/TEI/TXT)"><ImportIcon size="18" />Import</button
         >
         <button
             class="btn btn-primary hover:btn-secondary text-primary-content hover:text-seconary-content btn-sm xl:btn-md"

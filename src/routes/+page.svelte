@@ -29,6 +29,7 @@
         openProject,
         exportTei,
         openFile,
+        importFile,
         exportInflections,
     } from "$lib/tauri";
     import {
@@ -64,6 +65,7 @@
     let entitiesJson = $state<string | null>(null);
     let normalizerJson = $state<string | null>(null);
     let entityMappingsJson = $state<string | null>(null);
+    let isImporting = $state(false);
 
     onMount(async () => {
         errorStore.info("App", "Application starting...");
@@ -629,6 +631,43 @@
         }
     }
 
+    async function handleImport() {
+        const path = await open({
+            filters: [
+                { name: "All Supported Formats", extensions: ["xml", "tei", "txt"] },
+                { name: "TEI/XML", extensions: ["xml", "tei"] },
+                { name: "Text File", extensions: ["txt"] },
+            ],
+        });
+        if (!path) return;
+
+        isImporting = true;
+        
+        // Give the UI a moment to render the spinner
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        try {
+            const pathStr = path as string;
+            const content = await importFile(pathStr);
+
+            // Set content and clear file path to treat as new unsaved project
+            // (avoids overwriting the original source file with DSL)
+            editorComponent?.setContent(content);
+            editor.setFile(null, content);
+
+            // Clear history and session confirmations
+            lemmatizationHistory.clear();
+            sessionLemmaStore.clear();
+
+            await doCompile(content);
+            errorStore.info("Import", `Imported content from ${pathStr}`);
+        } catch (e) {
+            errorStore.error("Import", `Failed to import: ${e}`);
+        } finally {
+            isImporting = false;
+        }
+    }
+
     // Keyboard shortcuts
     function handleKeydown(event: KeyboardEvent) {
         // F1: Open help
@@ -673,6 +712,7 @@
 <div class="flex flex-col h-screen overflow-hidden bg-base-100">
     <Toolbar
         onopen={handleOpenProject}
+        onimport={handleImport}
         onsave={handleSaveProject}
         onexportxml={handleExportXml}
         onexportdict={handleExportDictionary}
@@ -829,6 +869,16 @@
                     onclose={handleLemmatizerClose}
                     onsave={handleLemmatizerSave}
                 />
+            </div>
+        </div>
+    {/if}
+
+    {#if isImporting}
+        <div class="modal modal-open">
+            <div class="modal-backdrop bg-base-100/50"></div>
+            <div class="modal-box bg-transparent shadow-none shadow-transparent border-none flex flex-col items-center justify-center overflow-hidden">
+                <span class="loading loading-spinner loading-lg text-primary"></span>
+                <p class="mt-4 font-bold text-lg text-base-content">Importing...</p>
             </div>
         </div>
     {/if}

@@ -105,8 +105,8 @@ Uses **Junicode** (in `static/fonts/`) for MUFI characters.
 
 ## Missing features:
 
-- Search/replace functionality in editor
-- Editor undo/redo (CodeMirror has built-in support, needs UI integration)
+- [x] Search/replace functionality in editor
+- [x] Editor undo/redo (CodeMirror has built-in support, needs UI integration)
 - Import from other transcription formats
 - XSLT support for rendering from XML
 - Export to additional formats (HTML, PDF)

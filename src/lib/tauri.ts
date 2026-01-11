@@ -50,6 +50,10 @@ export async function loadTextFile(path: string): Promise<string> {
   return invoke("load_text_file", { path });
 }
 
+export async function importFile(path: string): Promise<string> {
+  return invoke("import_file", { path });
+}
+
 export async function listTemplates(): Promise<Template[]> {
   return invoke("list_templates");
 }
