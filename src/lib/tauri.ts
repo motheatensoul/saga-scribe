@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { Template } from "./stores/template";
 import type { Entity, EntityMap } from "./stores/entities";
 
@@ -51,40 +50,12 @@ export async function loadTextFile(path: string): Promise<string> {
   return invoke("load_text_file", { path });
 }
 
-export interface ImportResult {
-  success: boolean;
-  content: string | null;
-  error: string | null;
-  path: string;
-}
-
 /**
- * Import a file asynchronously. The backend processes the file on a background
- * thread and emits an event when complete, keeping the UI responsive.
+ * Import a file and convert it to DSL format.
+ * The backend runs this on a separate async task to avoid blocking the UI.
  */
 export async function importFile(path: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let unlisten: UnlistenFn | undefined;
-
-    // Set up listener for the result
-    listen<ImportResult>("import-complete", (event) => {
-      if (event.payload.path === path) {
-        // Clean up listener
-        if (unlisten) unlisten();
-
-        if (event.payload.success && event.payload.content !== null) {
-          resolve(event.payload.content);
-        } else {
-          reject(new Error(event.payload.error || "Import failed"));
-        }
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-
-    // Start the import (fire-and-forget, result comes via event)
-    invoke("import_file", { path });
-  });
+  return invoke("import_file", { path });
 }
 
 export async function listTemplates(): Promise<Template[]> {
