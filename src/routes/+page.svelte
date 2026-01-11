@@ -6,6 +6,7 @@
     import Preview from "$lib/components/Preview.svelte";
     import Toolbar from "$lib/components/Toolbar.svelte";
     import TemplateEditor from "$lib/components/TemplateEditor.svelte";
+    import MetadataEditor from "$lib/components/MetadataEditor.svelte";
     import EntityBrowser from "$lib/components/EntityBrowser.svelte";
     import Lemmatizer from "$lib/components/Lemmatizer.svelte";
     import ErrorPanel from "$lib/components/ErrorPanel.svelte";
@@ -17,6 +18,8 @@
     import { entityStore } from "$lib/stores/entities";
     import { settings } from "$lib/stores/settings";
     import { errorStore, errorCounts } from "$lib/stores/errors";
+    import * as metadataStore from "$lib/stores/metadata.svelte";
+    import type { Metadata } from "$lib/types/metadata";
     import {
         listTemplates,
         compileDsl,
@@ -50,6 +53,7 @@
         ScrollText,
         MessageCircleWarning,
         FileCheck,
+        FileText,
         Undo,
         Redo,
         Search,
@@ -74,6 +78,8 @@
     let entityMappingsJson = $state<string | null>(null);
     let isImporting = $state(false);
     let isMounting: boolean = $state(true);
+    let showMetadataEditor = $state(false);
+    let currentMetadata = $state<Metadata | undefined>(undefined);
 
     onMount(async () => {
         errorStore.info("App", "Application starting...");
@@ -530,6 +536,15 @@
                     templateStore.setActive(template);
                 }
 
+                // Restore metadata if present
+                if (project.metadata) {
+                    currentMetadata = project.metadata;
+                    metadataStore.setMetadata(project.metadata);
+                } else {
+                    currentMetadata = undefined;
+                    metadataStore.resetMetadata();
+                }
+
                 // Cancel any pending auto-preview compile and trigger recompile
                 clearTimeout(compileTimeout);
                 await doCompile(project.source);
@@ -589,12 +604,16 @@
             );
 
             // Save project archive
+            const metadataJson = currentMetadata
+                ? JSON.stringify(currentMetadata)
+                : undefined;
             await saveProject(
                 path,
                 $editor.content,
                 previewContent,
                 confirmationsJson,
                 template.id,
+                metadataJson,
             );
 
             editor.setFile(path, $editor.content);
@@ -673,27 +692,34 @@
         await new Promise((resolve) => setTimeout(resolve, 16));
 
         try {
-            const content = await importFile(pathStr);
+            const result = await importFile(pathStr);
 
             // Clear history and session confirmations
             lemmatizationHistory.clear();
             sessionLemmaStore.clear();
             clearTimeout(compileTimeout);
 
-            const compiled = await compileOnly(content);
+            const compiled = await compileOnly(result.dsl);
 
-            editorComponent?.setContent(content);
+            editorComponent?.setContent(result.dsl);
 
             // Cancel the compile that setContent just triggered via onchange
             clearTimeout(compileTimeout);
 
-            editor.setFile(null, content);
+            editor.setFile(null, result.dsl);
+
+            // Set metadata if present in imported file
+            if (result.metadata) {
+                currentMetadata = result.metadata;
+                metadataStore.setMetadata(result.metadata);
+                errorStore.info("Import", `Imported content and metadata from ${pathStr}`);
+            } else {
+                errorStore.info("Import", `Imported content from ${pathStr}`);
+            }
 
             if (compiled !== null) {
                 previewContent = compiled;
             }
-
-            errorStore.info("Import", `Imported content from ${pathStr}`);
         } catch (e) {
             errorStore.error("Import", `Failed to import: ${e}`);
         } finally {
@@ -812,6 +838,13 @@
                             </button>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
+                                title="Edit manuscript metadata"
+                                onclick={() => (showMetadataEditor = true)}
+                            >
+                                <FileText class="size-3/4" />
+                            </button>
+                            <button
+                                class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Validate XML"
                                 onclick={() => (showValidationPanel = true)}
                             >
@@ -853,6 +886,14 @@
     </div>
 
     <TemplateEditor bind:isopen={showTemplateManager} />
+
+    <MetadataEditor
+        bind:isopen={showMetadataEditor}
+        bind:metadata={currentMetadata}
+        onSave={(meta) => {
+            metadataStore.updateMetadata(meta);
+        }}
+    />
 
     {#if showEntityBrowser}
         <div class="modal modal-open">

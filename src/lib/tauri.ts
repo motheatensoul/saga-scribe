@@ -50,11 +50,19 @@ export async function loadTextFile(path: string): Promise<string> {
   return invoke("load_text_file", { path });
 }
 
+/** Result from importing a file */
+export interface ImportResult {
+  /** The DSL content extracted from the body */
+  dsl: string;
+  /** Metadata extracted from teiHeader (if present) */
+  metadata?: import("$lib/types/metadata").Metadata;
+}
+
 /**
- * Import a file and convert it to DSL format.
+ * Import a file and convert it to DSL format, also extracting metadata.
  * The backend runs this on a separate async task to avoid blocking the UI.
  */
-export async function importFile(path: string): Promise<string> {
+export async function importFile(path: string): Promise<ImportResult> {
   return invoke("import_file", { path });
 }
 
@@ -305,6 +313,8 @@ export interface ProjectData {
   output: string;
   confirmations: Record<number, LemmaConfirmation>;
   manifest: ProjectManifest;
+  /** Optional manuscript metadata (new in v1.1) */
+  metadata?: import("$lib/types/metadata").Metadata;
 }
 
 // Save project archive (.teis)
@@ -314,6 +324,7 @@ export async function saveProject(
   output: string,
   confirmationsJson: string,
   templateId: string,
+  metadataJson?: string,
 ): Promise<void> {
   return invoke("save_project", {
     path,
@@ -321,6 +332,7 @@ export async function saveProject(
     output,
     confirmationsJson,
     templateId,
+    metadataJson,
   });
 }
 
@@ -378,3 +390,35 @@ export async function validateXmlWithSchema(
     schemaName,
   });
 }
+
+// ============================================================================
+// Metadata Commands
+// ============================================================================
+
+import type { Metadata } from "$lib/types/metadata";
+
+// Generate TEI header from structured metadata
+export async function generateTeiHeader(
+  metadataJson: string,
+  includeMenotaNs: boolean,
+): Promise<string> {
+  return invoke("generate_tei_header", { metadataJson, includeMenotaNs });
+}
+
+// Generate TEI footer (closing tags)
+export async function generateTeiFooter(): Promise<string> {
+  return invoke("generate_tei_footer");
+}
+
+// Validate metadata JSON structure
+export async function validateMetadata(metadataJson: string): Promise<boolean> {
+  return invoke("validate_metadata", { metadataJson });
+}
+
+// Create empty metadata with default values
+export async function createEmptyMetadata(): Promise<string> {
+  return invoke("create_empty_metadata");
+}
+
+// Re-export Metadata type for convenience
+export type { Metadata };

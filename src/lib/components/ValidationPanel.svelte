@@ -11,11 +11,10 @@
     import { listSchemas, validateXml } from "$lib/tauri";
     import { errorStore } from "$lib/stores/errors";
     import {
-        CheckCircle,
-        XCircle,
-        AlertTriangle,
+        CircleCheck,
+        X as CloseIcon,
+        TriangleAlert,
         Loader,
-        X as CloseButton,
     } from "@lucide/svelte";
     import { onMount } from "svelte";
 
@@ -76,9 +75,9 @@
         <h2 class="flex items-center gap-2 font-bold">
             XML Validation
             {#if $validationResult?.valid === true}
-                <CheckCircle class="text-success" size={16} />
+                <CircleCheck class="text-success" size={16} />
             {:else if $validationResult?.valid === false}
-                <XCircle class="text-error" size={16} />
+                <CloseIcon class="text-error" size={16} />
             {/if}
         </h2>
         <div class="flex gap-2 items-center">
@@ -107,7 +106,7 @@
                 {/if}
             </button>
             <button class="btn btn-ghost btn-sm btn-circle" onclick={onclose} aria-label="Close">
-                <CloseButton size={16} />
+                <CloseIcon size={16} />
             </button>
         </div>
     </div>
@@ -125,7 +124,7 @@
         {:else if $validationResult}
             {#if $validationResult.valid}
                 <div class="p-4 flex items-center gap-2 text-success">
-                    <CheckCircle size={20} />
+                    <CircleCheck size={20} />
                     <span
                         >Document is valid against {$validationResult.schemaName}</span
                     >
@@ -133,12 +132,12 @@
             {:else}
                 <div class="mb-2 flex gap-4 text-xs">
                     <span class="flex items-center gap-1 text-error">
-                        <XCircle size={14} />
+                        <CloseIcon size={14} />
                         {$validationCounts.errors} error(s)
                     </span>
                     {#if $validationCounts.warnings > 0}
                         <span class="flex items-center gap-1 text-warning">
-                            <AlertTriangle size={14} />
+                            <TriangleAlert size={14} />
                             {$validationCounts.warnings} warning(s)
                         </span>
                     {/if}
@@ -160,7 +159,7 @@
                         {:else}
                             <span></span>
                         {/if}
-                        <span class="break-words">{error.message}</span>
+                        <span class="wrap-break-word">{error.message}</span>
                     </div>
                 {/each}
             {/if}

@@ -2,6 +2,7 @@ mod commands;
 mod dictionary;
 pub mod entities;
 mod importer;
+pub mod metadata;
 mod normalizer;
 mod parser;
 mod settings;
@@ -100,6 +101,10 @@ pub fn run() {
             commands::validate::validate_xml,
             commands::validate::validate_xml_with_schema,
             commands::import::import_file,
+            commands::metadata::generate_tei_header,
+            commands::metadata::generate_tei_footer,
+            commands::metadata::validate_metadata,
+            commands::metadata::create_empty_metadata,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

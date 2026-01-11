@@ -1,3 +1,4 @@
+use crate::metadata::Metadata;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -63,6 +64,9 @@ pub struct ProjectData {
     pub output: String,
     pub confirmations: HashMap<u32, LemmaConfirmation>,
     pub manifest: ProjectManifest,
+    /// Optional manuscript metadata (new in v1.1)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Metadata>,
 }
 
 #[tauri::command]
@@ -72,6 +76,7 @@ pub fn save_project(
     output: String,
     confirmations_json: String,
     template_id: String,
+    metadata_json: Option<String>,
 ) -> Result<(), String> {
     let path = PathBuf::from(&path);
     let file = File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?;
@@ -98,10 +103,18 @@ pub fn save_project(
     zip.write_all(confirmations_json.as_bytes())
         .map_err(|e| format!("Failed to write confirmations.json: {}", e))?;
 
+    // Write metadata.json if provided
+    if let Some(ref meta_json) = metadata_json {
+        zip.start_file("metadata.json", options)
+            .map_err(|e| format!("Failed to start metadata.json: {}", e))?;
+        zip.write_all(meta_json.as_bytes())
+            .map_err(|e| format!("Failed to write metadata.json: {}", e))?;
+    }
+
     // Create and write manifest.json
     let now = chrono_lite_now();
     let manifest = ProjectManifest {
-        version: "1.0".to_string(),
+        version: "1.1".to_string(),
         template_id,
         created: now.clone(),
         modified: now,
@@ -141,11 +154,18 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
     let manifest: ProjectManifest = serde_json::from_str(&manifest_str)
         .map_err(|e| format!("Failed to parse manifest.json: {}", e))?;
 
+    // Read metadata.json (optional, new in v1.1)
+    let metadata: Option<Metadata> = match read_zip_file(&mut archive, "metadata.json") {
+        Ok(meta_str) => serde_json::from_str(&meta_str).ok(),
+        Err(_) => None, // File doesn't exist in older projects
+    };
+
     Ok(ProjectData {
         source,
         output,
         confirmations,
         manifest,
+        metadata,
     })
 }
 
