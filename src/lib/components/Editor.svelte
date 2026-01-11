@@ -2,7 +2,8 @@
     import { onMount, onDestroy } from 'svelte';
     import { EditorView, keymap, lineNumbers, highlightActiveLineGutter } from '@codemirror/view';
     import { EditorState } from '@codemirror/state';
-    import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+    import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands';
+    import { search, searchKeymap, openSearchPanel } from '@codemirror/search';
     import { editor } from '$lib/stores/editor';
     import { teiDsl, teiDslHighlighting } from '$lib/parser/highlighter';
     import { teiLinter } from '$lib/parser/linter';
@@ -21,7 +22,8 @@
                 lineNumbers(),
                 highlightActiveLineGutter(),
                 history(),
-                keymap.of([...defaultKeymap, ...historyKeymap]),
+                keymap.of([...defaultKeymap, ...historyKeymap, ...searchKeymap]),
+                search({ top: true }),
                 teiDsl,
                 teiDslHighlighting,
                 teiLinter,
@@ -67,6 +69,27 @@
                 selection: { anchor: pos + text.length },
             });
             view.focus();
+        }
+    }
+
+    export function triggerUndo() {
+        if (view) {
+            undo(view);
+            view.focus();
+        }
+    }
+
+    export function triggerRedo() {
+        if (view) {
+            redo(view);
+            view.focus();
+        }
+    }
+
+    export function triggerSearch() {
+        if (view) {
+            openSearchPanel(view);
+            view.focus(); // Focus might be stolen by the search panel input, but openSearchPanel usually handles it.
         }
     }
 </script>
