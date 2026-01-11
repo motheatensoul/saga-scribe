@@ -632,6 +632,8 @@
     }
 
     async function handleImport() {
+        console.log("[Import] handleImport called");
+
         const path = await open({
             filters: [
                 { name: "All Supported Formats", extensions: ["xml", "tei", "txt"] },
@@ -639,6 +641,8 @@
                 { name: "Text File", extensions: ["txt"] },
             ],
         });
+
+        console.log("[Import] File dialog closed, path:", path);
         if (!path) return;
 
         const pathStr = path as string;
