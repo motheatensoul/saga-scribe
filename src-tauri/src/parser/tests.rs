@@ -263,6 +263,7 @@ fn test_compiler_auto_line_numbers() {
         word_wrap: false,
         auto_line_numbers: true,
         multi_level: false,
+        wrap_pages: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("line1// line2// line3").unwrap();
@@ -339,6 +340,7 @@ fn test_compiler_word_wrap() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: false,
+        wrap_pages: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello world").unwrap();
@@ -352,6 +354,7 @@ fn test_compiler_punctuation_wrap() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: false,
+        wrap_pages: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello, world.").unwrap();
@@ -375,6 +378,7 @@ fn test_compiler_newlines_in_output() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: false,
+        wrap_pages: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello world").unwrap();
@@ -392,6 +396,7 @@ fn test_full_pipeline_menota_style() {
         word_wrap: true,
         auto_line_numbers: true,
         multi_level: false,
+        wrap_pages: false,
     };
     let mut compiler = Compiler::new().with_config(config);
 
@@ -451,6 +456,7 @@ fn test_compiler_multi_level_word() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: true,
+        wrap_pages: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello").unwrap();
@@ -469,6 +475,7 @@ fn test_compiler_multi_level_punctuation() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: true,
+        wrap_pages: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile(",").unwrap();
@@ -487,6 +494,7 @@ fn test_compiler_multi_level_abbreviation() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: true,
+        wrap_pages: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile(".abbr[dr]{doctor}").unwrap();
@@ -504,6 +512,7 @@ fn test_compiler_multi_level_entity() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: true,
+        wrap_pages: false,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile(":eth:").unwrap();
@@ -525,6 +534,7 @@ fn test_compiler_lemma_attributes_single_level() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: false,
+        wrap_pages: false,
     };
     let mut mappings = HashMap::new();
     // Now keyed by word INDEX (0 = first word)
@@ -553,6 +563,7 @@ fn test_compiler_lemma_attributes_multi_level() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: true,
+        wrap_pages: false,
     };
     let mut mappings = HashMap::new();
     // Now keyed by word INDEX (0 = first word)
@@ -583,6 +594,7 @@ fn test_compiler_lemma_only_for_confirmed_index() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: false,
+        wrap_pages: false,
     };
     let mut mappings = HashMap::new();
     // Only confirm word at index 0 (first "kona")
@@ -613,6 +625,7 @@ fn test_compiler_lemma_attributes_no_mapping() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: false,
+        wrap_pages: false,
     };
     let mappings = HashMap::new(); // Empty mappings
 
@@ -633,6 +646,7 @@ fn test_compiler_lemma_attributes_escaping() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: false,
+        wrap_pages: false,
     };
     let mut mappings = HashMap::new();
     mappings.insert(
@@ -670,6 +684,7 @@ fn test_compiler_compound_join_single_level() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: false,
+        wrap_pages: false,
     };
 
     let mut compiler = Compiler::new().with_config(config);
@@ -685,6 +700,7 @@ fn test_compiler_compound_join_multi_level() {
         word_wrap: true,
         auto_line_numbers: false,
         multi_level: true,
+        wrap_pages: false,
     };
 
     let mut compiler = Compiler::new().with_config(config);

@@ -9,6 +9,8 @@ export interface Template {
   wordWrap: boolean;
   autoLineNumbers: boolean;
   multiLevel: boolean;
+  wrapPages: boolean;
+  validationSchemaId?: string;
 }
 
 function createTemplateStore() {

@@ -5,6 +5,9 @@
     import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
     import { editor } from '$lib/stores/editor';
     import { teiDsl, teiDslHighlighting } from '$lib/parser/highlighter';
+    import { teiLinter } from '$lib/parser/linter';
+    import { lintGutter } from "@codemirror/lint";
+    import { daisyExtensions } from '$lib/editor/theme';
 
     let { onchange }: { onchange?: (content: string) => void } = $props();
 
@@ -21,6 +24,9 @@
                 keymap.of([...defaultKeymap, ...historyKeymap]),
                 teiDsl,
                 teiDslHighlighting,
+                teiLinter,
+                lintGutter(),
+                daisyExtensions,
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
                         const content = update.state.doc.toString();

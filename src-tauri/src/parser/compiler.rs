@@ -12,6 +12,8 @@ pub struct CompilerConfig {
     pub word_wrap: bool,
     pub auto_line_numbers: bool,
     pub multi_level: bool,
+    /// Wrap page content in <p> tags (TEI requires content in structural elements)
+    pub wrap_pages: bool,
 }
 
 /// A lemma mapping for a wordform
@@ -33,6 +35,8 @@ pub struct Compiler<'a> {
     line_number: u32,
     /// Current word index counter
     word_index: u32,
+    /// Whether we're currently inside a page <p> wrapper
+    in_page_paragraph: bool,
 }
 
 impl<'a> Compiler<'a> {
@@ -44,6 +48,7 @@ impl<'a> Compiler<'a> {
             config: CompilerConfig::default(),
             line_number: 0,
             word_index: 0,
+            in_page_paragraph: false,
         }
     }
 
@@ -82,11 +87,18 @@ impl<'a> Compiler<'a> {
         // Reset counters for each compilation
         self.line_number = 0;
         self.word_index = 0;
+        self.in_page_paragraph = false;
 
         let mut output = String::new();
         for node in &nodes {
             output.push_str(&self.node_to_xml(node));
         }
+
+        // Close any open page paragraph at the end
+        if self.config.wrap_pages && self.in_page_paragraph {
+            output.push_str("</p>\n");
+        }
+
         Ok(output)
     }
 
@@ -103,7 +115,23 @@ impl<'a> Compiler<'a> {
                     None => "<lb/>\n".to_string(),
                 }
             }
-            Node::PageBreak(n) => format!("<pb n=\"{}\"/>\n", self.escape_xml(n)),
+            Node::PageBreak(n) => {
+                let mut result = String::new();
+                if self.config.wrap_pages {
+                    // Close previous page paragraph if open
+                    if self.in_page_paragraph {
+                        result.push_str("</p>\n");
+                    }
+                    // Output page break
+                    result.push_str(&format!("<pb n=\"{}\"/>\n", self.escape_xml(n)));
+                    // Start new page paragraph
+                    result.push_str("<p>\n");
+                    self.in_page_paragraph = true;
+                } else {
+                    result.push_str(&format!("<pb n=\"{}\"/>\n", self.escape_xml(n)));
+                }
+                result
+            }
             Node::Abbreviation { abbr, expansion } => {
                 format!(
                     "<choice><abbr>{}</abbr><expan>{}</expan></choice>",

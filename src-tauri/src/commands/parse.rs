@@ -13,6 +13,7 @@ pub fn compile_dsl(
     word_wrap: Option<bool>,
     auto_line_numbers: Option<bool>,
     multi_level: Option<bool>,
+    wrap_pages: Option<bool>,
     entities_json: Option<String>,
     normalizer_json: Option<String>,
     entity_mappings_json: Option<String>,
@@ -53,6 +54,7 @@ pub fn compile_dsl(
         word_wrap: word_wrap.unwrap_or(false),
         auto_line_numbers: auto_line_numbers.unwrap_or(false),
         multi_level: multi_level.unwrap_or(false),
+        wrap_pages: wrap_pages.unwrap_or(false),
     };
 
     let mut compiler = Compiler::new()

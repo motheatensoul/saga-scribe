@@ -103,11 +103,9 @@
                         <div class="space-y-4">
                             <!-- Theme -->
                             <div class="form-control">
-                                <label class="label" for="theme-select">
-                                    <span class="label-text font-medium"
-                                        >Theme</span
-                                    >
-                                </label>
+                                <div class="mb-2">
+                                    <span class="label-text font-medium">Theme</span>
+                                </div>
                                 <select
                                     id="theme-select"
                                     class="select select-bordered w-full max-w-xs"
@@ -117,36 +115,30 @@
                                     <option value="light">Light</option>
                                     <option value="dark">Dark</option>
                                 </select>
-                                <label class="label" for="theme-select">
-                                    <span class="label-text-alt"
+                                <div class="mt-1">
+                                    <span class="label-text-alt text-base-content/60"
                                         >Choose the color scheme. System follows
                                         your OS theme preference</span
                                     >
-                                </label>
+                                </div>
                             </div>
 
                             <!-- Font Size -->
                             <div class="form-control">
-                                <label class="label" for="font-size-input">
-                                    <span class="label-text font-medium"
-                                        >Editor Font Size</span
-                                    >
-                                    <span class="label-text-alt"
-                                        >{localSettings.fontSize}px</span
-                                    >
-                                </label>
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="label-text font-medium">Editor Font Size</span>
+                                    <span class="badge badge-sm">{localSettings.fontSize}px</span>
+                                </div>
                                 <input
                                     id="font-size-input"
                                     type="range"
                                     min="10"
                                     max="24"
                                     bind:value={localSettings.fontSize}
-                                    class="range range-primary"
+                                    class="range range-primary w-full"
                                     step="1"
                                 />
-                                <div
-                                    class="flex w-full justify-between text-xs px-2"
-                                >
+                                <div class="flex w-full justify-between text-xs px-2 mt-1">
                                     <span>10px</span>
                                     <span>14px</span>
                                     <span>18px</span>
@@ -166,66 +158,46 @@
                         <div class="space-y-4">
                             <!-- Auto Preview -->
                             <div class="form-control">
-                                <label
-                                    class="label cursor-pointer justify-start gap-4"
-                                >
+                                <label class="label cursor-pointer justify-start gap-4 p-0">
                                     <input
                                         type="checkbox"
                                         bind:checked={localSettings.autoPreview}
                                         class="checkbox checkbox-primary"
                                     />
                                     <div class="flex flex-col">
-                                        <span class="label-text font-medium"
-                                            >Auto-preview</span
-                                        >
-                                        <span class="label-text-alt"
-                                            >Automatically update preview as you
-                                            type</span
-                                        >
+                                        <span class="label-text font-medium">Auto-preview</span>
+                                        <span class="label-text-alt text-base-content/60">
+                                            Automatically update preview as you type
+                                        </span>
                                     </div>
                                 </label>
                             </div>
 
                             <!-- Preview Delay -->
                             {#if localSettings.autoPreview}
-                                <div class="form-control ml-8">
-                                    <label
-                                        class="label"
-                                        for="preview-delay-input"
-                                    >
-                                        <span class="label-text font-medium"
-                                            >Preview Delay</span
-                                        >
-                                        <span class="label-text-alt"
-                                            >{localSettings.previewDelay}ms</span
-                                        >
-                                    </label>
+                                <div class="form-control pl-8">
+                                    <div class="flex justify-between items-center mb-2">
+                                        <span class="label-text font-medium">Preview Delay</span>
+                                        <span class="badge badge-sm">{localSettings.previewDelay}ms</span>
+                                    </div>
                                     <input
                                         id="preview-delay-input"
                                         type="range"
                                         min="100"
                                         max="2000"
                                         bind:value={localSettings.previewDelay}
-                                        class="range range-sm range-primary"
+                                        class="range range-sm range-primary w-full"
                                         step="100"
                                     />
-                                    <div
-                                        class="flex w-full justify-between text-xs px-2"
-                                    >
+                                    <div class="flex w-full justify-between text-xs px-2 mt-1">
                                         <span>100ms</span>
                                         <span>500ms</span>
                                         <span>1000ms</span>
                                         <span>2000ms</span>
                                     </div>
-                                    <label
-                                        class="label"
-                                        for="preview-delay-input"
-                                    >
-                                        <span class="label-text-alt"
-                                            >Time to wait after typing before
-                                            updating preview</span
-                                        >
-                                    </label>
+                                    <div class="mt-2 text-xs text-base-content/60">
+                                        Time to wait after typing before updating preview
+                                    </div>
                                 </div>
                             {/if}
                         </div>
@@ -233,17 +205,17 @@
 
                     <div class="divider"></div>
 
-                    <!-- Template Section -->
+                            <!-- Template Section -->
                     <section>
                         <h3 class="text-lg font-semibold mb-4 text-primary">
                             Default Template
                         </h3>
                         <div class="form-control">
-                            <label class="label" for="template-select">
+                            <div class="mb-2">
                                 <span class="label-text font-medium"
                                     >Active Template</span
                                 >
-                            </label>
+                            </div>
                             <select
                                 id="template-select"
                                 class="select select-bordered w-full max-w-xs"
@@ -256,11 +228,11 @@
                                     >
                                 {/each}
                             </select>
-                            <label class="label" for="template-select">
-                                <span class="label-text-alt"
+                            <div class="mt-1">
+                                <span class="label-text-alt text-base-content/60"
                                     >The template to use for new projects</span
                                 >
-                            </label>
+                            </div>
                         </div>
                     </section>
                 </div>

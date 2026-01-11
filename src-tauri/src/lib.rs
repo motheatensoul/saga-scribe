@@ -5,9 +5,11 @@ mod normalizer;
 mod parser;
 mod settings;
 mod template;
+mod validator;
 
 use commands::dictionary::OnpState;
 use std::sync::Mutex;
+use validator::actor::ValidationActor;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,6 +18,10 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(OnpState(Mutex::new(None)))
         .setup(|app| {
+            // Spawn validation actor
+            let validation_sender = ValidationActor::spawn();
+            app.manage(validation_sender);
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
@@ -89,6 +95,9 @@ pub fn run() {
             commands::dictionary::export_inflections,
             commands::dictionary::is_onp_loaded,
             commands::dictionary::get_onp_stats,
+            commands::validate::list_schemas,
+            commands::validate::validate_xml,
+            commands::validate::validate_xml_with_schema,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

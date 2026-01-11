@@ -35,10 +35,11 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [
-      "../static/entities/*",
-      "../static/normalizer/*",
-      "../static/dictionary/*"
-    ]
+    "resources": {
+      "../static/entities/": "entities/",
+      "../static/normalizer/": "normalizer/",
+      "../static/dictionary/": "dictionary/",
+      "../static/schemas/": "schemas/"
+    }
   }
 }

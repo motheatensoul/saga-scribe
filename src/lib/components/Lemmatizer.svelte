@@ -12,6 +12,7 @@
         type OnpFullEntry,
         type InflectedForm,
     } from '$lib/tauri';
+    import { X as CloseButton } from "@lucide/svelte";
 
     let {
         facsimile,
@@ -554,7 +555,9 @@
                 <span class="badge badge-success badge-xs ml-2">confirmed</span>
             {/if}
         </div>
-        <button type="button" class="btn btn-sm btn-ghost" onclick={onclose} aria-label="Close">✕</button>
+        <button type="button" class="btn btn-sm btn-ghost btn-circle" onclick={onclose} aria-label="Close">
+            <CloseButton size={16} />
+        </button>
     </div>
 
     {#if existingMappings.length > 0}

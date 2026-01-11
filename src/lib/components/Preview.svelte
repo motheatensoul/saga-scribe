@@ -1,5 +1,6 @@
 <script lang="ts">
     import RenderedText from './RenderedText.svelte';
+    import XmlPreview from './XmlPreview.svelte';
 
     let {
         content = '',
@@ -42,9 +43,9 @@
             </button>
         </div>
     </div>
-    <div class="flex-1 overflow-auto">
+    <div class="flex-1 overflow-auto h-full">
         {#if viewMode === 'xml'}
-            <pre class="m-0 p-4 font-mono text-sm leading-relaxed whitespace-pre-wrap warp-break-word"><code>{content}</code></pre>
+            <XmlPreview {content} />
         {:else}
             <RenderedText {content} {onwordclick} />
         {/if}

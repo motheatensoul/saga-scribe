@@ -1,6 +1,7 @@
 <script lang="ts">
     import { entityStore, type EntityMap } from '$lib/stores/entities';
     import { getInflections, sessionLemmaStore } from '$lib/stores/dictionary';
+    import { validationStore } from '$lib/stores/validation';
 
     let {
         content = '',
@@ -17,10 +18,14 @@
         wordIndex?: number;   // The word's index in the document (for per-instance lemmatization)
         lineNumber?: string;
         pageNumber?: string;
+        hasError?: boolean;
+        errorTooltip?: string;
     }
 
     // Access entity store reactively at top level
     let entities = $derived($entityStore.entities);
+    // Access validation errors
+    let validationState = $derived($validationStore);
 
     let tokens = $derived(parseXml(content, entities));
 
@@ -87,7 +92,7 @@
             if (result.length === 0) {
                 return [{ type: 'text', displayText: '(No content in body)' }];
             }
-
+            
             return result;
         } catch (e) {
             console.error('Parse error:', e);
@@ -271,7 +276,13 @@
     }
 </script>
 
-<div class="rendered-text p-4 font-serif text-lg leading-loose">
+<div class="rendered-text p-4 font-serif text-lg leading-loose relative">
+    {#if validationState.lastResult && !validationState.lastResult.valid}
+         <div class="absolute top-0 right-0 p-2 text-xs text-error opacity-50 hover:opacity-100 transition-opacity">
+            {validationState.lastResult.errors.length} schema errors
+         </div>
+    {/if}
+
     {#each tokens as token, i}
         {#if token.type === 'word'}
             <button

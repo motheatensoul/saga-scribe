@@ -17,6 +17,11 @@ pub struct Template {
     pub auto_line_numbers: bool,
     #[serde(default)]
     pub multi_level: bool,
+    /// Wrap page content in <p> tags (TEI requires content in structural elements)
+    #[serde(default)]
+    pub wrap_pages: bool,
+    #[serde(default)]
+    pub validation_schema_id: Option<String>,
 }
 
 pub struct TemplateManager {
@@ -113,6 +118,8 @@ impl TemplateManager {
             word_wrap: false,
             auto_line_numbers: false,
             multi_level: false,
+            wrap_pages: false,
+            validation_schema_id: Some("tei-p5".to_string()),
         }
     }
 
@@ -160,6 +167,8 @@ impl TemplateManager {
             word_wrap: true,
             auto_line_numbers: true,
             multi_level: true,
+            wrap_pages: true,
+            validation_schema_id: Some("menota-p5".to_string()),
         }
     }
 }

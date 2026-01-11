@@ -9,6 +9,7 @@
     import EntityBrowser from "$lib/components/EntityBrowser.svelte";
     import Lemmatizer from "$lib/components/Lemmatizer.svelte";
     import ErrorPanel from "$lib/components/ErrorPanel.svelte";
+    import ValidationPanel from "$lib/components/ValidationPanel.svelte";
     import SettingsDialog from "$lib/components/SettingsDialog.svelte";
     import HelpDialog from "$lib/components/HelpDialog.svelte";
     import { editor } from "$lib/stores/editor";
@@ -43,7 +44,7 @@
     import { resolveResource, appDataDir } from "@tauri-apps/api/path";
     
     //Icon imports
-    import { BookDashed, ScrollText, MessageCircleWarning  } from '@lucide/svelte';
+    import { BookDashed, ScrollText, MessageCircleWarning, FileCheck  } from '@lucide/svelte';
     
 
     let editorComponent: Editor;
@@ -51,6 +52,7 @@
     let showTemplateManager = $state(false);
     let showEntityBrowser = $state(false);
     let showErrorPanel = $state(false);
+    let showValidationPanel = $state(false);
     let showLemmatizer = $state(false);
     let showSettings = $state(false);
     let showHelp = $state(false);
@@ -342,6 +344,7 @@
                     wordWrap: template.wordWrap,
                     autoLineNumbers: template.autoLineNumbers,
                     multiLevel: template.multiLevel,
+                    wrapPages: template.wrapPages,
                     entitiesJson: entitiesJson ?? undefined,
                     normalizerJson: normalizerJson ?? undefined,
                     entityMappingsJson: entityMappingsJson ?? undefined,
@@ -704,6 +707,13 @@
                             </button>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
+                                title="Validate XML"
+                                onclick={() => (showValidationPanel = true)}
+                            >
+                                <FileCheck class="size-3/4" />
+                            </button>
+                            <button
+                                class="btn btn-ghost btn-xs xl:btn-sm"
                                 class:text-error={$errorCounts.error > 0}
                                 title="View logs"
                                 onclick={() => (showErrorPanel = true)}
@@ -760,6 +770,23 @@
             ></div>
             <div class="modal-box max-w-3xl">
                 <ErrorPanel onclose={() => (showErrorPanel = false)} />
+            </div>
+        </div>
+    {/if}
+
+    {#if showValidationPanel}
+        <div class="modal modal-open">
+            <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+            <div
+                class="modal-backdrop"
+                role="none"
+                onclick={() => (showValidationPanel = false)}
+            ></div>
+            <div class="modal-box max-w-3xl">
+                <ValidationPanel
+                    xmlContent={previewContent}
+                    onclose={() => (showValidationPanel = false)}
+                />
             </div>
         </div>
     {/if}

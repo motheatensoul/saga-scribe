@@ -70,6 +70,7 @@ export interface CompileOptions {
   wordWrap?: boolean;
   autoLineNumbers?: boolean;
   multiLevel?: boolean;
+  wrapPages?: boolean;
   entitiesJson?: string;
   normalizerJson?: string;
   entityMappingsJson?: string;
@@ -90,6 +91,7 @@ export async function compileDsl(
     wordWrap: options?.wordWrap ?? false,
     autoLineNumbers: options?.autoLineNumbers ?? false,
     multiLevel: options?.multiLevel ?? false,
+    wrapPages: options?.wrapPages ?? false,
     entitiesJson: options?.entitiesJson ?? null,
     normalizerJson: options?.normalizerJson ?? null,
     entityMappingsJson: options?.entityMappingsJson ?? null,
@@ -317,4 +319,54 @@ export async function saveProject(
 // Open project archive (.teis)
 export async function openProject(path: string): Promise<ProjectData> {
   return invoke("open_project", { path });
+}
+
+// XML Validation types and functions
+
+export interface SchemaInfo {
+  id: string;
+  name: string;
+  description: string;
+  fileName: string;
+}
+
+export interface ValidationError {
+  message: string;
+  line: number | null;
+  column: number | null;
+  isWarning: boolean;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  schemaName: string;
+  errors: ValidationError[];
+  errorCount: number;
+  warningCount: number;
+}
+
+// List available validation schemas
+export async function listSchemas(): Promise<SchemaInfo[]> {
+  return invoke("list_schemas");
+}
+
+// Validate XML content against a schema
+export async function validateXml(
+  xmlContent: string,
+  schemaId: string,
+): Promise<ValidationResult> {
+  return invoke("validate_xml", { xmlContent, schemaId });
+}
+
+// Validate XML with a custom schema string
+export async function validateXmlWithSchema(
+  xmlContent: string,
+  schemaContent: string,
+  schemaName: string,
+): Promise<ValidationResult> {
+  return invoke("validate_xml_with_schema", {
+    xmlContent,
+    schemaContent,
+    schemaName,
+  });
 }

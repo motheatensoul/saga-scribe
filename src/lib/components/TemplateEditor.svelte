@@ -78,6 +78,7 @@
             wordWrap: false,
             autoLineNumbers: false,
             multiLevel: false,
+            wrapPages: false,
         };
         originalId = "";
         viewMode = "create";
