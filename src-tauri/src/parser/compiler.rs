@@ -261,11 +261,9 @@ impl<'a> Compiler<'a> {
             if let (
                 AnnotationType::Paleographic,
                 crate::annotations::AnnotationTarget::Character { char_start, char_end, .. },
-                AnnotationValue::MenotaPaleographic { observation_type: MenotaObservationType::Character, char_type, .. }
+                AnnotationValue::MenotaPaleographic { observation_type: MenotaObservationType::Character, char_type: Some(ctype), .. }
             ) = (&ann.annotation_type, &ann.target, &ann.value) {
-                if let Some(ctype) = char_type {
-                    char_anns.push((*char_start, *char_end, ctype));
-                }
+                char_anns.push((*char_start, *char_end, ctype));
             }
         }
 
@@ -285,7 +283,7 @@ impl<'a> Compiler<'a> {
             if c == '<' {
                 result.push(c);
                 // Consume until '>'
-                while let Some(tc) = chars.next() {
+                for tc in chars.by_ref() {
                     result.push(tc);
                     if tc == '>' { break; }
                 }
