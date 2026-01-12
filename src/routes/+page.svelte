@@ -9,6 +9,7 @@
     import MetadataEditor from "$lib/components/MetadataEditor.svelte";
     import EntityBrowser from "$lib/components/EntityBrowser.svelte";
     import Lemmatizer from "$lib/components/Lemmatizer.svelte";
+    import AnnotationPanel from "$lib/components/AnnotationPanel.svelte";
     import ErrorPanel from "$lib/components/ErrorPanel.svelte";
     import ValidationPanel from "$lib/components/ValidationPanel.svelte";
     import SettingsDialog from "$lib/components/SettingsDialog.svelte";
@@ -20,6 +21,7 @@
     import { errorStore, errorCounts } from "$lib/stores/errors";
     import * as metadataStore from "$lib/stores/metadata.svelte";
     import type { Metadata } from "$lib/types/metadata";
+    import { isMetadataEmpty } from "$lib/types/metadata";
     import {
         listTemplates,
         compileDsl,
@@ -34,17 +36,18 @@
         openFile,
         importFile,
         exportInflections,
+        generateTeiHeader,
     } from "$lib/tauri";
     import {
         dictionaryStore,
         inflectionStore,
         sessionLemmaStore,
-    } from "$lib/stores/dictionary";
-    import {
-        lemmatizationHistory,
+        annotationStore,
+        lemmaMappings,
+        annotationHistory,
         canUndo,
         canRedo,
-    } from "$lib/stores/lemmatizationHistory";
+    } from "$lib/stores/dictionary";
     import { resolveResource, appDataDir } from "@tauri-apps/api/path";
 
     //Icon imports
@@ -66,12 +69,15 @@
     let showErrorPanel = $state(false);
     let showValidationPanel = $state(false);
     let showLemmatizer = $state(false);
+    let wordPanelTab = $state<"lemmatize" | "annotate">("lemmatize");
     let showSettings = $state(false);
     let showHelp = $state(false);
     let selectedWordFacsimile = $state<string | null>(null);
     let selectedWordDiplomatic = $state<string | null>(null);
     let selectedWordIndex = $state<number>(-1);
     let selectedWordElement = $state<HTMLElement | null>(null);
+    // For span selections (shift-click extends)
+    let spanEndWordIndex = $state<number | null>(null);
     let compileTimeout: ReturnType<typeof setTimeout>;
     let entitiesJson = $state<string | null>(null);
     let normalizerJson = $state<string | null>(null);
@@ -332,19 +338,25 @@
         if (!template) return null;
 
         // Use session store for lemma mappings - keyed by word INDEX
-        const lemmaMappings: Record<
-            number,
-            { lemma: string; msa: string; normalized?: string }
-        > = {};
-        for (const [indexStr, mapping] of Object.entries(
-            $sessionLemmaStore.mappings,
-        )) {
-            const index = parseInt(indexStr, 10);
-            lemmaMappings[index] = {
-                lemma: mapping.lemma,
-                msa: mapping.msa,
-                normalized: mapping.normalized,
-            };
+        // $lemmaMappings already provides the right format
+        const compileLemmaMappings = $lemmaMappings.mappings;
+
+        // Get full annotation set for non-lemma annotations
+        const annotationSet = annotationStore.getSet();
+        const hasAnnotations = annotationSet.annotations.length > 0;
+
+        // Use dynamic metadata header if metadata exists, otherwise use template header
+        const currentMetadata = metadataStore.getMetadata();
+        let header = template.header;
+        if (currentMetadata && !isMetadataEmpty(currentMetadata)) {
+            try {
+                header = await generateTeiHeader(
+                    JSON.stringify(currentMetadata),
+                    template.multiLevel,
+                );
+            } catch (e) {
+                console.warn("Failed to generate TEI header from metadata, using template header:", e);
+            }
         }
 
         const options = {
@@ -357,14 +369,17 @@
             entityMappingsJson: entityMappingsJson ?? undefined,
             customMappings: $entityStore.customMappings,
             lemmaMappingsJson:
-                Object.keys(lemmaMappings).length > 0
-                    ? JSON.stringify(lemmaMappings)
+                Object.keys(compileLemmaMappings).length > 0
+                    ? JSON.stringify(compileLemmaMappings)
                     : undefined,
+            annotationsJson: hasAnnotations
+                ? JSON.stringify(annotationSet)
+                : undefined,
         };
 
         return await compileDsl(
             content,
-            template.header,
+            header,
             template.footer,
             options,
         );
@@ -405,12 +420,20 @@
         diplomatic: string,
         wordIndex: number,
         element: HTMLElement,
+        isSpanExtend?: boolean,
     ) {
-        selectedWordFacsimile = facsimile;
-        selectedWordDiplomatic = diplomatic;
-        selectedWordIndex = wordIndex;
-        selectedWordElement = element;
-        showLemmatizer = true;
+        if (isSpanExtend && showLemmatizer && selectedWordIndex >= 0) {
+            // Shift-click extends selection to create a span
+            spanEndWordIndex = wordIndex;
+        } else {
+            // Normal click - start new selection
+            selectedWordFacsimile = facsimile;
+            selectedWordDiplomatic = diplomatic;
+            selectedWordIndex = wordIndex;
+            selectedWordElement = element;
+            spanEndWordIndex = null;
+            showLemmatizer = true;
+        }
     }
 
     function handleLemmatizerClose() {
@@ -419,17 +442,20 @@
         selectedWordDiplomatic = null;
         selectedWordIndex = -1;
         selectedWordElement = null;
+        spanEndWordIndex = null;
     }
 
-    function handleLemmatizerSave(
+    async function handleLemmatizerSave(
         wordIndex: number,
         lemma?: string,
         msa?: string,
     ) {
         console.log("handleLemmatizerSave called", { wordIndex, lemma, msa });
+        // Wait for Svelte reactivity to propagate store updates
+        await tick();
         console.log(
             "Current session lemma mappings:",
-            $sessionLemmaStore.mappings,
+            $lemmaMappings.mappings,
         );
         // Trigger immediate recompile to update TEI output with new lemma
         // Cancel any pending auto-preview and compile directly
@@ -437,63 +463,123 @@
         doCompile($editor.content);
     }
 
-    // Undo/redo for lemmatization
+    /**
+     * Called when annotations are added or removed in the AnnotationPanel.
+     * Triggers recompile to update the XML output.
+     */
+    async function handleAnnotationSave() {
+        // Wait for Svelte reactivity to propagate store updates
+        await tick();
+        // Trigger immediate recompile to update TEI output
+        clearTimeout(compileTimeout);
+        doCompile($editor.content);
+    }
+
+    /**
+     * Find all word indices matching a diplomatic form in the preview XML.
+     * Used for bulk annotation feature.
+     */
+    function findMatchingWords(targetDiplomatic: string): number[] {
+        if (!previewContent) return [];
+
+        const indices: number[] = [];
+        const parser = new DOMParser();
+
+        try {
+            const doc = parser.parseFromString(previewContent, "text/xml");
+            const parseError = doc.querySelector("parsererror");
+            if (parseError) return [];
+
+            // Find all <w> elements
+            const words = doc.querySelectorAll("w");
+            let wordIndex = 0;
+
+            for (const word of words) {
+                // Get diplomatic form - check me:dipl first, then fallback to text content
+                const diplEl = word.querySelector("dipl");
+                let diplomatic = diplEl?.textContent?.trim();
+
+                if (!diplomatic) {
+                    // Fallback: use text content of the word (for single-level mode)
+                    diplomatic = word.textContent?.trim() || "";
+                }
+
+                if (diplomatic === targetDiplomatic) {
+                    indices.push(wordIndex);
+                }
+                wordIndex++;
+            }
+        } catch {
+            // Parse error - return empty
+            return [];
+        }
+
+        return indices;
+    }
+
+    // Undo/redo for annotations (lemmatization and other types)
     function handleLemmaUndo() {
-        const action = lemmatizationHistory.undo();
+        const action = annotationHistory.undo();
         if (!action) return;
 
         // Revert the action (without pushing to history again)
-        if (action.type === "confirm") {
-            // Undo a confirm: restore previous state
-            if (action.previousMapping) {
-                sessionLemmaStore.confirm(
-                    action.wordIndex,
-                    action.previousMapping,
-                );
+        if (action.type === "add") {
+            // Undo an add: remove the annotation
+            sessionLemmaStore.remove(action.annotation.id, false);
+        } else if (action.type === "remove") {
+            // Undo a remove: add back the annotation
+            sessionLemmaStore.add(action.annotation, false);
+        } else if (action.type === "update") {
+            // Undo an update: restore the previous annotation
+            if (action.previousAnnotation) {
+                sessionLemmaStore.add(action.previousAnnotation, false);
             } else {
-                sessionLemmaStore.unconfirm(action.wordIndex);
-            }
-        } else {
-            // Undo an unconfirm: restore the mapping
-            if (action.previousMapping) {
-                sessionLemmaStore.confirm(
-                    action.wordIndex,
-                    action.previousMapping,
-                );
+                sessionLemmaStore.remove(action.annotation.id, false);
             }
         }
 
         // Recompile to reflect changes
         clearTimeout(compileTimeout);
         doCompile($editor.content);
-        errorStore.info(
-            "Undo",
-            `Undid lemmatization for word #${action.wordIndex}`,
-        );
+
+        // Get word index for feedback message
+        const wordIndex =
+            action.annotation.target.type === "word"
+                ? action.annotation.target.wordIndex
+                : action.annotation.target.type === "char"
+                  ? action.annotation.target.wordIndex
+                  : action.annotation.target.startWord;
+        errorStore.info("Undo", `Undid annotation for word #${wordIndex}`);
     }
 
     function handleLemmaRedo() {
-        const action = lemmatizationHistory.redo();
+        const action = annotationHistory.redo();
         if (!action) return;
 
         // Reapply the action (without pushing to history again)
-        if (action.type === "confirm") {
-            // Redo a confirm: apply the mapping
-            if (action.mapping) {
-                sessionLemmaStore.confirm(action.wordIndex, action.mapping);
-            }
-        } else {
-            // Redo an unconfirm: remove the mapping
-            sessionLemmaStore.unconfirm(action.wordIndex);
+        if (action.type === "add") {
+            // Redo an add: add the annotation
+            sessionLemmaStore.add(action.annotation, false);
+        } else if (action.type === "remove") {
+            // Redo a remove: remove the annotation
+            sessionLemmaStore.remove(action.annotation.id, false);
+        } else if (action.type === "update") {
+            // Redo an update: apply the new annotation
+            sessionLemmaStore.add(action.annotation, false);
         }
 
         // Recompile to reflect changes
         clearTimeout(compileTimeout);
         doCompile($editor.content);
-        errorStore.info(
-            "Redo",
-            `Redid lemmatization for word #${action.wordIndex}`,
-        );
+
+        // Get word index for feedback message
+        const wordIndex =
+            action.annotation.target.type === "word"
+                ? action.annotation.target.wordIndex
+                : action.annotation.target.type === "char"
+                  ? action.annotation.target.wordIndex
+                  : action.annotation.target.startWord;
+        errorStore.info("Redo", `Redid annotation for word #${wordIndex}`);
     }
 
     // Project file handling
@@ -517,14 +603,14 @@
                 editor.setFile(pathStr, project.source);
                 editorComponent?.setContent(project.source);
 
-                // Clear lemmatization history and session confirmations
-                lemmatizationHistory.clear();
-                sessionLemmaStore.clear();
-                for (const [indexStr, mapping] of Object.entries(
-                    project.confirmations,
-                )) {
-                    const index = parseInt(indexStr, 10);
-                    sessionLemmaStore.confirm(index, mapping);
+                // Clear annotation history and load annotations
+                annotationHistory.clear();
+                if (project.annotations) {
+                    // New format: load full annotation set
+                    sessionLemmaStore.loadSet(project.annotations);
+                } else {
+                    // Legacy format: convert confirmations to annotations
+                    sessionLemmaStore.loadLegacyConfirmations(project.confirmations);
                 }
 
                 // Restore template if possible
@@ -556,8 +642,8 @@
                 editor.setFile(file.path, file.content);
                 editorComponent?.setContent(file.content);
 
-                // Clear history and session confirmations for new file
-                lemmatizationHistory.clear();
+                // Clear history and annotations for new file
+                annotationHistory.clear();
                 sessionLemmaStore.clear();
 
                 // Cancel any pending auto-preview compile
@@ -598,10 +684,11 @@
             clearTimeout(compileTimeout);
             await doCompile($editor.content);
 
-            // Serialize session confirmations
-            const confirmationsJson = JSON.stringify(
-                $sessionLemmaStore.mappings,
-            );
+            // Serialize session confirmations (lemma mappings for backward compat)
+            const confirmationsJson = JSON.stringify($lemmaMappings.mappings);
+
+            // Serialize full annotation set (new in v1.2)
+            const annotationsJson = JSON.stringify(sessionLemmaStore.getSet());
 
             // Save project archive
             const metadataJson = currentMetadata
@@ -614,6 +701,7 @@
                 confirmationsJson,
                 template.id,
                 metadataJson,
+                annotationsJson,
             );
 
             editor.setFile(path, $editor.content);
@@ -694,8 +782,8 @@
         try {
             const result = await importFile(pathStr);
 
-            // Clear history and session confirmations
-            lemmatizationHistory.clear();
+            // Clear history and annotations
+            annotationHistory.clear();
             sessionLemmaStore.clear();
             clearTimeout(compileTimeout);
 
@@ -951,14 +1039,49 @@
                 role="none"
                 onclick={handleLemmatizerClose}
             ></div>
-            <div class="modal-box max-w-2xl">
-                <Lemmatizer
-                    facsimile={selectedWordFacsimile || ""}
-                    diplomatic={selectedWordDiplomatic}
-                    wordIndex={selectedWordIndex}
-                    onclose={handleLemmatizerClose}
-                    onsave={handleLemmatizerSave}
-                />
+            <div class="modal-box max-w-2xl p-0">
+                <!-- Tabs -->
+                <div class="tabs tabs-boxed bg-base-200 rounded-none">
+                    <button
+                        type="button"
+                        class="tab"
+                        class:tab-active={wordPanelTab === "lemmatize"}
+                        onclick={() => wordPanelTab = "lemmatize"}
+                    >
+                        Lemmatize
+                    </button>
+                    <button
+                        type="button"
+                        class="tab"
+                        class:tab-active={wordPanelTab === "annotate"}
+                        onclick={() => wordPanelTab = "annotate"}
+                    >
+                        Annotate
+                    </button>
+                </div>
+                <!-- Tab content -->
+                <div class="p-4">
+                    <div class:hidden={wordPanelTab !== "lemmatize"}>
+                        <Lemmatizer
+                            facsimile={selectedWordFacsimile || ""}
+                            diplomatic={selectedWordDiplomatic}
+                            wordIndex={selectedWordIndex}
+                            onclose={handleLemmatizerClose}
+                            onsave={handleLemmatizerSave}
+                        />
+                    </div>
+                    <div class:hidden={wordPanelTab !== "annotate"}>
+                        <AnnotationPanel
+                            facsimile={selectedWordFacsimile || ""}
+                            diplomatic={selectedWordDiplomatic}
+                            wordIndex={selectedWordIndex}
+                            spanEndIndex={spanEndWordIndex}
+                            onclose={handleLemmatizerClose}
+                            onsave={handleAnnotationSave}
+                            onFindMatchingWords={findMatchingWords}
+                        />
+                    </div>
+                </div>
             </div>
         </div>
     {/if}

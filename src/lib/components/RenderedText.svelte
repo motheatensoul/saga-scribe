@@ -1,6 +1,7 @@
 <script lang="ts">
     import { entityStore, type EntityMap } from '$lib/stores/entities';
-    import { getInflections, sessionLemmaStore } from '$lib/stores/dictionary';
+    import { getInflections, lemmaMappings } from '$lib/stores/dictionary';
+    import { annotationsForWord, type AnnotationType } from '$lib/stores/annotations';
     import { validationStore } from '$lib/stores/validation';
 
     let {
@@ -8,7 +9,7 @@
         onwordclick,
     }: {
         content?: string;
-        onwordclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) => void;
+        onwordclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement, isSpanExtend?: boolean) => void;
     } = $props();
 
     interface TextToken {
@@ -48,7 +49,7 @@
 
     // Pre-compute confirmed word set for O(1) lookups during render
     let confirmedWordSet = $derived(
-        new Set(Object.keys($sessionLemmaStore.mappings).map(Number))
+        new Set(Object.keys($lemmaMappings.mappings).map(Number))
     );
 
     // Visible pages: current + 1 adjacent on each side for scroll buffer
@@ -364,7 +365,9 @@
         // Pass both facsimile (displayText) and diplomatic forms for lemmatization
         const facsimile = token.displayText;
         const diplomatic = token.diplomatic || token.displayText;
-        onwordclick?.(facsimile, diplomatic, token.wordIndex ?? -1, target);
+        // Shift-click extends selection for span annotations
+        const isSpanExtend = event.shiftKey;
+        onwordclick?.(facsimile, diplomatic, token.wordIndex ?? -1, target, isSpanExtend);
     }
 
     function hasKnownLemma(word: string): boolean {
@@ -377,6 +380,19 @@
     function isWordConfirmed(wordIndex: number | undefined): boolean {
         if (wordIndex === undefined || wordIndex < 0) return false;
         return confirmedWordSet.has(wordIndex);
+    }
+
+    // Check for different annotation types on a word
+    function getWordAnnotationTypes(wordIndex: number | undefined): Set<AnnotationType> {
+        if (wordIndex === undefined || wordIndex < 0) return new Set();
+        const anns = $annotationsForWord(wordIndex);
+        return new Set(anns.map(a => a.type));
+    }
+
+    // Check if word has specific annotation type
+    function hasAnnotationType(wordIndex: number | undefined, type: AnnotationType): boolean {
+        if (wordIndex === undefined || wordIndex < 0) return false;
+        return getWordAnnotationTypes(wordIndex).has(type);
     }
 
     // Navigation functions
@@ -541,6 +557,9 @@
                                 class="word-token"
                                 class:is-confirmed={isWordConfirmed(token.wordIndex)}
                                 class:has-suggestion={!isWordConfirmed(token.wordIndex) && hasKnownLemma(token.diplomatic || token.displayText)}
+                                class:has-note={hasAnnotationType(token.wordIndex, 'note')}
+                                class:has-semantic={hasAnnotationType(token.wordIndex, 'semantic')}
+                                class:has-paleographic={hasAnnotationType(token.wordIndex, 'paleographic')}
                                 onclick={(e) => handleWordClick(token, e)}
                                 title={formatLemmaTooltip(token)}
                             >
@@ -624,6 +643,32 @@
         border-color: var(--color-warning);
         background-color: color-mix(in oklch, var(--color-warning) 15%, transparent);
         opacity: 1;
+    }
+
+    /* Words with notes - accent underline */
+    .word-token.has-note {
+        border-bottom: 2px dashed var(--color-accent);
+    }
+
+    /* Words with semantic annotations - secondary indicator */
+    .word-token.has-semantic {
+        border-top: 2px solid var(--color-secondary);
+    }
+
+    /* Words with paleographic observations - info indicator */
+    .word-token.has-paleographic {
+        box-shadow: inset 0 0 0 1px var(--color-info);
+    }
+
+    /* Combined states - show multiple indicators */
+    .word-token.has-note.has-semantic {
+        border-bottom: 2px dashed var(--color-accent);
+        border-top: 2px solid var(--color-secondary);
+    }
+
+    .word-token.has-paleographic.is-confirmed {
+        box-shadow: inset 0 0 0 1px var(--color-info);
+        border-color: var(--color-success);
     }
 
     .punctuation {

@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import { entityStore } from '$lib/stores/entities';
-    import { sessionLemmaStore, getInflections } from '$lib/stores/dictionary';
+    import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
 
     let {
         content = '',
@@ -129,7 +129,7 @@
             };
 
             // Add styling based on lemmatization state
-            if (wordIndex in $sessionLemmaStore.mappings) {
+            if (wordIndex in $lemmaMappings.mappings) {
                 element.classList.add('is-confirmed');
             } else {
                 const inflections = $getInflections(diplomatic);

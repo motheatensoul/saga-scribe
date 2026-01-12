@@ -1,3 +1,4 @@
+mod annotations;
 mod commands;
 mod dictionary;
 pub mod entities;

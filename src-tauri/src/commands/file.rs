@@ -1,3 +1,4 @@
+use crate::annotations::AnnotationSet;
 use crate::metadata::Metadata;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -62,11 +63,15 @@ pub struct LemmaConfirmation {
 pub struct ProjectData {
     pub source: String,
     pub output: String,
+    /// Legacy lemma confirmations (for backward compat, derived from annotations)
     pub confirmations: HashMap<u32, LemmaConfirmation>,
     pub manifest: ProjectManifest,
     /// Optional manuscript metadata (new in v1.1)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
+    /// Full annotation set (new in v1.2)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<AnnotationSet>,
 }
 
 #[tauri::command]
@@ -77,6 +82,7 @@ pub fn save_project(
     confirmations_json: String,
     template_id: String,
     metadata_json: Option<String>,
+    annotations_json: Option<String>,
 ) -> Result<(), String> {
     let path = PathBuf::from(&path);
     let file = File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?;
@@ -97,11 +103,19 @@ pub fn save_project(
     zip.write_all(output.as_bytes())
         .map_err(|e| format!("Failed to write output.xml: {}", e))?;
 
-    // Write confirmations.json
+    // Write confirmations.json (backward compat for older app versions)
     zip.start_file("confirmations.json", options)
         .map_err(|e| format!("Failed to start confirmations.json: {}", e))?;
     zip.write_all(confirmations_json.as_bytes())
         .map_err(|e| format!("Failed to write confirmations.json: {}", e))?;
+
+    // Write annotations.json (new in v1.2, full annotation set)
+    if let Some(ref ann_json) = annotations_json {
+        zip.start_file("annotations.json", options)
+            .map_err(|e| format!("Failed to start annotations.json: {}", e))?;
+        zip.write_all(ann_json.as_bytes())
+            .map_err(|e| format!("Failed to write annotations.json: {}", e))?;
+    }
 
     // Write metadata.json if provided
     if let Some(ref meta_json) = metadata_json {
@@ -114,7 +128,7 @@ pub fn save_project(
     // Create and write manifest.json
     let now = chrono_lite_now();
     let manifest = ProjectManifest {
-        version: "1.1".to_string(),
+        version: "1.2".to_string(),
         template_id,
         created: now.clone(),
         modified: now,
@@ -144,7 +158,7 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
     // Read output.xml
     let output = read_zip_file(&mut archive, "output.xml")?;
 
-    // Read confirmations.json
+    // Read confirmations.json (always present for backward compat)
     let confirmations_str = read_zip_file(&mut archive, "confirmations.json")?;
     let confirmations: HashMap<u32, LemmaConfirmation> = serde_json::from_str(&confirmations_str)
         .map_err(|e| format!("Failed to parse confirmations.json: {}", e))?;
@@ -160,12 +174,19 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         Err(_) => None, // File doesn't exist in older projects
     };
 
+    // Read annotations.json (optional, new in v1.2)
+    let annotations: Option<AnnotationSet> = match read_zip_file(&mut archive, "annotations.json") {
+        Ok(ann_str) => serde_json::from_str(&ann_str).ok(),
+        Err(_) => None, // File doesn't exist in older projects
+    };
+
     Ok(ProjectData {
         source,
         output,
         confirmations,
         manifest,
         metadata,
+        annotations,
     })
 }
 

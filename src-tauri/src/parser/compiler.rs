@@ -1,6 +1,7 @@
 use super::ast::Node;
 use super::lexer::Lexer;
 use super::wordtokenizer::WordTokenizer;
+use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
 use crate::normalizer::LevelDictionary;
 use serde::{Deserialize, Serialize};
@@ -31,6 +32,8 @@ pub struct Compiler<'a> {
     dictionary: Option<&'a LevelDictionary>,
     /// Lemma mappings by word INDEX (for confirmed instances only)
     lemma_mappings: HashMap<u32, LemmaMapping>,
+    /// Full annotation set (for non-lemma annotations)
+    annotations: Option<&'a AnnotationSet>,
     config: CompilerConfig,
     line_number: u32,
     /// Current word index counter
@@ -45,6 +48,7 @@ impl<'a> Compiler<'a> {
             entities: None,
             dictionary: None,
             lemma_mappings: HashMap::new(),
+            annotations: None,
             config: CompilerConfig::default(),
             line_number: 0,
             word_index: 0,
@@ -65,6 +69,12 @@ impl<'a> Compiler<'a> {
     /// Set lemma mappings by word INDEX (for confirmed word instances)
     pub fn with_lemma_mappings(mut self, mappings: HashMap<u32, LemmaMapping>) -> Self {
         self.lemma_mappings = mappings;
+        self
+    }
+
+    /// Set full annotation set (for non-lemma annotations)
+    pub fn with_annotations(mut self, annotations: &'a AnnotationSet) -> Self {
+        self.annotations = Some(annotations);
         self
     }
 
@@ -193,8 +203,11 @@ impl<'a> Compiler<'a> {
             self.word_index += 1;
 
             // Lookup by word INDEX (only confirmed instances have mappings)
-            let attrs = self.get_lemma_attributes_by_index(current_index);
-            format!("<w{}>{}</w>\n", attrs, content)
+            let lemma_attrs = self.get_lemma_attributes_by_index(current_index);
+            let ann_attrs = self.get_annotation_attributes(current_index);
+            let notes = self.get_note_elements(current_index);
+
+            format!("<w{}{}>{}{}</w>\n", lemma_attrs, ann_attrs, content, notes)
         }
     }
 
@@ -218,15 +231,135 @@ impl<'a> Compiler<'a> {
             String::new()
         } else {
             // Lookup by word INDEX (only confirmed instances have mappings)
-            let attrs = self.get_lemma_attributes_by_index(current_index);
+            let lemma_attrs = self.get_lemma_attributes_by_index(current_index);
+            let ann_attrs = self.get_annotation_attributes(current_index);
+            let notes = self.get_note_elements(current_index);
+
+            // Inject character annotations into facsimile level
+            let facs_with_chars = self.inject_character_tags(&facs, current_index);
+
             format!(
-                "<w{}>\n  <me:facs>{}</me:facs>\n  <me:dipl>{}</me:dipl>\n  <me:norm>{}</me:norm>\n</w>\n",
-                attrs, facs, dipl, norm
+                "<w{}{}>\n  <me:facs>{}</me:facs>\n  <me:dipl>{}</me:dipl>\n  <me:norm>{}</me:norm>{}\n</w>\n",
+                lemma_attrs, ann_attrs, facs_with_chars, dipl, norm, notes
             )
         }
     }
 
-    /// Get lemma and me:msa attributes for a word by INDEX
+    /// Inject <c> tags for character annotations into an XML string
+    /// Walks the XML string, skipping tags and treating entities as single chars
+    /// to align with frontend visual indexing.
+    fn inject_character_tags(&self, xml: &str, word_index: u32) -> String {
+        use crate::annotations::{AnnotationType, AnnotationValue, MenotaObservationType};
+        
+        let Some(ann_set) = self.annotations else {
+            return xml.to_string();
+        };
+
+        // Collect character annotations for this word
+        let mut char_anns = Vec::new();
+        for ann in ann_set.for_word(word_index) {
+            if let (
+                AnnotationType::Paleographic,
+                crate::annotations::AnnotationTarget::Character { char_start, char_end, .. },
+                AnnotationValue::MenotaPaleographic { observation_type: MenotaObservationType::Character, char_type: Some(ctype), .. }
+            ) = (&ann.annotation_type, &ann.target, &ann.value) {
+                char_anns.push((*char_start, *char_end, ctype));
+            }
+        }
+
+        if char_anns.is_empty() {
+            return xml.to_string();
+        }
+
+        // Sort by start index
+        char_anns.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)));
+
+        let mut result = String::with_capacity(xml.len() + char_anns.len() * 30);
+        let mut text_idx = 0;
+        let mut chars = xml.chars().peekable();
+        
+        while let Some(c) = chars.next() {
+            // Check for tag start
+            if c == '<' {
+                result.push(c);
+                // Consume until '>'
+                for tc in chars.by_ref() {
+                    result.push(tc);
+                    if tc == '>' { break; }
+                }
+                continue;
+            }
+
+            // Check for entity start
+            if c == '&' {
+                // Collect entity
+                let mut entity = String::from("&");
+                while let Some(&ec) = chars.peek() {
+                    chars.next();
+                    entity.push(ec);
+                    if ec == ';' { break; }
+                }
+                
+                // Process entity as 1 text char
+                self.process_char_injection(&mut result, &entity, text_idx, &char_anns);
+                text_idx += 1;
+                continue;
+            }
+
+            // Regular char
+            self.process_char_injection(&mut result, &c.to_string(), text_idx, &char_anns);
+            text_idx += 1;
+        }
+
+        // Close any tags that go beyond the text length (robustness)
+        // We find annotations that were opened (start < text_idx) but not closed (end >= text_idx)
+        let mut unclosed: Vec<_> = char_anns.iter()
+            .filter(|(start, end, _)| *start < text_idx && *end >= text_idx)
+            .collect();
+        
+        // Sort to close inner-most first (reverse of start)
+        unclosed.sort_by(|a, b| b.0.cmp(&a.0));
+
+        for _ in unclosed {
+            result.push_str("</c>");
+        }
+
+        result
+    }
+
+    fn process_char_injection(
+        &self, 
+        result: &mut String, 
+        content: &str, 
+        text_idx: u32, 
+        anns: &[(u32, u32, &crate::annotations::MenotaCharType)]
+    ) {
+        use crate::annotations::MenotaCharType;
+        
+        // Check for starts
+        for (start, _end, ctype) in anns {
+            if *start == text_idx {
+                let type_str = match ctype {
+                    MenotaCharType::Initial => "initial",
+                    MenotaCharType::Capital => "capital",
+                    MenotaCharType::Rubric => "rubric",
+                    MenotaCharType::Colored => "colored",
+                };
+                result.push_str(&format!("<c type=\"{}\">", type_str));
+            }
+        }
+
+        result.push_str(content);
+
+        // Check for ends (inclusive end index)
+        // Close in reverse order of opening to ensure proper XML nesting
+        // (anns is sorted by start asc, so we iterate rev)
+        for (_start, end, _) in anns.iter().rev() {
+            if *end == text_idx {
+                result.push_str("</c>");
+            }
+        }
+    }
     fn get_lemma_attributes_by_index(&self, word_index: u32) -> String {
         if let Some(mapping) = self.lemma_mappings.get(&word_index) {
             format!(
@@ -244,6 +377,158 @@ impl<'a> Compiler<'a> {
         self.lemma_mappings
             .get(&word_index)
             .and_then(|m| m.normalized.clone())
+    }
+
+    /// Get additional attributes from annotations (semantic @ana, etc.)
+    fn get_annotation_attributes(&self, word_index: u32) -> String {
+        use crate::annotations::{AnnotationType, AnnotationValue, MenotaObservationType};
+
+        let Some(ann_set) = self.annotations else {
+            return String::new();
+        };
+
+        let mut attrs = String::new();
+        let mut ana_values = Vec::new();
+
+        for ann in ann_set.for_word(word_index) {
+            match (&ann.annotation_type, &ann.value) {
+                (AnnotationType::Semantic, AnnotationValue::Semantic { category, subcategory, .. }) => {
+                    // Add semantic category to @ana attribute
+                    let ana = if let Some(sub) = subcategory {
+                        format!("#{}:{}", category, sub)
+                    } else {
+                        format!("#{}", category)
+                    };
+                    ana_values.push(ana);
+                }
+                (AnnotationType::Paleographic, AnnotationValue::Paleographic { observation_type, certainty, .. }) => {
+                    use crate::annotations::PaleographicType;
+                    // Add paleographic observation to @ana
+                    let paleo_type = match observation_type {
+                        PaleographicType::Unclear => "unclear",
+                        PaleographicType::Damage => "damage",
+                        PaleographicType::Erasure => "erasure",
+                        PaleographicType::Letterform => "letterform",
+                        PaleographicType::Abbreviation => "abbrev-mark",
+                        PaleographicType::Correction => "correction",
+                        PaleographicType::Addition => "addition",
+                        PaleographicType::Decoration => "decoration",
+                        PaleographicType::Other => "paleo",
+                    };
+                    ana_values.push(format!("#paleo:{}", paleo_type));
+
+                    // Add certainty if specified
+                    if let Some(cert) = certainty {
+                        // TEI uses @cert with values "high", "medium", "low", or numeric
+                        let cert_val = if *cert >= 0.8 {
+                            "high"
+                        } else if *cert >= 0.5 {
+                            "medium"
+                        } else {
+                            "low"
+                        };
+                        attrs.push_str(&format!(" cert=\"{}\"", cert_val));
+                    }
+                }
+                (AnnotationType::Paleographic, AnnotationValue::MenotaPaleographic { 
+                    observation_type, 
+                    unclear_reason,
+                    add_place,
+                    add_type,
+                    hand,
+                    del_rend,
+                    supplied_reason,
+                    resp,
+                    char_type: _, // Ignored here, handled in nodes_to_facs via injection
+                    certainty,
+                    ..
+                }) => {
+                    // MENOTA-specific paleographic annotations with proper attributes
+                    match observation_type {
+                        MenotaObservationType::Unclear => {
+                            ana_values.push("#unclear".to_string());
+                            if let Some(reason) = unclear_reason {
+                                attrs.push_str(&format!(" reason=\"{:?}\"", reason).to_lowercase());
+                            }
+                            if let Some(cert) = certainty {
+                                let cert_val = if *cert >= 0.8 { "high" } else if *cert >= 0.5 { "medium" } else { "low" };
+                                attrs.push_str(&format!(" cert=\"{}\"", cert_val));
+                            }
+                        }
+                        MenotaObservationType::Addition => {
+                            ana_values.push("#addition".to_string());
+                            if let Some(place) = add_place {
+                                attrs.push_str(&format!(" place=\"{:?}\"", place).to_lowercase().replace("_", "-"));
+                            }
+                            if let Some(add_t) = add_type {
+                                attrs.push_str(&format!(" type=\"{:?}\"", add_t).to_lowercase());
+                            }
+                            if let Some(h) = hand {
+                                attrs.push_str(&format!(" hand=\"{}\"", h));
+                            }
+                        }
+                        MenotaObservationType::Deletion => {
+                            ana_values.push("#deletion".to_string());
+                            if let Some(rend) = del_rend {
+                                attrs.push_str(&format!(" rend=\"{:?}\"", rend).to_lowercase());
+                            }
+                            if let Some(h) = hand {
+                                attrs.push_str(&format!(" hand=\"{}\"", h));
+                            }
+                        }
+                        MenotaObservationType::Supplied => {
+                            ana_values.push("#supplied".to_string());
+                            if let Some(reason) = supplied_reason {
+                                attrs.push_str(&format!(" reason=\"{:?}\"", reason).to_lowercase());
+                            }
+                            if let Some(r) = resp {
+                                attrs.push_str(&format!(" resp=\"{}\"", r));
+                            }
+                        }
+                        MenotaObservationType::Character => {
+                            // Handled in nodes_to_facs via injection of <c> tags
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if !ana_values.is_empty() {
+            attrs.push_str(&format!(" ana=\"{}\"", ana_values.join(" ")));
+        }
+
+        attrs
+    }
+
+    /// Get note annotations as TEI <note> elements
+    fn get_note_elements(&self, word_index: u32) -> String {
+        use crate::annotations::{AnnotationType, AnnotationValue};
+
+        let Some(ann_set) = self.annotations else {
+            return String::new();
+        };
+
+        let mut notes = String::new();
+
+        for ann in ann_set.for_word(word_index) {
+            if let (AnnotationType::Note, AnnotationValue::Note { text, category }) =
+                (&ann.annotation_type, &ann.value)
+            {
+                let type_attr = if let Some(cat) = category {
+                    format!(" type=\"{}\"", self.escape_xml(cat))
+                } else {
+                    String::new()
+                };
+                notes.push_str(&format!(
+                    "<note{}>{}</note>",
+                    type_attr,
+                    self.escape_xml(text)
+                ));
+            }
+        }
+
+        notes
     }
 
     fn compile_punctuation(&mut self, children: &[Node]) -> String {

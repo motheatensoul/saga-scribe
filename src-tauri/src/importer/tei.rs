@@ -453,14 +453,20 @@ fn process_node(node: &Node, output: &mut String) -> Result<(), String> {
             let name = node.get_name();
             match name.as_str() {
                 "lb" => {
-                    output.push('\n'); // Start with newline so // is at start of line
+                    // Ensure we are on a new line for the break marker
+                    // But don't add double newlines if one is already present
+                    if !output.ends_with('\n') {
+                        output.push('\n');
+                    }
                     output.push_str("//");
                     if let Some(n) = node.get_property("n") {
                         output.push_str(&n);
                     }
                 }
                 "pb" => {
-                    output.push('\n'); // Start with newline so /// is at start of line
+                    if !output.ends_with('\n') {
+                        output.push('\n');
+                    }
                     output.push_str("///");
                     if let Some(n) = node.get_property("n") {
                         output.push_str(&n);
@@ -517,6 +523,38 @@ fn process_node(node: &Node, output: &mut String) -> Result<(), String> {
                         process_children(node, output)?;
                     }
                 }
+                "note" => {
+                    // Convert <note>text</note> to DSL syntax ^{text}
+                    output.push_str("^{");
+                    process_children(node, output)?;
+                    output.push('}');
+                }
+                "unclear" => {
+                    // Convert <unclear>text</unclear> to DSL syntax ?{text}?
+                    output.push_str("?{");
+                    process_children(node, output)?;
+                    output.push_str("}?");
+                }
+                // MENOTA multi-level elements: use the first one (facs) and ignore others
+                // This prevents text from being duplicated across all three levels
+                // Note: roxmltree returns local names without namespace prefix
+                "facs" | "me:facs" => {
+                    // Facsimile level - this is the primary source, process it
+                    process_children(node, output)?;
+                }
+                "dipl" | "norm" | "me:dipl" | "me:norm" => {
+                    // Diplomatic and normalized levels - skip to avoid duplication
+                    // The facs level is the authoritative source during import
+                }
+                // MENOTA abbreviation markers - just extract content, don't wrap
+                "am" => {
+                    // Abbreviation marker in facs level - extract text content
+                    process_children(node, output)?;
+                }
+                "ex" => {
+                    // Expansion marker in dipl level - skip (we use facs level)
+                    // This is NOT the same as <add> - it's part of abbreviation expansion
+                }
                 "TEI" | "teiHeader" | "text" | "body" | "div" | "p" => {
                     // Structural elements we just traverse through without adding syntax
                     process_children(node, output)?;
@@ -529,6 +567,7 @@ fn process_node(node: &Node, output: &mut String) -> Result<(), String> {
         }
         Some(NodeType::TextNode) => {
             let content = node.get_content();
+
             // Normalize whitespace:
             // 1. If it contains newlines, it's likely structural XML formatting.
             // 2. We want to preserve single spaces between words but kill indentation.
@@ -570,7 +609,7 @@ fn process_node(node: &Node, output: &mut String) -> Result<(), String> {
                     .map(|c| c.is_whitespace())
                     .unwrap_or(false);
 
-                if starts_ws {
+                if starts_ws && !output.ends_with(' ') && !output.ends_with('\n') {
                     output.push(' ');
                 }
                 output.push_str(&normalized);
@@ -706,5 +745,49 @@ mod tests {
         let result = parse(xml).unwrap();
         assert_eq!(result.dsl.trim(), "Just body content");
         assert!(result.metadata.is_none());
+    }
+
+    #[test]
+    fn test_import_note_element() {
+        let xml = r#"<?xml version="1.0"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <text>
+    <body>
+      <p>Some text<note>editorial comment</note> more text</p>
+    </body>
+  </text>
+</TEI>"#;
+
+        let result = parse(xml).unwrap();
+        assert!(
+            result.dsl.contains("^{editorial comment}"),
+            "Expected note syntax ^{{...}} in: {}",
+            result.dsl
+        );
+    }
+
+    #[test]
+    fn test_import_note_with_nested_elements() {
+        let xml = r#"<?xml version="1.0"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0">
+  <text>
+    <body>
+      <p>Text<note>A note with <supplied>supplied text</supplied> inside</note></p>
+    </body>
+  </text>
+</TEI>"#;
+
+        let result = parse(xml).unwrap();
+        // Note should contain the nested supplied element converted to DSL
+        assert!(
+            result.dsl.contains("^{"),
+            "Expected note syntax in: {}",
+            result.dsl
+        );
+        assert!(
+            result.dsl.contains("<supplied text>"),
+            "Expected supplied syntax inside note in: {}",
+            result.dsl
+        );
     }
 }

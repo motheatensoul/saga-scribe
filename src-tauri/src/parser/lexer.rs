@@ -31,7 +31,10 @@ impl<'a> Lexer<'a> {
             if remaining.starts_with("//") {
                 self.flush_text(&mut doc, &mut text_buf);
                 self.pos += 2;
-                let line_num = self.consume_until_whitespace();
+                // Line numbers should only be alphanumeric (e.g. "1", "5a", "10v")
+                // Stop consuming if we hit punctuation or other characters
+                // CHANGE: Only consume digits to avoid eating into text like "//2Text"
+                let line_num = self.consume_while(|c| c.is_ascii_digit());
                 let line_num = if line_num.is_empty() {
                     None
                 } else {
@@ -191,6 +194,24 @@ impl<'a> Lexer<'a> {
         if let Some(c) = self.current_char() {
             self.pos += c.len_utf8();
         }
+    }
+
+    fn consume_while<F>(&mut self, predicate: F) -> String
+    where
+        F: Fn(char) -> bool,
+    {
+        let start = self.pos;
+        while self.pos < self.input.len() {
+            if let Some(c) = self.current_char() {
+                if !predicate(c) {
+                    break;
+                }
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        self.input[start..self.pos].to_string()
     }
 
     fn consume_until_whitespace(&mut self) -> String {

@@ -552,9 +552,30 @@ fn test_compiler_lemma_attributes_single_level() {
         .with_lemma_mappings(mappings);
     let result = compiler.compile("konur").unwrap();
 
-    // Should have lemma attributes
-    assert!(result.contains(r#"lemma="kona""#));
-    assert!(result.contains(r#"me:msa="xNC cN nP gF""#));
+    assert_eq!(
+        result.trim(),
+        r#"<w lemma="kona" me:msa="xNC cN nP gF">konur</w>"#
+    );
+}
+
+#[test]
+fn test_lexer_linebreak_number_parsing() {
+    // Test if //2Text (no space) is parsed as LineBreak(n="2Text")
+    // If so, we need to ensure Importer adds a space.
+    let dsl = "//2Text";
+    let mut lexer = Lexer::new(dsl);
+    let document = lexer.parse().unwrap();
+    
+    println!("Nodes: {:?}", document.nodes);
+    
+    // Check the first node
+    if let Some(Node::LineBreak(lb_opt)) = document.nodes.first() {
+        if let Some(n) = lb_opt {
+            println!("Line number parsed as: '{}'", n);
+            assert_ne!(n, "2Text", "Lexer shouldn't eat text into line number!");
+            assert_eq!(n, "2", "Lexer should parse number correctly");
+        }
+    }
 }
 
 #[test]
@@ -710,4 +731,378 @@ fn test_compiler_compound_join_multi_level() {
     assert!(result.contains("<me:facs>upp haf</me:facs>"));
     assert!(result.contains("<me:dipl>upp haf</me:dipl>"));
     assert!(result.contains("<me:norm>upphaf</me:norm>"));
+}
+
+// ============================================================================
+// Annotation Output Tests
+// ============================================================================
+
+#[test]
+fn test_compiler_annotation_semantic() {
+    use crate::annotations::{
+        Annotation, AnnotationSet, AnnotationTarget, AnnotationType, AnnotationValue,
+    };
+
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: false,
+        wrap_pages: false,
+    };
+
+    // Create an annotation set with a semantic annotation for word index 0
+    let ann_set = AnnotationSet {
+        version: "1.0".to_string(),
+        annotations: vec![Annotation {
+            id: "sem-1".to_string(),
+            annotation_type: AnnotationType::Semantic,
+            target: AnnotationTarget::Word { word_index: 0 },
+            value: AnnotationValue::Semantic {
+                category: "person".to_string(),
+                subcategory: Some("masculine-name".to_string()),
+                identifier: None,
+                label: Some("Gunnarr".to_string()),
+            },
+            metadata: None,
+        }],
+    };
+
+    let mut compiler = Compiler::new()
+        .with_config(config)
+        .with_annotations(&ann_set);
+    let result = compiler.compile("Gunnarr").unwrap();
+
+    // Word should have @ana attribute with semantic category
+    assert!(result.contains("ana=\"#person:masculine-name\""));
+}
+
+#[test]
+fn test_compiler_annotation_note() {
+    use crate::annotations::{
+        Annotation, AnnotationSet, AnnotationTarget, AnnotationType, AnnotationValue,
+    };
+
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: false,
+        wrap_pages: false,
+    };
+
+    // Create an annotation set with a note annotation
+    let ann_set = AnnotationSet {
+        version: "1.0".to_string(),
+        annotations: vec![Annotation {
+            id: "note-1".to_string(),
+            annotation_type: AnnotationType::Note,
+            target: AnnotationTarget::Word { word_index: 0 },
+            value: AnnotationValue::Note {
+                text: "Unclear reading".to_string(),
+                category: Some("editorial".to_string()),
+            },
+            metadata: None,
+        }],
+    };
+
+    let mut compiler = Compiler::new()
+        .with_config(config)
+        .with_annotations(&ann_set);
+    let result = compiler.compile("word").unwrap();
+
+    // Word should contain a note element
+    assert!(result.contains("<note type=\"editorial\">Unclear reading</note>"));
+}
+
+#[test]
+fn test_compiler_annotation_paleographic() {
+    use crate::annotations::{
+        Annotation, AnnotationSet, AnnotationTarget, AnnotationType, AnnotationValue,
+        PaleographicType,
+    };
+
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: false,
+        wrap_pages: false,
+    };
+
+    // Create an annotation set with a paleographic annotation
+    let ann_set = AnnotationSet {
+        version: "1.0".to_string(),
+        annotations: vec![Annotation {
+            id: "paleo-1".to_string(),
+            annotation_type: AnnotationType::Paleographic,
+            target: AnnotationTarget::Word { word_index: 0 },
+            value: AnnotationValue::Paleographic {
+                observation_type: PaleographicType::Damage,
+                description: Some("Hole in parchment".to_string()),
+                certainty: Some(0.3),
+            },
+            metadata: None,
+        }],
+    };
+
+    let mut compiler = Compiler::new()
+        .with_config(config)
+        .with_annotations(&ann_set);
+    let result = compiler.compile("text").unwrap();
+
+    // Word should have @ana and @cert attributes
+    assert!(result.contains("ana=\"#paleo:damage\""));
+    assert!(result.contains("cert=\"low\""));
+}
+
+#[test]
+fn test_compiler_annotation_multiple_on_word() {
+    use crate::annotations::{
+        Annotation, AnnotationSet, AnnotationTarget, AnnotationType, AnnotationValue,
+    };
+
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: false,
+        wrap_pages: false,
+    };
+
+    // Create an annotation set with multiple annotations on the same word
+    let ann_set = AnnotationSet {
+        version: "1.0".to_string(),
+        annotations: vec![
+            Annotation {
+                id: "sem-1".to_string(),
+                annotation_type: AnnotationType::Semantic,
+                target: AnnotationTarget::Word { word_index: 0 },
+                value: AnnotationValue::Semantic {
+                    category: "place".to_string(),
+                    subcategory: None,
+                    identifier: None,
+                    label: None,
+                },
+                metadata: None,
+            },
+            Annotation {
+                id: "note-1".to_string(),
+                annotation_type: AnnotationType::Note,
+                target: AnnotationTarget::Word { word_index: 0 },
+                value: AnnotationValue::Note {
+                    text: "A note".to_string(),
+                    category: None,
+                },
+                metadata: None,
+            },
+        ],
+    };
+
+    let mut compiler = Compiler::new()
+        .with_config(config)
+        .with_annotations(&ann_set);
+    let result = compiler.compile("Nidaros").unwrap();
+
+    // Word should have both @ana attribute and note element
+    assert!(result.contains("ana=\"#place\""));
+    assert!(result.contains("<note>A note</note>"));
+}
+
+#[test]
+fn test_compiler_menota_character_annotation() {
+    use crate::annotations::{
+        Annotation, AnnotationSet, AnnotationTarget, AnnotationType, AnnotationValue,
+        MenotaObservationType, MenotaCharType,
+    };
+
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+        wrap_pages: false,
+    };
+
+    // Create an annotation set with a character annotation (Initial) on the first letter
+    let ann_set = AnnotationSet {
+        version: "1.0".to_string(),
+        annotations: vec![Annotation {
+            id: "char-1".to_string(),
+            annotation_type: AnnotationType::Paleographic,
+            target: AnnotationTarget::Character { 
+                word_index: 0,
+                char_start: 0,
+                char_end: 0 // Inclusive: just the first character
+            },
+            value: AnnotationValue::MenotaPaleographic {
+                observation_type: MenotaObservationType::Character,
+                unclear_reason: None,
+                add_place: None,
+                add_type: None,
+                hand: None,
+                del_rend: None,
+                supplied_reason: None,
+                resp: None,
+                source: None,
+                char_type: Some(MenotaCharType::Initial),
+                char_size: None,
+                description: None,
+                certainty: None,
+            },
+            metadata: None,
+        }],
+    };
+
+    let mut compiler = Compiler::new()
+        .with_config(config)
+        .with_annotations(&ann_set);
+    
+    // "Hér" - annotate "H"
+    let result = compiler.compile("Hér").unwrap();
+
+    // Should contain <c type="initial">H</c> in me:facs
+    // me:facs content should be <c type="initial">H</c>ér
+    assert!(result.contains(r#"<me:facs><c type="initial">H</c>ér</me:facs>"#));
+}
+
+#[test]
+fn test_compiler_menota_character_annotation_multi() {
+    // Test multi-character annotation (e.g. rubrication on first two chars)
+    use crate::annotations::{
+        Annotation, AnnotationSet, AnnotationTarget, AnnotationType, AnnotationValue,
+        MenotaObservationType, MenotaCharType,
+    };
+
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+        wrap_pages: false,
+    };
+
+    // "Hér", annotate "Hé" [0, 1] (inclusive)
+    let ann_set = AnnotationSet {
+        version: "1.0".to_string(),
+        annotations: vec![Annotation {
+            id: "char-multi".to_string(),
+            annotation_type: AnnotationType::Paleographic,
+            target: AnnotationTarget::Character { 
+                word_index: 0,
+                char_start: 0,
+                char_end: 1
+            },
+            value: AnnotationValue::MenotaPaleographic {
+                observation_type: MenotaObservationType::Character,
+                unclear_reason: None, add_place: None, add_type: None, hand: None, 
+                del_rend: None, supplied_reason: None, resp: None, source: None, 
+                char_type: Some(MenotaCharType::Rubric),
+                char_size: None, description: None, certainty: None,
+            },
+            metadata: None,
+        }],
+    };
+
+    let mut compiler = Compiler::new()
+        .with_config(config)
+        .with_annotations(&ann_set);
+    
+    let result = compiler.compile("Hér").unwrap();
+    // Should contain <c type="rubric">Hé</c>
+    assert!(result.contains(r#"<c type="rubric">Hé</c>"#));
+}
+
+#[test]
+fn test_compiler_menota_character_annotation_entity() {
+    // Test annotation on an entity (treated as 1 char index)
+    // :thorn: is 1 char index
+    use crate::annotations::{
+        Annotation, AnnotationSet, AnnotationTarget, AnnotationType, AnnotationValue,
+        MenotaObservationType, MenotaCharType,
+    };
+
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+        wrap_pages: false,
+    };
+
+    let ann_set = AnnotationSet {
+        version: "1.0".to_string(),
+        annotations: vec![Annotation {
+            id: "char-entity".to_string(),
+            annotation_type: AnnotationType::Paleographic,
+            target: AnnotationTarget::Character { 
+                word_index: 0,
+                char_start: 0,
+                char_end: 0 // First "character" is the entity
+            },
+            value: AnnotationValue::MenotaPaleographic {
+                observation_type: MenotaObservationType::Character,
+                char_type: Some(MenotaCharType::Initial),
+                unclear_reason: None, add_place: None, add_type: None, hand: None, 
+                del_rend: None, supplied_reason: None, resp: None, source: None, 
+                char_size: None, description: None, certainty: None,
+            },
+            metadata: None,
+        }],
+    };
+
+    let mut compiler = Compiler::new()
+        .with_config(config)
+        .with_annotations(&ann_set);
+    
+    let result = compiler.compile(":thorn:").unwrap();
+    // Should wrap the entity entity reference
+    assert!(result.contains(r#"<c type="initial">&thorn;</c>"#));
+}
+
+#[test]
+fn test_compiler_menota_character_annotation_out_of_bounds() {
+    // Regression test: ensure tags are closed even if annotation range exceeds text length
+    use crate::annotations::{
+        Annotation, AnnotationSet, AnnotationTarget, AnnotationType, AnnotationValue,
+        MenotaObservationType, MenotaCharType,
+    };
+
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+        wrap_pages: false,
+    };
+
+    // Annotation range [0, 5] but text is "H" (len 1)
+    let ann_set = AnnotationSet {
+        version: "1.0".to_string(),
+        annotations: vec![Annotation {
+            id: "char-1".to_string(),
+            annotation_type: AnnotationType::Paleographic,
+            target: AnnotationTarget::Character { 
+                word_index: 0,
+                char_start: 0,
+                char_end: 5
+            },
+            value: AnnotationValue::MenotaPaleographic {
+                observation_type: MenotaObservationType::Character,
+                unclear_reason: None,
+                add_place: None,
+                add_type: None,
+                hand: None,
+                del_rend: None,
+                supplied_reason: None,
+                resp: None,
+                source: None,
+                char_type: Some(MenotaCharType::Initial),
+                char_size: None,
+                description: None,
+                certainty: None,
+            },
+            metadata: None,
+        }],
+    };
+
+    let mut compiler = Compiler::new()
+        .with_config(config)
+        .with_annotations(&ann_set);
+    
+    let result = compiler.compile("H").unwrap();
+    // Should contain <c type="initial">H</c> - tag must be closed!
+    assert!(result.contains(r#"<c type="initial">H</c>"#));
 }

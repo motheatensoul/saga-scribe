@@ -1,3 +1,4 @@
+use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping};
@@ -8,7 +9,7 @@ use std::collections::HashMap;
 /// This command is async to avoid blocking the UI during compilation.
 /// The actual compilation runs on a blocking thread pool.
 #[allow(clippy::too_many_arguments)]
-#[tauri::command(async)]
+#[tauri::command(async, rename_all = "camelCase")]
 pub async fn compile_dsl(
     input: String,
     template_header: String,
@@ -22,6 +23,7 @@ pub async fn compile_dsl(
     entity_mappings_json: Option<String>,
     custom_mappings: Option<HashMap<String, String>>,
     lemma_mappings_json: Option<String>,
+    annotations_json: Option<String>,
 ) -> Result<String, String> {
     // Move all the work to a blocking thread pool to avoid blocking the UI
     tauri::async_runtime::spawn_blocking(move || {
@@ -55,6 +57,15 @@ pub async fn compile_dsl(
             None => HashMap::new(),
         };
 
+        // Parse annotations if provided
+        let annotations: Option<AnnotationSet> = match annotations_json {
+            Some(json) => Some(
+                serde_json::from_str(&json)
+                    .map_err(|e| format!("Failed to parse annotations: {}", e))?,
+            ),
+            None => None,
+        };
+
         // Configure compiler
         let config = CompilerConfig {
             word_wrap: word_wrap.unwrap_or(false),
@@ -67,6 +78,11 @@ pub async fn compile_dsl(
             .with_entities(&registry)
             .with_config(config)
             .with_lemma_mappings(lemma_mappings);
+
+        // Add annotations if available
+        if let Some(ref ann) = annotations {
+            compiler = compiler.with_annotations(ann);
+        }
 
         // Add dictionary if available
         if let Some(ref dict) = dictionary {

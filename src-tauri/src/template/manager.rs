@@ -22,6 +22,9 @@ pub struct Template {
     pub wrap_pages: bool,
     #[serde(default)]
     pub validation_schema_id: Option<String>,
+    /// Which annotation schema to use ("tei-p5" or "menota")
+    #[serde(default)]
+    pub annotation_schema_id: Option<String>,
 }
 
 pub struct TemplateManager {
@@ -120,6 +123,7 @@ impl TemplateManager {
             multi_level: false,
             wrap_pages: false,
             validation_schema_id: Some("tei-p5".to_string()),
+            annotation_schema_id: Some("tei-p5".to_string()),
         }
     }
 
@@ -169,6 +173,7 @@ impl TemplateManager {
             multi_level: true,
             wrap_pages: true,
             validation_schema_id: Some("menota-p5".to_string()),
+            annotation_schema_id: Some("menota".to_string()),
         }
     }
 }

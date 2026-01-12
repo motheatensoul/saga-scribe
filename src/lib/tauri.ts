@@ -92,6 +92,7 @@ export interface CompileOptions {
   entityMappingsJson?: string;
   customMappings?: Record<string, string>;
   lemmaMappingsJson?: string;
+  annotationsJson?: string;
 }
 
 export async function compileDsl(
@@ -113,6 +114,7 @@ export async function compileDsl(
     entityMappingsJson: options?.entityMappingsJson ?? null,
     customMappings: options?.customMappings ?? null,
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
+    annotationsJson: options?.annotationsJson ?? null,
   });
 }
 
@@ -311,10 +313,13 @@ export interface LemmaConfirmation {
 export interface ProjectData {
   source: string;
   output: string;
+  /** Legacy lemma confirmations (for backward compat) */
   confirmations: Record<number, LemmaConfirmation>;
   manifest: ProjectManifest;
   /** Optional manuscript metadata (new in v1.1) */
   metadata?: import("$lib/types/metadata").Metadata;
+  /** Full annotation set (new in v1.2) */
+  annotations?: import("$lib/types/annotations").AnnotationSet;
 }
 
 // Save project archive (.teis)
@@ -325,6 +330,7 @@ export async function saveProject(
   confirmationsJson: string,
   templateId: string,
   metadataJson?: string,
+  annotationsJson?: string,
 ): Promise<void> {
   return invoke("save_project", {
     path,
@@ -333,6 +339,7 @@ export async function saveProject(
     confirmationsJson,
     templateId,
     metadataJson,
+    annotationsJson,
   });
 }
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { inflectionStore, sessionLemmaStore } from '$lib/stores/dictionary';
+    import { inflectionStore, sessionLemmaStore, lemmaMappings } from '$lib/stores/dictionary';
     import { dictionaryStore } from '$lib/stores/dictionary';
     import {
         lookupLemma,
@@ -244,7 +244,7 @@
     let suggestedNorm = $derived(suggestNormalized(diplomatic));
 
     // Check if this word instance already has a session confirmation
-    let sessionConfirmation = $derived($sessionLemmaStore.mappings[wordIndex]);
+    let sessionConfirmation = $derived($lemmaMappings.mappings[wordIndex]);
 
     // Load existing mappings on mount
     $effect(() => {

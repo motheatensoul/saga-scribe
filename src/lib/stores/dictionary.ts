@@ -1,6 +1,22 @@
 import { writable, derived } from 'svelte/store';
 import type { OnpEntry, InflectedForm } from '$lib/tauri';
-import { lemmatizationHistory } from './lemmatizationHistory';
+
+// Re-export annotation store and related items for backward compatibility
+export {
+    annotationStore,
+    annotationStore as sessionLemmaStore,  // Backward compat alias
+    annotationHistory,
+    annotationHistory as lemmatizationHistory,  // Backward compat alias
+    canUndoAnnotation as canUndo,
+    canRedoAnnotation as canRedo,
+    isWordConfirmed,
+    lemmaMappings,
+    annotationCounts,
+    totalAnnotations,
+} from './annotations';
+
+// Re-export types
+export type { SessionLemmaMapping } from './annotations';
 
 interface DictionaryStoreState {
     loaded: boolean;
@@ -143,116 +159,5 @@ export const getInflections = derived(inflectionStore, ($store) => {
     };
 });
 
-// Session-based lemmatization store (keyed by word INDEX, not persisted)
-// This tracks which specific word instances have been manually confirmed
-export interface SessionLemmaMapping {
-    lemma: string;
-    msa: string;
-    normalized?: string;
-}
-
-interface SessionLemmaStoreState {
-    // Map from word index to confirmed lemma mapping
-    mappings: Record<number, SessionLemmaMapping>;
-}
-
-function createSessionLemmaStore() {
-    const { subscribe, set, update } = writable<SessionLemmaStoreState>({
-        mappings: {},
-    });
-
-    return {
-        subscribe,
-        // Confirm a lemmatization for a specific word index
-        confirm: (wordIndex: number, mapping: SessionLemmaMapping) =>
-            update((state) => ({
-                ...state,
-                mappings: {
-                    ...state.mappings,
-                    [wordIndex]: mapping,
-                },
-            })),
-        // Remove confirmation for a word index
-        unconfirm: (wordIndex: number) =>
-            update((state) => {
-                const newMappings = { ...state.mappings };
-                delete newMappings[wordIndex];
-                return { ...state, mappings: newMappings };
-            }),
-        // Check if a word index has been confirmed
-        isConfirmed: (wordIndex: number): boolean => {
-            let result = false;
-            subscribe((state) => {
-                result = wordIndex in state.mappings;
-            })();
-            return result;
-        },
-        // Get mapping for a word index
-        getMapping: (wordIndex: number): SessionLemmaMapping | undefined => {
-            let result: SessionLemmaMapping | undefined;
-            subscribe((state) => {
-                result = state.mappings[wordIndex];
-            })();
-            return result;
-        },
-        // Clear all session mappings (e.g., when opening a new file)
-        clear: () => set({ mappings: {} }),
-
-        // History-aware confirm: records action for undo/redo
-        confirmWithHistory: (wordIndex: number, mapping: SessionLemmaMapping) => {
-            let previousMapping: SessionLemmaMapping | null = null;
-
-            // Get previous state before updating
-            update((state) => {
-                previousMapping = state.mappings[wordIndex] || null;
-                return {
-                    ...state,
-                    mappings: {
-                        ...state.mappings,
-                        [wordIndex]: mapping,
-                    },
-                };
-            });
-
-            // Push to history
-            lemmatizationHistory.pushAction({
-                type: 'confirm',
-                wordIndex,
-                mapping,
-                previousMapping,
-            });
-        },
-
-        // History-aware unconfirm: records action for undo/redo
-        unconfirmWithHistory: (wordIndex: number) => {
-            let previousMapping: SessionLemmaMapping | null = null;
-
-            update((state) => {
-                previousMapping = state.mappings[wordIndex] || null;
-                if (!previousMapping) return state;
-
-                const newMappings = { ...state.mappings };
-                delete newMappings[wordIndex];
-                return { ...state, mappings: newMappings };
-            });
-
-            if (previousMapping) {
-                lemmatizationHistory.pushAction({
-                    type: 'unconfirm',
-                    wordIndex,
-                    mapping: null,
-                    previousMapping,
-                });
-            }
-        },
-    };
-}
-
-export const sessionLemmaStore = createSessionLemmaStore();
-
-// Derived store: check if a word index has a confirmed lemmatization
-export const isWordConfirmed = derived(sessionLemmaStore, ($store) => {
-    return (wordIndex: number): boolean => {
-        return wordIndex in $store.mappings;
-    };
-});
+// Session-based lemmatization is now handled by the annotation store
+// See ./annotations.ts for the new implementation
