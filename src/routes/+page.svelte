@@ -33,11 +33,14 @@
         saveProject,
         openProject,
         exportTei,
+        exportHtml,
         openFile,
         importFile,
         exportInflections,
         generateTeiHeader,
     } from "$lib/tauri";
+    import { generateStandaloneHtml } from "$lib/utils/htmlExport";
+    import { printToPdf } from "$lib/utils/pdfExport";
     import {
         dictionaryStore,
         inflectionStore,
@@ -759,6 +762,152 @@
         }
     }
 
+    /**
+     * Apply XSLT transformation to XML content
+     * Extracted from XsltRenderer.svelte for reuse in exports
+     */
+    async function applyXsltTransform(xmlContent: string): Promise<string> {
+        // Load XSL stylesheet
+        const response = await fetch("/xsl/simple.xsl");
+        if (!response.ok) {
+            throw new Error(`Failed to load stylesheet: ${response.statusText}`);
+        }
+        const xslText = await response.text();
+
+        const parser = new DOMParser();
+        const xslDoc = parser.parseFromString(xslText, "application/xml");
+
+        const parseError = xslDoc.querySelector("parsererror");
+        if (parseError) {
+            throw new Error(`XSL parse error: ${parseError.textContent}`);
+        }
+
+        const processor = new XSLTProcessor();
+        processor.importStylesheet(xslDoc);
+
+        // Replace entity references with placeholders to avoid XML parsing errors
+        let processedXml = xmlContent;
+        const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
+        const entityMap = new Map<string, string>();
+        let entityCounter = 0;
+
+        processedXml = processedXml.replace(entityPattern, (match, name) => {
+            // Skip standard XML entities
+            if (["lt", "gt", "amp", "quot", "apos"].includes(name)) {
+                return match;
+            }
+            const placeholder = `__ENTITY_${entityCounter}__`;
+            entityMap.set(placeholder, name);
+            entityCounter++;
+            return placeholder;
+        });
+
+        const xmlDoc = parser.parseFromString(processedXml, "application/xml");
+
+        const xmlParseError = xmlDoc.querySelector("parsererror");
+        if (xmlParseError) {
+            throw new Error(`XML parse error: ${xmlParseError.textContent}`);
+        }
+
+        // Apply XSLT transformation
+        const resultDoc = processor.transformToDocument(xmlDoc);
+
+        if (!resultDoc || !resultDoc.documentElement) {
+            throw new Error("XSLT transformation produced no output");
+        }
+
+        // Get the HTML content
+        let html = resultDoc.documentElement.outerHTML;
+
+        // Resolve entity placeholders to actual glyphs
+        const entities = $entityStore.entities;
+        for (const [placeholder, entityName] of entityMap) {
+            const entity = entities[entityName];
+            const glyph = entity?.char || `[${entityName}]`;
+            html = html.replaceAll(placeholder, glyph);
+        }
+
+        return html;
+    }
+
+    async function handleExportHtml() {
+        const template = $templateStore.active;
+        if (!template) {
+            errorStore.warning(
+                "Export",
+                "Please select a template before exporting",
+            );
+            return;
+        }
+
+        const path = await save({
+            filters: [{ name: "HTML", extensions: ["html", "htm"] }],
+            defaultPath: $editor.filePath
+                ? $editor.filePath.replace(/\.[^.]+$/, ".html")
+                : undefined,
+        });
+        if (!path) return;
+
+        try {
+            // Ensure we have fresh compiled output
+            clearTimeout(compileTimeout);
+            await doCompile($editor.content);
+
+            // Apply XSLT transformation
+            const htmlBody = await applyXsltTransform(previewContent);
+
+            // Generate standalone HTML with embedded styles
+            const fileName = $editor.filePath
+                ? $editor.filePath.split("/").pop()?.replace(/\.[^.]+$/, "")
+                : "export";
+            const fullHtml = generateStandaloneHtml(htmlBody, { title: fileName });
+
+            await exportHtml(path, fullHtml);
+            errorStore.info("Export", `Exported HTML to ${path}`);
+        } catch (e) {
+            errorStore.error("Export", `Failed to export HTML: ${e}`);
+        }
+    }
+
+    async function handleExportPdf() {
+        const template = $templateStore.active;
+        if (!template) {
+            errorStore.warning(
+                "Export",
+                "Please select a template before exporting",
+            );
+            return;
+        }
+
+        try {
+            // Ensure we have fresh compiled output
+            clearTimeout(compileTimeout);
+            await doCompile($editor.content);
+
+            // Apply XSLT transformation
+            const htmlBody = await applyXsltTransform(previewContent);
+
+            // Generate standalone HTML
+            const fileName = $editor.filePath
+                ? $editor.filePath.split("/").pop()?.replace(/\.[^.]+$/, "")
+                : "export";
+            const fullHtml = generateStandaloneHtml(htmlBody, {
+                title: fileName,
+                pageBreakStyle: "print-break",
+            });
+
+            // Open print dialog (user can "Save as PDF")
+            await printToPdf(fullHtml, { pageSize: "A4" });
+
+            errorStore.info(
+                "Export",
+                "Print dialog opened - select 'Save as PDF' to export",
+            );
+        } catch (e) {
+            errorStore.error("Export", `Failed to prepare PDF: ${e}`);
+        }
+    }
+
     async function handleImport() {
         const path = await open({
             filters: [
@@ -866,6 +1015,8 @@
         onsave={handleSaveProject}
         onexportxml={handleExportXml}
         onexportdict={handleExportDictionary}
+        onexporthtml={handleExportHtml}
+        onexportpdf={handleExportPdf}
         onundo={handleLemmaUndo}
         onredo={handleLemmaRedo}
         onsettings={() => (showSettings = true)}

@@ -46,6 +46,13 @@ export async function exportTei(
   return invoke("export_tei", { path, teiContent });
 }
 
+export async function exportHtml(
+  path: string,
+  htmlContent: string,
+): Promise<void> {
+  return invoke("export_html", { path, htmlContent });
+}
+
 export async function loadTextFile(path: string): Promise<string> {
   return invoke("load_text_file", { path });
 }

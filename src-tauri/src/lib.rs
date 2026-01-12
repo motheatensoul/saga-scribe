@@ -66,6 +66,7 @@ pub fn run() {
             commands::file::open_file,
             commands::file::save_file,
             commands::file::export_tei,
+            commands::file::export_html,
             commands::file::load_text_file,
             commands::file::save_project,
             commands::file::open_project,

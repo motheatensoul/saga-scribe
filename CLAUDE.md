@@ -160,7 +160,7 @@ All Tauri commands that do heavy work should:
 - [x] Collapsible sections in editor for long manuscripts (fold at page breaks)
 - [x] Manuscript metadata editor (beyond template header)
 - [x] Word- and character-level annotations beyond lemmatization
-- Export to additional formats (HTML, PDF)
+- [x] Export to additional formats (HTML, PDF)
 - Custom entity set management (add/remove entities beyond MENOTA)
 - Performance optimization
 - Code cleanup, refactoring
