@@ -968,6 +968,36 @@
 
     // Keyboard shortcuts
     function handleKeydown(event: KeyboardEvent) {
+        // Escape: Close any open modal (a11y requirement)
+        if (event.key === "Escape") {
+            if (showLemmatizer) {
+                showLemmatizer = false;
+                return;
+            }
+            if (showEntityBrowser) {
+                showEntityBrowser = false;
+                return;
+            }
+            if (showErrorPanel) {
+                showErrorPanel = false;
+                return;
+            }
+            if (showValidationPanel) {
+                showValidationPanel = false;
+                return;
+            }
+            if (showTemplateManager) {
+                showTemplateManager = false;
+                return;
+            }
+            if (showMetadataEditor) {
+                showMetadataEditor = false;
+                return;
+            }
+            // Note: showSettings and showHelp are handled by their own components
+            return;
+        }
+
         // F1: Open help
         if (event.key === "F1") {
             event.preventDefault();
