@@ -161,6 +161,39 @@ export async function clearCustomMappings(): Promise<void> {
   return invoke("clear_custom_mappings");
 }
 
+// Custom entity definition functions
+export async function loadCustomEntities(): Promise<EntityMap> {
+  return invoke("load_custom_entities");
+}
+
+export async function saveCustomEntity(
+  name: string,
+  unicode: string,
+  charValue: string,
+  description: string,
+  category: string,
+): Promise<void> {
+  return invoke("save_custom_entity", {
+    name,
+    unicode,
+    charValue,
+    description,
+    category,
+  });
+}
+
+export async function removeCustomEntity(name: string): Promise<void> {
+  return invoke("remove_custom_entity", { name });
+}
+
+export async function clearCustomEntities(): Promise<void> {
+  return invoke("clear_custom_entities");
+}
+
+export async function validateEntityName(name: string): Promise<boolean> {
+  return invoke("validate_entity_name", { name });
+}
+
 // ONP Dictionary types and functions
 
 export interface OnpEntry {

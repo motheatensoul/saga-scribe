@@ -28,6 +28,7 @@
         loadEntities,
         loadTextFile,
         loadCustomMappings,
+        loadCustomEntities,
         loadOnpHeadwords,
         loadInflections,
         saveProject,
@@ -82,7 +83,15 @@
     // For span selections (shift-click extends)
     let spanEndWordIndex = $state<number | null>(null);
     let compileTimeout: ReturnType<typeof setTimeout>;
-    let entitiesJson = $state<string | null>(null);
+    let entitiesJson = $derived(
+        Object.keys($entityStore.entities).length > 0
+            ? JSON.stringify({
+                  version: "1.0",
+                  name: "SagaScribe",
+                  entities: $entityStore.entities,
+              })
+            : null,
+    );
     let normalizerJson = $state<string | null>(null);
     let entityMappingsJson = $state<string | null>(null);
     let isImporting = $state(false);
@@ -172,12 +181,26 @@
                 "Entities",
                 `Loaded ${entityCount} entities from ${loadedFrom}`,
             );
-            entityStore.setEntities(entities);
-            entitiesJson = JSON.stringify({
-                version: "1.0",
-                name: "MENOTA",
-                entities,
-            });
+            entityStore.setBuiltinEntities(entities);
+            
+            // Load custom entities
+            try {
+                const customEntities = await loadCustomEntities();
+                const customCount = Object.keys(customEntities).length;
+                if (customCount > 0) {
+                    errorStore.info(
+                        "Entities",
+                        `Loaded ${customCount} custom entities`,
+                    );
+                    entityStore.setCustomEntities(customEntities);
+                }
+            } catch (e) {
+                errorStore.warning(
+                    "Entities",
+                    "Failed to load custom entities",
+                    String(e),
+                );
+            }
 
             // Load base entity mappings (diplomatic normalization defaults)
             const baseMappingsResourcePath = await resolveResource(
