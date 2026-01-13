@@ -12,7 +12,9 @@ export interface EntityMap {
 }
 
 interface EntityStoreState {
-    entities: EntityMap;
+    builtinEntities: EntityMap;
+    customEntities: EntityMap;
+    entities: EntityMap; // Combined: { ...builtin, ...custom }
     baseMappings: Record<string, string>;  // Default diplomatic mappings from entity-base-letters.json
     customMappings: Record<string, string>; // User overrides
     loaded: boolean;
@@ -21,6 +23,8 @@ interface EntityStoreState {
 
 function createEntityStore() {
     const { subscribe, set, update } = writable<EntityStoreState>({
+        builtinEntities: {},
+        customEntities: {},
         entities: {},
         baseMappings: {},
         customMappings: {},
@@ -30,8 +34,38 @@ function createEntityStore() {
 
     return {
         subscribe,
-        setEntities: (entities: EntityMap) =>
-            update((state) => ({ ...state, entities, loaded: true, error: null })),
+        setBuiltinEntities: (entities: EntityMap) =>
+            update((state) => ({ 
+                ...state, 
+                builtinEntities: entities,
+                entities: { ...entities, ...state.customEntities },
+                loaded: true, 
+                error: null 
+            })),
+        setCustomEntities: (customEntities: EntityMap) =>
+            update((state) => ({
+                ...state,
+                customEntities,
+                entities: { ...state.builtinEntities, ...customEntities }
+            })),
+        addCustomEntity: (name: string, entity: Entity) =>
+            update((state) => {
+                const newCustom = { ...state.customEntities, [name]: entity };
+                return {
+                    ...state,
+                    customEntities: newCustom,
+                    entities: { ...state.builtinEntities, ...newCustom }
+                };
+            }),
+        removeCustomEntity: (name: string) =>
+            update((state) => {
+                const { [name]: _, ...rest } = state.customEntities;
+                return {
+                    ...state,
+                    customEntities: rest,
+                    entities: { ...state.builtinEntities, ...rest }
+                };
+            }),
         setError: (error: string) =>
             update((state) => ({ ...state, error, loaded: false })),
         setBaseMappings: (mappings: Record<string, string>) =>
@@ -48,7 +82,15 @@ function createEntityStore() {
                 const { [entity]: _, ...rest } = state.customMappings;
                 return { ...state, customMappings: rest };
             }),
-        reset: () => set({ entities: {}, baseMappings: {}, customMappings: {}, loaded: false, error: null }),
+        reset: () => set({ 
+            builtinEntities: {}, 
+            customEntities: {}, 
+            entities: {}, 
+            baseMappings: {}, 
+            customMappings: {}, 
+            loaded: false, 
+            error: null 
+        }),
     };
 }
 

@@ -1,4 +1,4 @@
-use crate::entities::{CustomMappingsManager, Entity, EntityRegistry};
+use crate::entities::{CustomEntitiesManager, CustomMappingsManager, Entity, EntityRegistry};
 use log::{debug, error, info};
 use std::collections::HashMap;
 use std::fs;
@@ -83,4 +83,58 @@ pub fn clear_custom_mappings(app: AppHandle) -> Result<(), String> {
     info!("Clearing all custom mappings");
     let manager = CustomMappingsManager::new(&app)?;
     manager.clear()
+}
+
+// ============================================================================
+// Custom Entity Definition Commands (not just mappings - full entity CRUD)
+// ============================================================================
+
+/// Load all custom entity definitions from the app data directory
+#[tauri::command]
+pub fn load_custom_entities(app: AppHandle) -> Result<HashMap<String, Entity>, String> {
+    let manager = CustomEntitiesManager::new(&app)?;
+    Ok(manager.load())
+}
+
+/// Save a custom entity definition
+#[tauri::command(rename_all = "camelCase")]
+pub fn save_custom_entity(
+    app: AppHandle,
+    name: String,
+    unicode: String,
+    char_value: String,
+    description: String,
+    category: String,
+) -> Result<(), String> {
+    info!("Saving custom entity: {}", name);
+    let manager = CustomEntitiesManager::new(&app)?;
+    let entity = Entity {
+        unicode,
+        char: char_value,
+        description,
+        category,
+    };
+    manager.save(&name, entity)
+}
+
+/// Remove a custom entity definition
+#[tauri::command]
+pub fn remove_custom_entity(app: AppHandle, name: String) -> Result<(), String> {
+    info!("Removing custom entity: {}", name);
+    let manager = CustomEntitiesManager::new(&app)?;
+    manager.remove(&name)
+}
+
+/// Clear all custom entity definitions
+#[tauri::command]
+pub fn clear_custom_entities(app: AppHandle) -> Result<(), String> {
+    info!("Clearing all custom entities");
+    let manager = CustomEntitiesManager::new(&app)?;
+    manager.clear()
+}
+
+/// Validate an entity name (alphanumeric + underscore, must start with letter)
+#[tauri::command]
+pub fn validate_entity_name(name: String) -> bool {
+    CustomEntitiesManager::is_valid_name(&name)
 }

@@ -442,12 +442,12 @@
                         </div>
 
                         <!-- License -->
-                        <div class="form-control">
-                            <label class="label">
-                                <span class="label-text font-medium"
+                        <div class="form-control" role="group" aria-labelledby="license-label">
+                            <div class="label">
+                                <span id="license-label" class="label-text font-medium"
                                     >License</span
                                 >
-                            </label>
+                            </div>
                             <div class="flex flex-wrap gap-2 mb-2">
                                 {#each COMMON_LICENSES as license}
                                     <button
@@ -847,12 +847,12 @@
                     <div class="collapse-title font-medium">History</div>
                     <div class="collapse-content space-y-4">
                         <!-- Origin Date -->
-                        <div class="form-control">
-                            <label class="label">
-                                <span class="label-text font-medium"
+                        <div class="form-control" role="group" aria-labelledby="origin-date-label">
+                            <div class="label">
+                                <span id="origin-date-label" class="label-text font-medium"
                                     >Date of Origin</span
                                 >
-                            </label>
+                            </div>
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                                 <input
                                     type="text"

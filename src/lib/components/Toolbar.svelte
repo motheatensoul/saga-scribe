@@ -22,6 +22,8 @@
         onsave,
         onexportxml,
         onexportdict,
+        onexporthtml,
+        onexportpdf,
         onundo,
         onredo,
         onsettings,
@@ -32,6 +34,8 @@
         onsave?: () => void; // Parent handles saving (shows dialog if needed, saves project)
         onexportxml?: () => void; // Parent handles XML export
         onexportdict?: () => void; // Parent handles dictionary export
+        onexporthtml?: () => void; // Parent handles HTML export
+        onexportpdf?: () => void; // Parent handles PDF export
         onundo?: () => void; // Undo lemmatization
         onredo?: () => void; // Redo lemmatization
         onsettings?: () => void; // Open settings dialog
@@ -66,16 +70,25 @@
             onclick={onsave}
             title="Save project (Ctrl+S)"><SaveIcon size="18" />Save</button
         >
-        <button
-            class="btn btn-ghost btn-sm xl:btn-md"
-            onclick={onexportxml}
-            title="Export TEI-XML to separate file">Export XML</button
-        >
-        <button
-            class="btn btn-ghost btn-sm xl:btn-md"
-            onclick={onexportdict}
-            title="Export inflection dictionary to JSON">Export Dict</button
-        >
+        <div class="dropdown dropdown-end">
+            <button
+                tabindex="0"
+                class="btn btn-ghost btn-sm xl:btn-md"
+                title="Export options"
+            >
+                Export
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                </svg>
+            </button>
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+            <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 text-base-content rounded-box w-52">
+                <li><button onclick={onexportxml}>TEI-XML</button></li>
+                <li><button onclick={onexporthtml}>HTML</button></li>
+                <li><button onclick={onexportpdf}>PDF (Print)</button></li>
+                <li class="border-t border-base-300 mt-1 pt-1"><button onclick={onexportdict}>Dictionary JSON</button></li>
+            </ul>
+        </div>
     </div>
 
     <div class="flex items-center gap-2 ml-4">

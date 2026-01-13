@@ -19,8 +19,9 @@
 - **Test (Single):** `cd src-tauri; cargo test -- test_name_here`
   - *Critical:* When running cargo commands via the Bash tool, avoid `cd src-tauri && cargo ...`. Use `cd src-tauri; cargo ...` or `bash -c "cd src-tauri && cargo ..."` to avoid exit code 127 errors.
 
-### Full Check
-- **Verify everything:** `bun run check:all`
+### Full Check (Required Before PRs)
+- **Verify everything:** `bun run check:all` (runs both `svelte-check` and `cargo clippy`)
+- **Always use this command** before committing or creating PRs. Both frontend and Rust clippy checks must pass for merging.
 
 ## 2. Code Style Guidelines
 
@@ -36,6 +37,13 @@
 - **Formatting:** 4 spaces indentation.
 - **Naming:** PascalCase for components (`Editor.svelte`), camelCase for functions/vars.
 - **Visual Style:** Refer to docs/UI_STANDARDS.md for our UI masterdoc. Style every new component as described.
+- **Accessibility (a11y):** All components MUST pass Svelte's a11y checks (`bun run check` must show 0 warnings). This is not optional.
+  - Use semantic HTML elements (`<button>`, `<nav>`, `<main>`, etc.)
+  - All form inputs must have associated labels (use `for`/`id` or wrap in `<label>`)
+  - For control groups, use `role="group"` with `aria-labelledby`
+  - Interactive elements must be keyboard accessible
+  - Images need `alt` attributes
+  - Exception: Modal backdrop click-to-dismiss does not require keyboard equivalent
 
 ### Backend (Rust)
 - **Style:** Standard Rust idioms (`rustfmt`). 4 spaces indentation.
@@ -160,8 +168,8 @@ All Tauri commands that do heavy work should:
 - [x] Collapsible sections in editor for long manuscripts (fold at page breaks)
 - [x] Manuscript metadata editor (beyond template header)
 - [x] Word- and character-level annotations beyond lemmatization
-- Export to additional formats (HTML, PDF)
-- Custom entity set management (add/remove entities beyond MENOTA)
+- [x] Export to additional formats (HTML, PDF)
+- [x] Custom entity set management (add/remove entities beyond MENOTA)
 - Performance optimization
 - Code cleanup, refactoring
 

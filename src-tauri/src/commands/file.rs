@@ -36,6 +36,12 @@ pub fn export_tei(path: String, tei_content: String) -> Result<(), String> {
     fs::write(&path, &tei_content).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn export_html(path: String, html_content: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    fs::write(&path, &html_content).map_err(|e| e.to_string())
+}
+
 // Project archive format (.teis)
 // A ZIP file containing:
 // - source.dsl: The DSL source text
