@@ -159,5 +159,11 @@ export const getInflections = derived(inflectionStore, ($store) => {
     };
 });
 
+// Precomputed set of all wordforms with known inflections (for O(1) hasKnownLemma checks)
+// This avoids function call overhead and toLowerCase() per word during render
+export const knownInflectionForms = derived(inflectionStore, ($store) => {
+    return new Set(Object.keys($store.mappings));
+});
+
 // Session-based lemmatization is now handled by the annotation store
 // See ./annotations.ts for the new implementation

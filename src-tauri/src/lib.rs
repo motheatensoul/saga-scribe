@@ -10,7 +10,7 @@ mod settings;
 mod template;
 mod validator;
 
-use commands::dictionary::OnpState;
+use commands::dictionary::{InflectionState, OnpState};
 use std::sync::Mutex;
 use validator::actor::ValidationActor;
 
@@ -20,6 +20,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(OnpState(Mutex::new(None)))
+        .manage(InflectionState(Mutex::new(None)))
         .setup(|app| {
             // Spawn validation actor
             let validation_sender = ValidationActor::spawn();

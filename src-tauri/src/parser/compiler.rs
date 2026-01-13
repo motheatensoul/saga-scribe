@@ -739,12 +739,24 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Escape XML special characters using single-pass iteration.
+    /// Pre-allocates buffer to avoid reallocations in the common case.
     fn escape_xml(&self, s: &str) -> String {
-        s.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&apos;")
+        // Pre-allocate with some headroom for escapes (most strings won't need much)
+        let mut result = String::with_capacity(s.len() + s.len() / 8);
+        
+        for c in s.chars() {
+            match c {
+                '&' => result.push_str("&amp;"),
+                '<' => result.push_str("&lt;"),
+                '>' => result.push_str("&gt;"),
+                '"' => result.push_str("&quot;"),
+                '\'' => result.push_str("&apos;"),
+                _ => result.push(c),
+            }
+        }
+        
+        result
     }
 }
 

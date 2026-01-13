@@ -103,6 +103,19 @@ jobs:
           vcpkg install libxml2:x64-windows
           echo "VCPKGRS_DYNAMIC=1" >> $env:GITHUB_ENV
           echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+          
+          # Copy libxml2 headers to expected location
+          if (Test-Path "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/include/libxml2/libxml") {
+            Copy-Item -Recurse "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/include/libxml2/libxml" "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/include/"
+          }
+          
+          # The libxml Rust crate expects 'xml2.lib' but vcpkg provides 'libxml2.lib'
+          # Create a copy with the expected name
+          $libDir = "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/lib"
+          if (Test-Path "$libDir/libxml2.lib") {
+            Copy-Item "$libDir/libxml2.lib" "$libDir/xml2.lib"
+            Write-Host "Created xml2.lib from libxml2.lib"
+          }
         shell: pwsh
 
       - name: Install frontend dependencies

@@ -450,25 +450,67 @@ export const annotationStore = createAnnotationStore();
 // ============================================================================
 
 /**
- * Check if a word index has a confirmed lemmatization (backward compat)
+ * Precomputed index mapping word indices to their annotations.
+ * This provides O(1) lookup instead of O(n) iteration for each query.
  */
-export const isWordConfirmed = derived(annotationStore, ($store) => {
+export const annotationsByWordIndex = derived(annotationStore, ($store) => {
+    const index = new Map<number, Annotation[]>();
+    
+    for (const ann of $store.set.annotations) {
+        // Get all word indices this annotation applies to
+        const wordIndices: number[] = [];
+        if (ann.target.type === "word") {
+            wordIndices.push(ann.target.wordIndex);
+        } else if (ann.target.type === "span") {
+            for (let i = ann.target.startWord; i <= ann.target.endWord; i++) {
+                wordIndices.push(i);
+            }
+        }
+        
+        // Add to index for each word
+        for (const wordIndex of wordIndices) {
+            const existing = index.get(wordIndex) || [];
+            existing.push(ann);
+            index.set(wordIndex, existing);
+        }
+    }
+    
+    return index;
+});
+
+/**
+ * Precomputed set of word indices that have confirmed lemmas.
+ * Provides O(1) lookup for the common "is this word lemmatized?" check.
+ */
+export const confirmedLemmaIndices = derived(annotationStore, ($store) => {
+    const confirmed = new Set<number>();
+    
+    for (const ann of $store.set.annotations) {
+        if (ann.type === "lemma" && ann.target.type === "word") {
+            confirmed.add(ann.target.wordIndex);
+        }
+    }
+    
+    return confirmed;
+});
+
+/**
+ * Check if a word index has a confirmed lemmatization (backward compat)
+ * Uses precomputed set for O(1) lookup.
+ */
+export const isWordConfirmed = derived(confirmedLemmaIndices, ($confirmed) => {
     return (wordIndex: number): boolean => {
-        return $store.set.annotations.some(
-            (a) =>
-                a.type === "lemma" &&
-                a.target.type === "word" &&
-                a.target.wordIndex === wordIndex,
-        );
+        return $confirmed.has(wordIndex);
     };
 });
 
 /**
  * Get all annotations for a word index
+ * Uses precomputed index for O(1) lookup.
  */
-export const annotationsForWord = derived(annotationStore, ($store) => {
+export const annotationsForWord = derived(annotationsByWordIndex, ($index) => {
     return (wordIndex: number): Annotation[] => {
-        return getAnnotationsForWord($store.set, wordIndex);
+        return $index.get(wordIndex) || [];
     };
 });
 

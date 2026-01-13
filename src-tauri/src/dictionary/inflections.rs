@@ -119,7 +119,8 @@ impl InflectionStore {
         self.forms.contains_key(&normalized)
     }
 
-    /// Clear all mappings
+    /// Clear all mappings (kept for potential future use)
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.forms.clear();
     }

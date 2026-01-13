@@ -61,6 +61,8 @@ pub struct OnpRegistry {
     entries_by_id: HashMap<String, OnpEntry>,
     /// Map from lemma (lowercase) to list of entry IDs (handles homographs)
     entries_by_lemma: HashMap<String, Vec<String>>,
+    /// Sorted list of lemmas for efficient prefix search via binary search
+    sorted_lemmas: Vec<String>,
 }
 
 impl OnpRegistry {
@@ -68,6 +70,7 @@ impl OnpRegistry {
         Self {
             entries_by_id: HashMap::new(),
             entries_by_lemma: HashMap::new(),
+            sorted_lemmas: Vec::new(),
         }
     }
 
@@ -93,6 +96,10 @@ impl OnpRegistry {
             self.entries_by_id.insert(id, entry);
         }
 
+        // Build sorted lemmas list for binary search prefix lookup
+        self.sorted_lemmas = self.entries_by_lemma.keys().cloned().collect();
+        self.sorted_lemmas.sort();
+
         Ok(())
     }
 
@@ -115,12 +122,26 @@ impl OnpRegistry {
     }
 
     /// Search for lemmas that start with a prefix (for autocomplete)
+    /// Uses binary search on sorted lemmas for O(log n + k) performance
+    /// where k is the number of matching results.
     pub fn search_prefix(&self, prefix: &str, limit: usize) -> Vec<&OnpEntry> {
         let prefix_lower = prefix.to_lowercase();
-        self.entries_by_lemma
+        
+        // Binary search to find the first lemma >= prefix
+        let start_idx = self.sorted_lemmas
+            .binary_search(&prefix_lower)
+            .unwrap_or_else(|i| i);
+        
+        // Iterate from start_idx while lemmas still match prefix
+        self.sorted_lemmas[start_idx..]
             .iter()
-            .filter(|(lemma, _)| lemma.starts_with(&prefix_lower))
-            .flat_map(|(_, ids)| ids.iter().filter_map(|id| self.entries_by_id.get(id)))
+            .take_while(|lemma| lemma.starts_with(&prefix_lower))
+            .flat_map(|lemma| {
+                self.entries_by_lemma
+                    .get(lemma)
+                    .into_iter()
+                    .flat_map(|ids| ids.iter().filter_map(|id| self.entries_by_id.get(id)))
+            })
             .take(limit)
             .collect()
     }

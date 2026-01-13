@@ -102,15 +102,20 @@ impl LevelDictionary {
             .map(|s| s.as_str())
     }
 
-    /// Normalize a string by applying character mappings
+    /// Normalize a string by applying character mappings.
+    /// Uses pre-allocated buffer to avoid per-character allocations.
     pub fn normalize_text(&self, text: &str) -> String {
-        text.chars()
-            .map(|c| {
-                self.normalize_char(c)
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| c.to_string())
-            })
-            .collect()
+        let mut result = String::with_capacity(text.len());
+        
+        for c in text.chars() {
+            if let Some(replacement) = self.normalize_char(c) {
+                result.push_str(replacement);
+            } else {
+                result.push(c);
+            }
+        }
+        
+        result
     }
 }
 

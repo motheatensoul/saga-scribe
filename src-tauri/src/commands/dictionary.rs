@@ -6,6 +6,9 @@ use tauri::{AppHandle, State};
 /// Global state for the ONP registry (loaded once at startup)
 pub struct OnpState(pub Mutex<Option<OnpRegistry>>);
 
+/// Cached state for the inflection store (avoids disk I/O on every lookup)
+pub struct InflectionState(pub Mutex<Option<InflectionStore>>);
+
 /// Load ONP headwords from a JSON file
 #[tauri::command]
 pub fn load_onp_headwords(path: String, state: State<OnpState>) -> Result<usize, String> {
@@ -79,21 +82,39 @@ pub async fn fetch_onp_full_entry(id: String) -> Result<OnpFullEntry, String> {
     Ok(entry)
 }
 
-/// Load user inflection mappings
+/// Load user inflection mappings (also populates the cache)
 #[tauri::command]
-pub fn load_inflections(app: AppHandle) -> Result<InflectionStore, String> {
+pub fn load_inflections(
+    app: AppHandle,
+    state: State<InflectionState>,
+) -> Result<InflectionStore, String> {
     info!("Loading inflection mappings");
-    InflectionStore::load(&app)
+    let store = InflectionStore::load(&app)?;
+    // Cache the loaded store
+    *state.0.lock().unwrap() = Some(store.clone());
+    Ok(store)
 }
 
-/// Look up inflections for a wordform
+/// Look up inflections for a wordform (uses cached state for O(1) access)
 #[tauri::command]
-pub fn lookup_inflection(app: AppHandle, wordform: String) -> Result<Vec<InflectedForm>, String> {
-    let store = InflectionStore::load(&app)?;
+pub fn lookup_inflection(
+    app: AppHandle,
+    wordform: String,
+    state: State<InflectionState>,
+) -> Result<Vec<InflectedForm>, String> {
+    let mut guard = state.0.lock().unwrap();
+    
+    // Lazy-load if cache is empty
+    if guard.is_none() {
+        info!("Inflection cache miss, loading from disk");
+        *guard = Some(InflectionStore::load(&app)?);
+    }
+    
+    let store = guard.as_ref().unwrap();
     Ok(store.lookup(&wordform).into_iter().cloned().collect())
 }
 
-/// Add an inflection mapping
+/// Add an inflection mapping (updates both disk and cache)
 /// The `wordform` parameter should be the diplomatic-level form for consistent lookups.
 // We need to introduce an inflection struct as the argument here potentially to make clippy happy, not sure if that gels with tauri though.
 #[allow(clippy::too_many_arguments)]
@@ -108,13 +129,21 @@ pub fn add_inflection(
     facsimile: Option<String>,
     diplomatic: Option<String>,
     normalized: Option<String>,
+    state: State<InflectionState>,
 ) -> Result<(), String> {
     info!(
         "Adding inflection: {} -> {} ({}) [facs: {:?}, dipl: {:?}, norm: {:?}]",
         wordform, lemma, analysis, facsimile, diplomatic, normalized
     );
 
-    let mut store = InflectionStore::load(&app)?;
+    let mut guard = state.0.lock().unwrap();
+    
+    // Lazy-load if cache is empty
+    if guard.is_none() {
+        *guard = Some(InflectionStore::load(&app)?);
+    }
+    
+    let store = guard.as_mut().unwrap();
     store.add(
         &wordform,
         InflectedForm {
@@ -130,32 +159,49 @@ pub fn add_inflection(
     store.save(&app)
 }
 
-/// Remove an inflection mapping
+/// Remove an inflection mapping (updates both disk and cache)
 #[tauri::command(rename_all = "camelCase")]
 pub fn remove_inflection(
     app: AppHandle,
     wordform: String,
     onp_id: String,
     analysis: String,
+    state: State<InflectionState>,
 ) -> Result<(), String> {
     info!(
         "Removing inflection: {} ({}, {})",
         wordform, onp_id, analysis
     );
 
-    let mut store = InflectionStore::load(&app)?;
+    let mut guard = state.0.lock().unwrap();
+    
+    // Lazy-load if cache is empty
+    if guard.is_none() {
+        *guard = Some(InflectionStore::load(&app)?);
+    }
+    
+    let store = guard.as_mut().unwrap();
     store.remove(&wordform, &onp_id, &analysis);
     store.save(&app)
 }
 
-/// Clear all inflection mappings
+/// Clear all inflection mappings (updates both disk and cache)
 #[tauri::command]
-pub fn clear_inflections(app: AppHandle) -> Result<(), String> {
+pub fn clear_inflections(
+    app: AppHandle,
+    state: State<InflectionState>,
+) -> Result<(), String> {
     info!("Clearing all inflection mappings");
 
-    let mut store = InflectionStore::load(&app)?;
-    store.clear();
-    store.save(&app)
+    let mut guard = state.0.lock().unwrap();
+    
+    // Create fresh empty store
+    let store = InflectionStore::new();
+    store.save(&app)?;
+    
+    // Update cache
+    *guard = Some(store);
+    Ok(())
 }
 
 /// Check if ONP registry is loaded
@@ -172,12 +218,23 @@ pub fn get_onp_stats(state: State<OnpState>) -> Result<(usize, usize), String> {
     Ok((registry.len(), 0)) // (headword count, placeholder for future stats)
 }
 
-/// Export inflection dictionary to a file
+/// Export inflection dictionary to a file (uses cache if available)
 #[tauri::command]
-pub fn export_inflections(app: AppHandle, path: String) -> Result<usize, String> {
+pub fn export_inflections(
+    app: AppHandle,
+    path: String,
+    state: State<InflectionState>,
+) -> Result<usize, String> {
     info!("Exporting inflection dictionary to: {}", path);
 
-    let store = InflectionStore::load(&app)?;
+    let mut guard = state.0.lock().unwrap();
+    
+    // Lazy-load if cache is empty
+    if guard.is_none() {
+        *guard = Some(InflectionStore::load(&app)?);
+    }
+    
+    let store = guard.as_ref().unwrap();
     let count = store.entry_count();
 
     let content = serde_json::to_string_pretty(&store).map_err(|e| e.to_string())?;

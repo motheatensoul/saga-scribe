@@ -1,6 +1,6 @@
 <script lang="ts">
     import { entityStore, type EntityMap } from '$lib/stores/entities';
-    import { getInflections, lemmaMappings } from '$lib/stores/dictionary';
+    import { getInflections, lemmaMappings, knownInflectionForms } from '$lib/stores/dictionary';
     import { annotationsForWord, type AnnotationType } from '$lib/stores/annotations';
     import { validationStore } from '$lib/stores/validation';
 
@@ -370,9 +370,12 @@
         onwordclick?.(facsimile, diplomatic, token.wordIndex ?? -1, target, isSpanExtend);
     }
 
+    // Pre-compute known inflection forms for O(1) hasKnownLemma check
+    let knownForms = $derived($knownInflectionForms);
+
     function hasKnownLemma(word: string): boolean {
-        const inflections = $getInflections(word);
-        return inflections.length > 0;
+        // Use precomputed set for O(1) lookup (keys are already lowercase)
+        return knownForms.has(word.toLowerCase());
     }
 
     // Check if this specific word instance is confirmed in the session

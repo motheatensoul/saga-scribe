@@ -1,4 +1,5 @@
 use super::ast::Node;
+use std::collections::HashSet;
 
 /// State machine for word tokenization
 #[derive(Debug, PartialEq)]
@@ -10,13 +11,16 @@ enum State {
 /// Tokenizes a flat node stream into words wrapped in Word nodes
 pub struct WordTokenizer {
     /// Characters that trigger word boundaries (in addition to whitespace)
-    punctuation: Vec<char>,
+    /// Using HashSet for O(1) lookup instead of Vec's O(n)
+    punctuation: HashSet<char>,
 }
 
 impl WordTokenizer {
     pub fn new() -> Self {
         Self {
-            punctuation: vec!['.', ',', ';', ':', '!', '?', '(', ')', '[', ']'],
+            punctuation: ['.', ',', ';', ':', '!', '?', '(', ')', '[', ']']
+                .into_iter()
+                .collect(),
         }
     }
 
