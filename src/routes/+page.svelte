@@ -431,7 +431,9 @@
             }
         } catch (e) {
             console.error("[doCompile] Compilation error:", e);
-            previewContent = `Error: ${e}`;
+            // Don't set plain text as previewContent - it breaks XML parsing
+            // Use errorStore to display the error instead
+            errorStore.error("Compiler", `Compilation failed: ${e}`);
         }
     }
 
