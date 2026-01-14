@@ -29,6 +29,8 @@ pub async fn import_file(path: String) -> Result<ImportResult, String> {
                 metadata: None,
                 imported_document: None,
                 original_body_xml: None,
+                original_preamble: None,
+                original_postamble: None,
                 is_imported_mode: false,
             }),
         }

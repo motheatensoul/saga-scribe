@@ -8,6 +8,7 @@ export interface ImportedState {
   originalPostamble: string;
   frontMatter: string;
   backMatter: string;
+  isMenota: boolean;
 }
 
 class ImportedStore {
@@ -18,6 +19,7 @@ class ImportedStore {
   originalPostamble = $state("");
   frontMatter = $state("");
   backMatter = $state("");
+  isMenota = $state(false);
 
   reset() {
     this.isImportedMode = false;
@@ -27,6 +29,7 @@ class ImportedStore {
     this.originalPostamble = "";
     this.frontMatter = "";
     this.backMatter = "";
+    this.isMenota = false;
   }
 
   load(data: Partial<ImportedState>) {
@@ -37,9 +40,18 @@ class ImportedStore {
     if (data.originalPostamble) this.originalPostamble = data.originalPostamble;
     if (data.frontMatter) this.frontMatter = data.frontMatter;
     if (data.backMatter) this.backMatter = data.backMatter;
+    if (data.isMenota !== undefined) this.isMenota = data.isMenota;
   }
 
-  async compile(editedDsl: string, templateHeader: string, templateFooter: string): Promise<string> {
+  async compile(
+    editedDsl: string,
+    options?: {
+      entitiesJson?: string;
+      normalizerJson?: string;
+      entityMappingsJson?: string;
+      customMappings?: Record<string, string>;
+    },
+  ): Promise<string> {
     if (!this.isImportedMode) {
       throw new Error("Not in imported mode");
     }
@@ -47,15 +59,9 @@ class ImportedStore {
     return compileImported(
       editedDsl,
       JSON.stringify(this.segments),
-      this.originalBodyXml,
-      this.originalPreamble || null,
-      this.originalPostamble || null,
-      templateHeader,
-      templateFooter,
-      {
-        regenerateHeader: true,
-        entitiesJson: undefined,
-      }
+      this.originalPreamble,
+      this.originalPostamble,
+      options,
     );
   }
 }

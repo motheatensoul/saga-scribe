@@ -20,6 +20,8 @@
     import { settings } from "$lib/stores/settings";
     import { errorStore, errorCounts } from "$lib/stores/errors";
     import * as metadataStore from "$lib/stores/metadata.svelte";
+    import { importedStore } from "$lib/stores/imported.svelte";
+    import { preservationStore } from "$lib/stores/preservation.svelte";
     import type { Metadata } from "$lib/types/metadata";
     import { isMetadataEmpty } from "$lib/types/metadata";
     import {
@@ -371,6 +373,17 @@
         const annotationSet = annotationStore.getSet();
         const hasAnnotations = annotationSet.annotations.length > 0;
 
+        const importOptions = {
+            entitiesJson: entitiesJson ?? undefined,
+            normalizerJson: normalizerJson ?? undefined,
+            entityMappingsJson: entityMappingsJson ?? undefined,
+            customMappings: $entityStore.customMappings,
+        };
+
+        if (importedStore.isImportedMode) {
+            return importedStore.compile(content, importOptions);
+        }
+
         // Use dynamic metadata header if metadata exists, otherwise use template header
         const currentMetadata = metadataStore.getMetadata();
         let header = template.header;
@@ -390,10 +403,7 @@
             autoLineNumbers: template.autoLineNumbers,
             multiLevel: template.multiLevel,
             wrapPages: template.wrapPages,
-            entitiesJson: entitiesJson ?? undefined,
-            normalizerJson: normalizerJson ?? undefined,
-            entityMappingsJson: entityMappingsJson ?? undefined,
-            customMappings: $entityStore.customMappings,
+            ...importOptions,
             lemmaMappingsJson:
                 Object.keys(compileLemmaMappings).length > 0
                     ? JSON.stringify(compileLemmaMappings)
@@ -657,6 +667,23 @@
                     metadataStore.resetMetadata();
                 }
 
+                if (project.imported_document && project.original_body_xml) {
+                    importedStore.load({
+                        segments: project.imported_document.segments,
+                        originalBodyXml: project.original_body_xml,
+                        originalPreamble: project.original_preamble ?? "",
+                        originalPostamble: project.original_postamble ?? "",
+                        isMenota: project.imported_document.is_menota ?? false,
+                    });
+                    preservationStore.setSections({
+                        preamble: project.original_preamble ?? "",
+                        postamble: project.original_postamble ?? "",
+                    });
+                } else {
+                    importedStore.reset();
+                    preservationStore.clear();
+                }
+
                 // Cancel any pending auto-preview compile and trigger recompile
                 clearTimeout(compileTimeout);
                 await doCompile(project.source);
@@ -671,6 +698,8 @@
                 // Clear history and annotations for new file
                 annotationHistory.clear();
                 sessionLemmaStore.clear();
+                importedStore.reset();
+                preservationStore.clear();
 
                 // Cancel any pending auto-preview compile
                 clearTimeout(compileTimeout);
@@ -720,6 +749,18 @@
             const metadataJson = currentMetadata
                 ? JSON.stringify(currentMetadata)
                 : undefined;
+            const segmentsJson = importedStore.isImportedMode
+                ? JSON.stringify(importedStore.segments)
+                : undefined;
+            const originalBodyXml = importedStore.isImportedMode
+                ? importedStore.originalBodyXml
+                : undefined;
+            const originalPreamble = importedStore.isImportedMode
+                ? importedStore.originalPreamble
+                : undefined;
+            const originalPostamble = importedStore.isImportedMode
+                ? importedStore.originalPostamble
+                : undefined;
             await saveProject(
                 path,
                 $editor.content,
@@ -728,6 +769,10 @@
                 template.id,
                 metadataJson,
                 annotationsJson,
+                segmentsJson,
+                originalBodyXml,
+                originalPreamble,
+                originalPostamble,
             );
 
             editor.setFile(path, $editor.content);
@@ -959,6 +1004,27 @@
             sessionLemmaStore.clear();
             clearTimeout(compileTimeout);
 
+            if (
+                result.isImportedMode &&
+                result.importedDocument &&
+                result.originalBodyXml
+            ) {
+                importedStore.load({
+                    segments: result.importedDocument.segments,
+                    originalBodyXml: result.originalBodyXml,
+                    originalPreamble: result.originalPreamble ?? "",
+                    originalPostamble: result.originalPostamble ?? "",
+                    isMenota: result.importedDocument.is_menota ?? false,
+                });
+                preservationStore.setSections({
+                    preamble: result.originalPreamble ?? "",
+                    postamble: result.originalPostamble ?? "",
+                });
+            } else {
+                importedStore.reset();
+                preservationStore.clear();
+            }
+
             const compiled = await compileOnly(result.dsl);
 
             editorComponent?.setContent(result.dsl);
@@ -1083,9 +1149,16 @@
                     <div
                         class="flex justify-between items-center px-4 py-2 bg-base-200 border-b border-base-300 font-medium text-sm"
                     >
-                        <span class="text-md xl:text-lg font-bold px-2"
-                            >DSL Editor</span
-                        >
+                        <div class="flex items-center gap-2 px-2">
+                            <span class="text-md xl:text-lg font-bold">
+                                DSL Editor
+                            </span>
+                            {#if importedStore.isImportedMode}
+                                <span class="badge badge-outline badge-sm text-xs">
+                                    Imported
+                                </span>
+                            {/if}
+                        </div>
                         <div class="flex gap-1">
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"

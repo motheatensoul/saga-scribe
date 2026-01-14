@@ -85,6 +85,12 @@ pub struct ProjectData {
     /// Original body XML for imported files (new in v1.3)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_body_xml: Option<String>,
+    /// Original XML preamble (everything before <body>, new in v1.4)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_preamble: Option<String>,
+    /// Original XML postamble (everything after </body>, new in v1.4)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_postamble: Option<String>,
 }
 
 #[tauri::command]
@@ -98,6 +104,8 @@ pub fn save_project(
     annotations_json: Option<String>,
     segments_json: Option<String>,
     original_body_xml: Option<String>,
+    original_preamble: Option<String>,
+    original_postamble: Option<String>,
 ) -> Result<(), String> {
     let path = PathBuf::from(&path);
     let file = File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?;
@@ -156,10 +164,25 @@ pub fn save_project(
             .map_err(|e| format!("Failed to write original_body.xml: {}", e))?;
     }
 
+    // Write original preamble/postamble if provided (new in v1.4)
+    if let Some(ref preamble_xml) = original_preamble {
+        zip.start_file("original_preamble.xml", options)
+            .map_err(|e| format!("Failed to start original_preamble.xml: {}", e))?;
+        zip.write_all(preamble_xml.as_bytes())
+            .map_err(|e| format!("Failed to write original_preamble.xml: {}", e))?;
+    }
+
+    if let Some(ref postamble_xml) = original_postamble {
+        zip.start_file("original_postamble.xml", options)
+            .map_err(|e| format!("Failed to start original_postamble.xml: {}", e))?;
+        zip.write_all(postamble_xml.as_bytes())
+            .map_err(|e| format!("Failed to write original_postamble.xml: {}", e))?;
+    }
+
     // Create and write manifest.json
     let now = chrono_lite_now();
     let manifest = ProjectManifest {
-        version: "1.3".to_string(),
+        version: "1.4".to_string(),
         template_id,
         created: now.clone(),
         modified: now,
@@ -225,6 +248,18 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         Err(_) => None, // File doesn't exist in non-imported projects
     };
 
+    let original_preamble: Option<String> =
+        match read_zip_file(&mut archive, "original_preamble.xml") {
+            Ok(preamble_str) => Some(preamble_str),
+            Err(_) => None,
+        };
+
+    let original_postamble: Option<String> =
+        match read_zip_file(&mut archive, "original_postamble.xml") {
+            Ok(postamble_str) => Some(postamble_str),
+            Err(_) => None,
+        };
+
     Ok(ProjectData {
         source,
         output,
@@ -234,6 +269,8 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         annotations,
         imported_document,
         original_body_xml,
+        original_preamble,
+        original_postamble,
     })
 }
 

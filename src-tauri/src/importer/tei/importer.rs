@@ -20,6 +20,10 @@ pub struct ImportResult {
     pub imported_document: Option<ImportedDocument>,
     /// Original body XML (for imported documents)
     pub original_body_xml: Option<String>,
+    /// Original XML preamble (everything before <body>)
+    pub original_preamble: Option<String>,
+    /// Original XML postamble (everything after </body>)
+    pub original_postamble: Option<String>,
     /// Whether this file was imported in "imported mode" (preserves structure)
     pub is_imported_mode: bool,
 }
@@ -46,8 +50,16 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
     // Check if this is a MENOTA file (has me:facs/me:dipl/me:norm structure)
     let is_menota = has_menota_structure(&body);
 
-    // Serialize original body XML for round-trip preservation
-    let original_body_xml = helpers::serialize_node(&body);
+    // Split original XML into preamble/body/postamble for exact preservation
+    let (original_preamble, original_body_xml, original_postamble) =
+        match split_xml_sections(xml_content) {
+            Some((preamble, body_xml, postamble)) => (preamble, body_xml, postamble),
+            None => (
+                String::new(),
+                helpers::serialize_node(&body),
+                String::new(),
+            ),
+        };
 
     // Extract segments using the new segment-based extractor
     let mut extractor = Extractor::new();
@@ -70,8 +82,25 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
         metadata,
         imported_document: Some(imported_document),
         original_body_xml: Some(original_body_xml),
+        original_preamble: Some(original_preamble),
+        original_postamble: Some(original_postamble),
         is_imported_mode: true,
     })
+}
+
+/// Split original XML into preamble/body/postamble sections using string search.
+/// Returns None if <body> tags cannot be found.
+fn split_xml_sections(xml: &str) -> Option<(String, String, String)> {
+    let body_open = xml.find("<body")?;
+    let body_open_end = xml[body_open..].find('>')? + body_open + 1;
+    let body_close = xml[body_open_end..].find("</body>")? + body_open_end;
+    let body_end = body_close + "</body>".len();
+
+    Some((
+        xml[..body_open].to_string(),
+        xml[body_open..body_end].to_string(),
+        xml[body_end..].to_string(),
+    ))
 }
 
 /// Check if the document has MENOTA multi-level structure
