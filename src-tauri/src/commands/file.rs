@@ -1,4 +1,5 @@
 use crate::annotations::AnnotationSet;
+use crate::importer::tei::segments::ImportedDocument;
 use crate::metadata::Metadata;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -78,6 +79,12 @@ pub struct ProjectData {
     /// Full annotation set (new in v1.2)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<AnnotationSet>,
+    /// Imported document manifest for round-trip fidelity (new in v1.3)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_document: Option<ImportedDocument>,
+    /// Original body XML for imported files (new in v1.3)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_body_xml: Option<String>,
 }
 
 #[tauri::command]
@@ -89,6 +96,8 @@ pub fn save_project(
     template_id: String,
     metadata_json: Option<String>,
     annotations_json: Option<String>,
+    segments_json: Option<String>,
+    original_body_xml: Option<String>,
 ) -> Result<(), String> {
     let path = PathBuf::from(&path);
     let file = File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?;
@@ -186,6 +195,17 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         Err(_) => None, // File doesn't exist in older projects
     };
 
+    // Read imported document data (optional, new in v1.3)
+    let imported_document: Option<ImportedDocument> = match read_zip_file(&mut archive, "segments.json") {
+        Ok(seg_str) => serde_json::from_str(&seg_str).ok(),
+        Err(_) => None, // File doesn't exist in non-imported projects
+    };
+
+    let original_body_xml: Option<String> = match read_zip_file(&mut archive, "original_body.xml") {
+        Ok(body_str) => Some(body_str),
+        Err(_) => None, // File doesn't exist in non-imported projects
+    };
+
     Ok(ProjectData {
         source,
         output,
@@ -193,6 +213,8 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         manifest,
         metadata,
         annotations,
+        imported_document,
+        original_body_xml,
     })
 }
 
