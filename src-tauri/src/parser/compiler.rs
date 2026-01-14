@@ -239,7 +239,7 @@ impl<'a> Compiler<'a> {
             let facs_with_chars = self.inject_character_tags(&facs, current_index);
 
             format!(
-                "<w{}{}>\n  <me:facs>{}</me:facs>\n  <me:dipl>{}</me:dipl>\n  <me:norm>{}</me:norm>{}\n</w>\n",
+                "<w{}{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>{}\n</w>\n",
                 lemma_attrs, ann_attrs, facs_with_chars, dipl, norm, notes
             )
         }
@@ -560,7 +560,7 @@ impl<'a> Compiler<'a> {
             String::new()
         } else {
             format!(
-                "<pc>\n  <me:facs>{}</me:facs>\n  <me:dipl>{}</me:dipl>\n  <me:norm>{}</me:norm>\n</pc>\n",
+                "<pc>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</pc>\n",
                 facs, dipl, norm
             )
         }
