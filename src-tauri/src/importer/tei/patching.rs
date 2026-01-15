@@ -212,19 +212,40 @@ fn diff_tokens_lcs(original: &[TokenInfo], edited: &[TokenInfo]) -> Vec<PatchOpe
     let n = edited.len();
 
     // Safety limit to avoid O(MN) explosion on very large unsynced docs
-    // If it's too big, fallback to replacing the whole middle section
+    // If it's too big, fallback to a linear diff that preserves structure
     if m > 1000 && n > 1000 {
         let mut fallback = Vec::new();
-        for t in original {
-            fallback.push(PatchOperation::Delete {
-                segment_id: t.segment_id.unwrap(),
-            });
+        let min_len = m.min(n);
+
+        for i in 0..min_len {
+            let original_token = &original[i];
+            let edited_token = &edited[i];
+            let segment_id = original_token.segment_id.unwrap();
+
+            if original_token.content == edited_token.content {
+                fallback.push(PatchOperation::Keep { segment_id });
+            } else {
+                fallback.push(PatchOperation::Modify {
+                    segment_id,
+                    new_dsl: edited_token.content.clone(),
+                });
+            }
         }
-        for t in edited {
-            fallback.push(PatchOperation::Insert {
-                dsl: t.content.clone(),
-            });
+
+        if m > n {
+            for t in &original[min_len..] {
+                fallback.push(PatchOperation::Delete {
+                    segment_id: t.segment_id.unwrap(),
+                });
+            }
+        } else if n > m {
+            for t in &edited[min_len..] {
+                fallback.push(PatchOperation::Insert {
+                    dsl: t.content.clone(),
+                });
+            }
         }
+
         return fallback;
     }
 

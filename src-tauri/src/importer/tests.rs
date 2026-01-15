@@ -14,7 +14,7 @@ fn test_import_lb() {
     let xml = "<body>line 1<lb/>line 2<lb n=\"5\"/>line 3</body>";
     let result = parse(xml).unwrap();
     // lb adds a newline BEFORE the marker
-    assert_eq!(result.dsl, "line 1\n//line 2\n//5line 3");
+    assert_eq!(result.dsl, "line 1\n// line 2\n//5 line 3");
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn test_import_del_add() {
 fn test_import_complex() {
     let xml = "<TEI><text><body><p>Line 1<lb/>Line 2</p></body></text></TEI>";
     let result = parse(xml).unwrap();
-    assert_eq!(result.dsl, "Line 1\n//Line 2");
+    assert_eq!(result.dsl, "Line 1\n// Line 2");
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn test_roundtrip_simple_text() {
 
 #[test]
 fn test_roundtrip_line_breaks() {
-    let original_dsl = "line one\n//line two\n//3line three";
+    let original_dsl = "line one\n// line two\n//3 line three";
     let xml = compile_dsl(original_dsl);
     let wrapped = wrap_body(&xml);
     let result = parse(&wrapped).unwrap();
@@ -259,7 +259,7 @@ fn test_roundtrip_complex_document() {
 //3Third line with -{deletion}- and +{addition}+
 //4Fourth line with ^{marginal note}
 ///1v
-//5New page content"#;
+//5 New page content"#;
     
     let xml = compile_dsl(original_dsl);
     let wrapped = wrap_body(&xml);
@@ -402,7 +402,7 @@ fn normalize_xml(xml: &str) -> String {
 fn serialize_node_sorted(node: &libxml::tree::Node) -> String {
     match node.get_type() {
         Some(NodeType::ElementNode) => {
-            let name = node.get_name();
+            let name = helpers::qualified_name(node);
             let mut output = String::new();
             output.push('<');
             output.push_str(&name);

@@ -51,10 +51,27 @@ pub fn serialize_node(node: &Node) -> String {
     output
 }
 
+/// Build a qualified name with namespace prefix if available.
+pub fn qualified_name(node: &Node) -> String {
+    let name = node.get_name();
+    if name.contains(':') {
+        name
+    } else if let Some(namespace) = node.get_namespace() {
+        let prefix = namespace.get_prefix();
+        if prefix.is_empty() {
+            name
+        } else {
+            format!("{}:{}", prefix, name)
+        }
+    } else {
+        name
+    }
+}
+
 fn serialize_node_internal(node: &Node, output: &mut String) {
     match node.get_type() {
         Some(NodeType::ElementNode) => {
-            let name = node.get_name();
+            let name = qualified_name(node);
             output.push('<');
             output.push_str(&name);
 

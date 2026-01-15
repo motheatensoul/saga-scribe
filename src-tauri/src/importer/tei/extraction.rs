@@ -62,46 +62,86 @@ impl Extractor {
                         segments.push(self.extract_inline_element(node, "[...]"));
                     }
                     "supplied" => {
-                        let mut content = String::new();
-                        let mut dummy = false;
-                        Self::node_to_dsl(node, &mut content, &mut dummy);
-                        let dsl = format!("<{}>", content.trim());
-                        segments.push(self.extract_inline_element(node, &dsl));
+                        if self.has_element_children(node) {
+                            self.emit_structural(node, segments);
+                        } else {
+                            let mut content = String::new();
+                            let mut dummy = false;
+                            Self::node_to_dsl(node, &mut content, &mut dummy);
+                            let trimmed = content.trim();
+                            if !trimmed.is_empty() {
+                                let dsl = format!("<{}>", trimmed);
+                                segments.push(self.extract_inline_element(node, &dsl));
+                            }
+                        }
                     }
                     "del" => {
-                        let mut content = String::new();
-                        let mut dummy = false;
-                        Self::node_to_dsl(node, &mut content, &mut dummy);
-                        let dsl = format!("-{{{}}}-", content.trim());
-                        segments.push(self.extract_inline_element(node, &dsl));
+                        if self.has_element_children(node) {
+                            self.emit_structural(node, segments);
+                        } else {
+                            let mut content = String::new();
+                            let mut dummy = false;
+                            Self::node_to_dsl(node, &mut content, &mut dummy);
+                            let trimmed = content.trim();
+                            if !trimmed.is_empty() {
+                                let dsl = format!("-{{{}}}-", trimmed);
+                                segments.push(self.extract_inline_element(node, &dsl));
+                            }
+                        }
                     }
                     "add" => {
-                        let mut content = String::new();
-                        let mut dummy = false;
-                        Self::node_to_dsl(node, &mut content, &mut dummy);
-                        let dsl = format!("+{{{}}}+", content.trim());
-                        segments.push(self.extract_inline_element(node, &dsl));
+                        if self.has_element_children(node) {
+                            self.emit_structural(node, segments);
+                        } else {
+                            let mut content = String::new();
+                            let mut dummy = false;
+                            Self::node_to_dsl(node, &mut content, &mut dummy);
+                            let trimmed = content.trim();
+                            if !trimmed.is_empty() {
+                                let dsl = format!("+{{{}}}+", trimmed);
+                                segments.push(self.extract_inline_element(node, &dsl));
+                            }
+                        }
                     }
                     "unclear" => {
-                        let mut content = String::new();
-                        let mut dummy = false;
-                        Self::node_to_dsl(node, &mut content, &mut dummy);
-                        let dsl = format!("?{{{}}}?", content.trim());
-                        segments.push(self.extract_inline_element(node, &dsl));
+                        if self.has_element_children(node) {
+                            self.emit_structural(node, segments);
+                        } else {
+                            let mut content = String::new();
+                            let mut dummy = false;
+                            Self::node_to_dsl(node, &mut content, &mut dummy);
+                            let trimmed = content.trim();
+                            if !trimmed.is_empty() {
+                                let dsl = format!("?{{{}}}?", trimmed);
+                                segments.push(self.extract_inline_element(node, &dsl));
+                            }
+                        }
                     }
                     "note" => {
                         // For notes, recursively convert children to DSL notation
                         let mut note_content = String::new();
                         let mut dummy = false;
                         Self::node_to_dsl(node, &mut note_content, &mut dummy);
-                        let dsl = format!("^{{{}}}", note_content.trim());
-                        segments.push(self.extract_inline_element(node, &dsl));
+                        let trimmed = note_content.trim();
+                        if !trimmed.is_empty() {
+                            let dsl = format!("^{{{}}}", trimmed);
+                            segments.push(self.extract_inline_element(node, &dsl));
+                        }
                     }
                     "am" => {
-                        // Abbreviation marker - extract entity name
-                        let content = node.get_content();
-                        let dsl = format!(":{}:", content.trim());
-                        segments.push(self.extract_inline_element(node, &dsl));
+                        if self.has_element_children(node) {
+                            self.emit_structural(node, segments);
+                        } else {
+                            // Abbreviation marker - extract entity name
+                            let mut content = String::new();
+                            let mut dummy = false;
+                            Self::node_to_dsl(node, &mut content, &mut dummy);
+                            let trimmed = content.trim();
+                            if !trimmed.is_empty() {
+                                let dsl = format!(":{}:", trimmed);
+                                segments.push(self.extract_inline_element(node, &dsl));
+                            }
+                        }
                     }
                     _ => {
                         // Structural element
@@ -118,7 +158,7 @@ impl Extractor {
 
                         segments.push(Segment::Structural {
                             id: self.next_id(),
-                            xml: format!("</{}>", node.get_name()),
+                            xml: format!("</{}>", helpers::qualified_name(node)),
                         });
                     }
                 }
@@ -191,7 +231,7 @@ impl Extractor {
     }
 
     fn open_tag(&self, node: &Node) -> String {
-        let name = node.get_name();
+        let name = helpers::qualified_name(node);
         let mut tag = format!("<{}", name);
         for (key, value) in node.get_attributes() {
             tag.push_str(&format!(
@@ -202,6 +242,35 @@ impl Extractor {
         }
         tag.push('>');
         tag
+    }
+
+    fn emit_structural(&mut self, node: &Node, segments: &mut Vec<Segment>) {
+        segments.push(Segment::Structural {
+            id: self.next_id(),
+            xml: self.open_tag(node),
+        });
+
+        let mut child = node.get_first_child();
+        while let Some(c) = child {
+            self.process_node(&c, segments);
+            child = c.get_next_sibling();
+        }
+
+        segments.push(Segment::Structural {
+            id: self.next_id(),
+            xml: format!("</{}>", helpers::qualified_name(node)),
+        });
+    }
+
+    fn has_element_children(&self, node: &Node) -> bool {
+        let mut child = node.get_first_child();
+        while let Some(c) = child {
+            if c.get_type() == Some(NodeType::ElementNode) {
+                return true;
+            }
+            child = c.get_next_sibling();
+        }
+        false
     }
 
     fn extract_attributes(&self, node: &Node) -> HashMap<String, String> {
@@ -381,6 +450,16 @@ impl Extractor {
                         }
                     }
                 }
+                Some(NodeType::EntityRefNode) => {
+                    let name = c.get_name();
+                    if !name.is_empty() {
+                        output.push(':');
+                        output.push_str(&name);
+                        output.push(':');
+                    } else {
+                        output.push_str(&c.get_content());
+                    }
+                }
                 Some(NodeType::ElementNode) => {
                     let name = helpers::local_name(&c);
                     match name.as_str() {
@@ -413,39 +492,64 @@ impl Extractor {
                         }
                         "am" => {
                             output.push(':');
-                            output.push_str(&c.get_content());
+                            Self::node_to_dsl(&c, output, has_inline_lb);
                             output.push(':');
                         }
                         "c" => {
                             output.push_str(&c.get_content());
                         }
                         "add" => {
-                            output.push_str("+{");
-                            Self::node_to_dsl(&c, output, has_inline_lb);
-                            output.push_str("}+");
+                            let mut inner = String::new();
+                            Self::node_to_dsl(&c, &mut inner, has_inline_lb);
+                            let trimmed = inner.trim();
+                            if !trimmed.is_empty() {
+                                output.push_str("+{");
+                                output.push_str(trimmed);
+                                output.push_str("}+");
+                            }
                         }
                         "del" => {
-                            output.push_str("-{");
-                            Self::node_to_dsl(&c, output, has_inline_lb);
-                            output.push_str("}-");
+                            let mut inner = String::new();
+                            Self::node_to_dsl(&c, &mut inner, has_inline_lb);
+                            let trimmed = inner.trim();
+                            if !trimmed.is_empty() {
+                                output.push_str("-{");
+                                output.push_str(trimmed);
+                                output.push_str("}-");
+                            }
                         }
                         "unclear" => {
-                            output.push_str("?{");
-                            Self::node_to_dsl(&c, output, has_inline_lb);
-                            output.push_str("}?");
+                            let mut inner = String::new();
+                            Self::node_to_dsl(&c, &mut inner, has_inline_lb);
+                            let trimmed = inner.trim();
+                            if !trimmed.is_empty() {
+                                output.push_str("?{");
+                                output.push_str(trimmed);
+                                output.push_str("}?");
+                            }
                         }
                         "supplied" => {
-                            output.push('<');
-                            Self::node_to_dsl(&c, output, has_inline_lb);
-                            output.push('>');
+                            let mut inner = String::new();
+                            Self::node_to_dsl(&c, &mut inner, has_inline_lb);
+                            let trimmed = inner.trim();
+                            if !trimmed.is_empty() {
+                                output.push('<');
+                                output.push_str(trimmed);
+                                output.push('>');
+                            }
                         }
                         "gap" => {
                             output.push_str("[...]");
                         }
                         "note" => {
-                            output.push_str("^{");
-                            Self::node_to_dsl(&c, output, has_inline_lb);
-                            output.push('}');
+                            let mut inner = String::new();
+                            Self::node_to_dsl(&c, &mut inner, has_inline_lb);
+                            let trimmed = inner.trim();
+                            if !trimmed.is_empty() {
+                                output.push_str("^{");
+                                output.push_str(trimmed);
+                                output.push('}');
+                            }
                         }
                         "lb" => {
                             *has_inline_lb = true;
@@ -505,7 +609,8 @@ pub fn segments_to_dsl(segments: &[Segment]) -> String {
                 } else {
                     dsl.push_str("//");
                 }
-                last_was_linebreak = true;
+                dsl.push(' ');
+                last_was_linebreak = false;
                 pending_space = false;
             }
             Segment::PageBreak { attributes, .. } => {
