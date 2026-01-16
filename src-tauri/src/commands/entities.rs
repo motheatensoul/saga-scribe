@@ -5,27 +5,31 @@ use std::fs;
 use tauri::AppHandle;
 
 /// Load entities from a JSON file and return them as a map
-#[tauri::command]
-pub fn load_entities(path: String) -> Result<HashMap<String, Entity>, String> {
-    info!("Loading entities from: {}", path);
+#[tauri::command(async)]
+pub async fn load_entities(path: String) -> Result<HashMap<String, Entity>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        info!("Loading entities from: {}", path);
 
-    let content = fs::read_to_string(&path).map_err(|e| {
-        error!("Failed to read entity file {}: {}", path, e);
-        format!("Failed to read file: {}", e)
-    })?;
+        let content = fs::read_to_string(&path).map_err(|e| {
+            error!("Failed to read entity file {}: {}", path, e);
+            format!("Failed to read file: {}", e)
+        })?;
 
-    debug!("Read {} bytes from entity file", content.len());
+        debug!("Read {} bytes from entity file", content.len());
 
-    let mut registry = EntityRegistry::new();
-    registry.load_from_str(&content).map_err(|e| {
-        error!("Failed to parse entity file: {}", e);
-        e
-    })?;
+        let mut registry = EntityRegistry::new();
+        registry.load_from_str(&content).map_err(|e| {
+            error!("Failed to parse entity file: {}", e);
+            e
+        })?;
 
-    let count = registry.to_map().len();
-    info!("Successfully loaded {} entities", count);
+        let count = registry.to_map().len();
+        info!("Successfully loaded {} entities", count);
 
-    Ok(registry.to_map().clone())
+        Ok(registry.to_map().clone())
+    })
+    .await
+    .map_err(|e| format!("Entity load task failed: {}", e))?
 }
 
 /// Get a single entity by name from a loaded entity file
@@ -51,10 +55,14 @@ pub fn list_entity_names(path: String) -> Result<Vec<String>, String> {
 }
 
 /// Load custom entity mappings from the app data directory
-#[tauri::command]
-pub fn load_custom_mappings(app: AppHandle) -> Result<HashMap<String, String>, String> {
-    let manager = CustomMappingsManager::new(&app)?;
-    Ok(manager.load())
+#[tauri::command(async)]
+pub async fn load_custom_mappings(app: AppHandle) -> Result<HashMap<String, String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager = CustomMappingsManager::new(&app)?;
+        Ok(manager.load())
+    })
+    .await
+    .map_err(|e| format!("Custom mappings task failed: {}", e))?
 }
 
 /// Save a custom entity mapping
@@ -90,10 +98,14 @@ pub fn clear_custom_mappings(app: AppHandle) -> Result<(), String> {
 // ============================================================================
 
 /// Load all custom entity definitions from the app data directory
-#[tauri::command]
-pub fn load_custom_entities(app: AppHandle) -> Result<HashMap<String, Entity>, String> {
-    let manager = CustomEntitiesManager::new(&app)?;
-    Ok(manager.load())
+#[tauri::command(async)]
+pub async fn load_custom_entities(app: AppHandle) -> Result<HashMap<String, Entity>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let manager = CustomEntitiesManager::new(&app)?;
+        Ok(manager.load())
+    })
+    .await
+    .map_err(|e| format!("Custom entities task failed: {}", e))?
 }
 
 /// Save a custom entity definition

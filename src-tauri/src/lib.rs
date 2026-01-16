@@ -79,6 +79,7 @@ pub fn run() {
             commands::settings::get_system_theme,
             commands::settings::set_window_theme,
             commands::parse::compile_dsl,
+            commands::parse::compile_imported,
             commands::entities::load_entities,
             commands::entities::get_entity,
             commands::entities::list_entity_names,

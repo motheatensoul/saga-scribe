@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { get } from 'svelte/store';
     import { inflectionStore, sessionLemmaStore, lemmaMappings } from '$lib/stores/dictionary';
     import { dictionaryStore } from '$lib/stores/dictionary';
     import {
@@ -267,8 +268,21 @@
 
     async function loadExistingMappings() {
         try {
-            // Look up by diplomatic form for consistent matching
-            existingMappings = await lookupInflection(diplomatic);
+            const storeMappings =
+                get(inflectionStore).mappings[diplomatic.toLowerCase()] || [];
+            let persistedMappings: InflectedForm[] = [];
+            try {
+                // Look up by diplomatic form for consistent matching
+                persistedMappings = await lookupInflection(diplomatic);
+            } catch (e) {
+                console.error('Failed to load existing mappings:', e);
+            }
+
+            const merged = new Map<string, InflectedForm>();
+            for (const mapping of [...storeMappings, ...persistedMappings]) {
+                merged.set(`${mapping.onp_id}-${mapping.analysis}`, mapping);
+            }
+            existingMappings = Array.from(merged.values());
         } catch (e) {
             console.error('Failed to load existing mappings:', e);
         }

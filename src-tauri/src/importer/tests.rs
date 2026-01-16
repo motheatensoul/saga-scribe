@@ -1,5 +1,10 @@
 use super::tei::parse;
-use crate::parser::{Compiler, CompilerConfig};
+use crate::importer::tei::helpers;
+use crate::importer::tei::patching::{apply_patches_and_reconstruct, compute_patches};
+use crate::importer::tei::segments::Segment;
+use crate::parser::{Compiler, CompilerConfig, Lexer};
+use libxml::parser::Parser;
+use libxml::tree::NodeType;
 
 // ============================================================================
 // BASIC IMPORT TESTS (XML → DSL)
@@ -10,7 +15,7 @@ fn test_import_lb() {
     let xml = "<body>line 1<lb/>line 2<lb n=\"5\"/>line 3</body>";
     let result = parse(xml).unwrap();
     // lb adds a newline BEFORE the marker
-    assert_eq!(result.dsl, "line 1\n//line 2\n//5line 3");
+    assert_eq!(result.dsl, "line 1\n// line 2\n//5 line 3");
 }
 
 #[test]
@@ -29,6 +34,27 @@ fn test_import_choice() {
 }
 
 #[test]
+fn test_import_menota_am_ex_abbreviation() {
+    let xml = "<body xmlns:me=\"http://www.menota.org/ns/1.0\"><w><choice><me:facs>kn<am>¯</am>gr</me:facs><me:dipl>k<ex>ono</ex>ngr</me:dipl><me:norm>konungr</me:norm></choice></w></body>";
+    let result = parse(xml).unwrap();
+    assert_eq!(result.dsl, ".abbr[kn¯gr]{konongr}");
+}
+
+#[test]
+fn test_import_norm_only_punctuation() {
+    let xml = "<body xmlns:me=\"http://www.menota.org/ns/1.0\"><pc><choice><me:norm>,</me:norm></choice></pc></body>";
+    let result = parse(xml).unwrap();
+    assert_eq!(result.dsl, ".norm{,}");
+}
+
+#[test]
+fn test_import_supplied_block() {
+    let xml = "<body><supplied><p>Missing text</p></supplied></body>";
+    let result = parse(xml).unwrap();
+    assert!(result.dsl.contains(".supplied{Missing text}"));
+}
+
+#[test]
 fn test_import_gap() {
     let xml = "<body>start <gap/> end</body>";
     let result = parse(xml).unwrap();
@@ -36,10 +62,47 @@ fn test_import_gap() {
 }
 
 #[test]
+fn test_import_gap_with_supplied_quantity() {
+    let xml = "<body><w><gap quantity=\"3\"/><supplied>abc</supplied></w></body>";
+    let result = parse(xml).unwrap();
+    assert_eq!(result.dsl, "[...3<abc>]");
+}
+
+#[test]
 fn test_import_supplied() {
     let xml = "<body>start <supplied>missing</supplied> end</body>";
     let result = parse(xml).unwrap();
     assert_eq!(result.dsl, "start <missing> end");
+}
+
+#[test]
+fn test_import_head() {
+    let xml = "<body><head>Title</head><p>text</p></body>";
+    let result = parse(xml).unwrap();
+    assert!(result.dsl.contains(".head{Title}"));
+}
+
+#[test]
+fn test_import_choice_facs() {
+    let xml = "<body xmlns:me=\"http://www.menota.org/ns/1.0\"><w><choice><me:facs>foo</me:facs><me:dipl>bar</me:dipl></choice></w></body>";
+    let result = parse(xml).unwrap();
+    assert_eq!(result.dsl, "foo");
+}
+
+#[test]
+fn test_import_preserves_msa_attribute() {
+    let xml = "<body xmlns:me=\"http://www.menota.org/ns/1.0\"><w lemma=\"land\" me:msa=\"xNC\">land</w></body>";
+    let result = parse(xml).unwrap();
+    let doc = result.imported_document.expect("Expected imported document");
+    let word_attrs = doc
+        .segments
+        .iter()
+        .find_map(|segment| match segment {
+            Segment::Word { attributes, .. } => Some(attributes),
+            _ => None,
+        })
+        .expect("Expected word segment");
+    assert_eq!(word_attrs.get("me:msa"), Some(&"xNC".to_string()));
 }
 
 #[test]
@@ -53,7 +116,7 @@ fn test_import_del_add() {
 fn test_import_complex() {
     let xml = "<TEI><text><body><p>Line 1<lb/>Line 2</p></body></text></TEI>";
     let result = parse(xml).unwrap();
-    assert_eq!(result.dsl, "Line 1\n//Line 2");
+    assert_eq!(result.dsl, "Line 1\n// Line 2");
 }
 
 #[test]
@@ -121,7 +184,7 @@ fn test_roundtrip_simple_text() {
 
 #[test]
 fn test_roundtrip_line_breaks() {
-    let original_dsl = "line one\n//line two\n//3line three";
+    let original_dsl = "line one\n// line two\n//3 line three";
     let xml = compile_dsl(original_dsl);
     let wrapped = wrap_body(&xml);
     let result = parse(&wrapped).unwrap();
@@ -255,7 +318,7 @@ fn test_roundtrip_complex_document() {
 //3Third line with -{deletion}- and +{addition}+
 //4Fourth line with ^{marginal note}
 ///1v
-//5New page content"#;
+//5 New page content"#;
     
     let xml = compile_dsl(original_dsl);
     let wrapped = wrap_body(&xml);
@@ -371,7 +434,6 @@ fn test_import_character_annotation() {
 // ============================================================================
 
 #[test]
-#[ignore = "Abbreviation markers (<am>/<ex>) are not properly imported"]
 fn test_import_am_ex_markers() {
     let xml = r#"<body>
         <choice>
@@ -380,10 +442,79 @@ fn test_import_am_ex_markers() {
         </choice>
     </body>"#;
     let result = parse(xml).unwrap();
-    
+
     // Should produce .abbr[þ̃]{þat} preserving the combining character
-    println!("am/ex import result: '{}'", result.dsl);
-    assert!(result.dsl.contains(".abbr["), "Should produce abbreviation syntax");
+    assert_eq!(result.dsl.trim(), ".abbr[þ̃]{þat}");
+}
+
+fn normalize_xml(xml: &str) -> String {
+    let parser = Parser::default();
+    let doc = parser
+        .parse_string(xml)
+        .expect("Should parse XML for normalization");
+    let root = doc.get_root_element().expect("Should have root element");
+    serialize_node_sorted(&root)
+}
+
+fn serialize_node_sorted(node: &libxml::tree::Node) -> String {
+    match node.get_type() {
+        Some(NodeType::ElementNode) => {
+            let name = helpers::qualified_name(node);
+            let mut output = String::new();
+            output.push('<');
+            output.push_str(&name);
+
+            let mut attrs: Vec<_> = node.get_attributes().into_iter().collect();
+            attrs.sort_by(|a, b| a.0.cmp(&b.0));
+            for (key, value) in attrs {
+                output.push(' ');
+                output.push_str(&key);
+                output.push_str("=\"");
+                output.push_str(&helpers::escape_xml_attr(&value));
+                output.push('"');
+            }
+
+            let first_child = node.get_first_child();
+            if first_child.is_none() {
+                output.push_str("/>");
+            } else {
+                output.push('>');
+                let mut child = first_child;
+                while let Some(c) = child {
+                    output.push_str(&serialize_node_sorted(&c));
+                    child = c.get_next_sibling();
+                }
+                output.push_str("</");
+                output.push_str(&name);
+                output.push('>');
+            }
+
+            output
+        }
+        Some(NodeType::TextNode) => {
+            let content = node.get_content();
+            if content.trim().is_empty() {
+                String::new()
+            } else {
+                helpers::escape_xml_text(&content)
+            }
+        }
+        Some(NodeType::CommentNode) => {
+            format!("<!--{}-->", node.get_content())
+        }
+        Some(NodeType::CDataSectionNode) => {
+            format!("<![CDATA[{}]]>", node.get_content())
+        }
+        Some(NodeType::EntityRefNode) => {
+            let name = node.get_name();
+            if !name.is_empty() {
+                format!("&{};", name)
+            } else {
+                helpers::escape_xml_text(&node.get_content())
+            }
+        }
+        _ => String::new(),
+    }
 }
 
 // ============================================================================
@@ -391,132 +522,172 @@ fn test_import_am_ex_markers() {
 // ============================================================================
 
 #[test]
-fn test_load_menota_test_file() {
-    // Load the real MENOTA test file
+fn test_menota_file_roundtrip_stability() {
+    // Load the MENOTA test file
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .join("static/tests/HolmPerg-34-4to-MLL.xml");
-    
+
     if !test_file_path.exists() {
         println!("Test file not found at {:?}, skipping", test_file_path);
         return;
     }
-    
+
     let xml_content = std::fs::read_to_string(&test_file_path)
         .expect("Should read test file");
-    
+
+    // Import once
+    let import_result = parse(&xml_content).unwrap();
+    let imported_doc = import_result
+        .imported_document
+        .expect("Imported document manifest should exist");
+
+    // Roundtrip using the imported patching path
+    let patches = compute_patches(&imported_doc.segments, &import_result.dsl);
+    let mut compiler = Compiler::new().with_config(CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+        wrap_pages: false,
+    });
+    let reconstructed_body =
+        apply_patches_and_reconstruct(&imported_doc.segments, &patches, &mut compiler);
+    let reconstructed_xml = format!(
+        "{}{}{}",
+        import_result.original_preamble.unwrap_or_default(),
+        reconstructed_body,
+        import_result.original_postamble.unwrap_or_default()
+    );
+
+    // Re-import and ensure the DSL is stable after one roundtrip
+    let dsl2 = parse(&reconstructed_xml).unwrap().dsl;
+
+    assert_eq!(
+        import_result.dsl, dsl2,
+        "Imported DSL should stabilize after one roundtrip cycle"
+    );
+}
+
+
+#[test]
+fn test_load_menota_test_file() {
+    let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+
+    if !test_file_path.exists() {
+        println!("Test file not found at {:?}, skipping", test_file_path);
+        return;
+    }
+
+    let xml_content = std::fs::read_to_string(&test_file_path)
+        .expect("Should read test file");
+
     let result = parse(&xml_content);
-    
+
     assert!(result.is_ok(), "Should successfully parse MENOTA file: {:?}", result.err());
-    
+
     let import_result = result.unwrap();
-    
+
     // Verify metadata was extracted
     assert!(import_result.metadata.is_some(), "Should extract metadata from teiHeader");
     let metadata = import_result.metadata.unwrap();
-    
+
     // Check some expected metadata fields
     assert!(metadata.title_stmt.title.is_some(), "Should have a title");
     println!("Imported title: {:?}", metadata.title_stmt.title);
-    
+
     // Verify DSL content was extracted
     assert!(!import_result.dsl.is_empty(), "Should extract DSL content from body");
-    
+
     // The DSL should contain page breaks from the manuscript
     // (The test file should have <pb> elements)
     println!("DSL length: {} chars", import_result.dsl.len());
     println!("First 500 chars of DSL:\n{}", &import_result.dsl.chars().take(500).collect::<String>());
 }
 
+
 #[test]
-fn test_menota_file_roundtrip_stability() {
-    // This test verifies that importing and re-compiling produces stable output
-    // (no feedback loop causing information loss on each cycle)
-    
+fn test_menota_file_imported_roundtrip_xml() {
+    // Verify imported patching reconstructs semantically identical XML
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .join("static/tests/HolmPerg-34-4to-MLL.xml");
-    
+
     if !test_file_path.exists() {
-        println!("Test file not found, skipping roundtrip stability test");
+        println!("Test file not found, skipping imported roundtrip test");
         return;
     }
-    
+
     let xml_content = std::fs::read_to_string(&test_file_path)
         .expect("Should read test file");
-    
-    // First import
-    let import1 = parse(&xml_content).expect("First import should succeed");
-    let dsl1 = import1.dsl.clone();
-    
-    // Compile back to XML
-    let xml1 = compile_dsl(&dsl1);
-    let wrapped1 = wrap_body(&xml1);
-    
-    // Second import
-    let import2 = parse(&wrapped1).expect("Second import should succeed");
-    let dsl2 = import2.dsl.clone();
-    
-    // Compile and import again (third cycle)
-    let xml2 = compile_dsl(&dsl2);
-    let wrapped2 = wrap_body(&xml2);
-    let import3 = parse(&wrapped2).expect("Third import should succeed");
-    let dsl3 = import3.dsl.clone();
-    
-    // After the first cycle, the DSL should stabilize
-    // (dsl2 and dsl3 should be identical even if dsl1 differs)
-    
-    // Show diff between cycle 2 and 3 if they differ (this is the feedback loop!)
-    if dsl2 != dsl3 {
-        println!("FEEDBACK LOOP DETECTED!");
-        println!("Cycle 2 len: {}, Cycle 3 len: {}", dsl2.len(), dsl3.len());
-        
-        let chars2: Vec<char> = dsl2.chars().collect();
-        let chars3: Vec<char> = dsl3.chars().collect();
-        
-        let mut diff_count = 0;
-        for (i, (c2, c3)) in chars2.iter().zip(chars3.iter()).enumerate() {
-            if c2 != c3 {
-                if diff_count < 5 {
-                    let start = i.saturating_sub(30);
-                    let end2 = (i + 30).min(chars2.len());
-                    let end3 = (i + 30).min(chars3.len());
-                    let ctx2: String = chars2[start..end2].iter().collect();
-                    let ctx3: String = chars3[start..end3].iter().collect();
-                    println!("Diff {} at position {}: {:?} vs {:?}", diff_count + 1, i, c2, c3);
-                    println!("  Cycle 2 context: {:?}", ctx2);
-                    println!("  Cycle 3 context: {:?}", ctx3);
-                }
-                diff_count += 1;
+
+    let import_result = parse(&xml_content).expect("Import should succeed");
+    let imported_doc = import_result
+        .imported_document
+        .expect("Imported document manifest should exist");
+
+    let preamble = import_result.original_preamble.unwrap_or_default();
+    let postamble = import_result.original_postamble.unwrap_or_default();
+
+    let mut lexer = Lexer::new(&import_result.dsl);
+    lexer
+        .parse()
+        .expect("Imported DSL should parse without errors");
+
+    let patches = compute_patches(&imported_doc.segments, &import_result.dsl);
+    let mut compiler = Compiler::new().with_config(CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+        wrap_pages: false,
+    });
+
+    let reconstructed_body =
+        apply_patches_and_reconstruct(&imported_doc.segments, &patches, &mut compiler);
+    let reconstructed_xml = format!("{}{}{}", preamble, reconstructed_body, postamble);
+
+    let normalized_original = normalize_xml(&xml_content);
+    let normalized_reconstructed = normalize_xml(&reconstructed_xml);
+
+    if normalized_reconstructed != normalized_original {
+        let left_bytes = normalized_reconstructed.as_bytes();
+        let right_bytes = normalized_original.as_bytes();
+        let mut diff_index = None;
+        let min_len = left_bytes.len().min(right_bytes.len());
+        for idx in 0..min_len {
+            if left_bytes[idx] != right_bytes[idx] {
+                diff_index = Some(idx);
+                break;
             }
         }
-        println!("Total diff positions: {}", diff_count);
-        
-        // Also check if one is longer
-        if chars2.len() != chars3.len() {
-            println!("Length difference: cycle2={} cycle3={}", chars2.len(), chars3.len());
-            let shorter = chars2.len().min(chars3.len());
-            let longer_str = if chars2.len() > chars3.len() { &dsl2 } else { &dsl3 };
-            let extra: String = longer_str.chars().skip(shorter).take(100).collect();
-            println!("Extra chars at end of longer: {:?}", extra);
+
+        if diff_index.is_none() && left_bytes.len() != right_bytes.len() {
+            diff_index = Some(min_len);
         }
-        
-        // DEBUG: Locate the failure point in the XML
-        // We know the failure is around "þakalþo"
-        if let Some(idx) = xml2.find("þakalþo") {
-            let start = idx.saturating_sub(50);
-            let end = (idx + 100).min(xml2.len());
-            println!("XML2 context around failure: {:?}", &xml2[start..end]);
+
+        if let Some(idx) = diff_index {
+            let start = idx.saturating_sub(100);
+            let end = (idx + 100).min(min_len.max(idx + 1));
+            let left_snippet = String::from_utf8_lossy(&left_bytes[start..end]);
+            let right_snippet = String::from_utf8_lossy(&right_bytes[start..end]);
+            panic!(
+                "Round-trip XML mismatch at byte {}\nLeft: {}\nRight: {}",
+                idx,
+                left_snippet.escape_default(),
+                right_snippet.escape_default()
+            );
         }
     }
-    
-    assert_eq!(dsl2, dsl3, 
-        "DSL should stabilize after first roundtrip cycle - no feedback loop!\n\
-        Cycle 2 len: {}, Cycle 3 len: {}", dsl2.len(), dsl3.len());
-}
 
+    assert_eq!(
+        normalized_reconstructed, normalized_original,
+        "Round-trip XML should be semantically identical"
+    );
+}
 
 // ============================================================================
 // IDEMPOTENCY TESTS

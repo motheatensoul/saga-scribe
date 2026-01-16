@@ -68,6 +68,15 @@ impl WordTokenizer {
                     }
                 }
 
+                Node::Head(_) | Node::SuppliedBlock(_) | Node::Norm(_) => {
+                    if !current_word.is_empty() {
+                        result.push(Node::Word(std::mem::take(&mut current_word)));
+                    }
+                    result.push(node);
+                    state = State::BetweenWords;
+                    continuation_active = false;
+                }
+
                 // Text nodes - split on whitespace and punctuation
                 Node::Text(text) => {
                     self.process_text(

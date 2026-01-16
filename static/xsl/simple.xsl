@@ -72,7 +72,6 @@
 
     <!-- Word elements with MENOTA multi-level structure -->
     <xsl:template match="tei:w | w">
-        <xsl:variable name="wordIndex" select="count(preceding::tei:w) + count(preceding::w)"/>
         <xsl:variable name="facsText">
             <xsl:choose>
                 <xsl:when test="me:facs">
@@ -101,7 +100,6 @@
         </xsl:variable>
 
         <span class="word"
-              data-word-index="{$wordIndex}"
               data-diplomatic="{$diplText}">
             <xsl:if test="@lemma">
                 <xsl:attribute name="title">

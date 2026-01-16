@@ -7,18 +7,28 @@ use tauri::{AppHandle, State};
 pub struct OnpState(pub Mutex<Option<OnpRegistry>>);
 
 /// Load ONP headwords from a JSON file
-#[tauri::command]
-pub fn load_onp_headwords(path: String, state: State<OnpState>) -> Result<usize, String> {
-    info!("Loading ONP headwords from: {}", path);
+#[tauri::command(async)]
+pub async fn load_onp_headwords(
+    path: String,
+    state: State<'_, OnpState>,
+) -> Result<usize, String> {
+    let (registry, count) =
+        tauri::async_runtime::spawn_blocking(move || -> Result<(OnpRegistry, usize), String> {
+            info!("Loading ONP headwords from: {}", path);
 
-    let mut registry = OnpRegistry::new();
-    registry.load_from_file(&path).map_err(|e| {
-        error!("Failed to load ONP headwords: {}", e);
-        e
-    })?;
+        let mut registry = OnpRegistry::new();
+        registry.load_from_file(&path).map_err(|e| {
+            error!("Failed to load ONP headwords: {}", e);
+            e
+        })?;
 
-    let count = registry.len();
-    info!("Loaded {} ONP headwords", count);
+        let count = registry.len();
+        info!("Loaded {} ONP headwords", count);
+
+        Ok((registry, count))
+    })
+    .await
+    .map_err(|e| format!("ONP load task failed: {}", e))??;
 
     *state.0.lock().unwrap() = Some(registry);
     Ok(count)
@@ -80,10 +90,14 @@ pub async fn fetch_onp_full_entry(id: String) -> Result<OnpFullEntry, String> {
 }
 
 /// Load user inflection mappings
-#[tauri::command]
-pub fn load_inflections(app: AppHandle) -> Result<InflectionStore, String> {
-    info!("Loading inflection mappings");
-    InflectionStore::load(&app)
+#[tauri::command(async)]
+pub async fn load_inflections(app: AppHandle) -> Result<InflectionStore, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        info!("Loading inflection mappings");
+        InflectionStore::load(&app)
+    })
+    .await
+    .map_err(|e| format!("Inflection load task failed: {}", e))?
 }
 
 /// Look up inflections for a wordform

@@ -27,24 +27,24 @@ A desktop application for scholarly manuscript transcription, producing TEI-XML 
 
 ## DSL Syntax Reference
 
-| DSL Syntax | TEI-XML Output | Description |
-|------------|----------------|-------------|
-| `//` | `<lb/>` or `<lb n="auto"/>` | Line break (auto-numbered if enabled) |
-| `//n` | `<lb n="n"/>` | Line break with explicit number |
-| `///n` | `<pb n="n"/>` | Page break (n = page number) |
-| `.abbr[abbr]{expansion}` | `<choice><abbr>abbr</abbr><expan>expansion</expan></choice>` | Abbreviation |
-| `[...]` or `[...n]` | `<gap reason="illegible" quantity="n" unit="chars"/>` | Gap/lacuna |
-| `[...<text>]` | `<gap/><supplied>text</supplied>` | Gap with supplied reading |
-| `[...n<text>]` | `<gap quantity="n"/><supplied>text</supplied>` | Gap with quantity and supplied |
-| `<text>` | `<supplied>text</supplied>` | Supplied/reconstructed text |
-| `-{text}-` | `<del>text</del>` | Deletion |
-| `+{text}+` | `<add>text</add>` | Addition |
-| `^{text}` | `<note>text</note>` | Note/annotation |
-| `?{text}?` | `<unclear>text</unclear>` | Unclear reading |
-| `:name:` | `&name;` | Entity reference (XML entity) |
-| `\|` | (word boundary) | Explicit word boundary |
-| `~//` | (continuation + lb) | Word continues across line break |
-| `~///n` | (continuation + pb) | Word continues across page break |
+| DSL Syntax               | TEI-XML Output                                               | Description                           |
+| ------------------------ | ------------------------------------------------------------ | ------------------------------------- |
+| `//`                     | `<lb/>` or `<lb n="auto"/>`                                  | Line break (auto-numbered if enabled) |
+| `//n`                    | `<lb n="n"/>`                                                | Line break with explicit number       |
+| `///n`                   | `<pb n="n"/>`                                                | Page break (n = page number)          |
+| `.abbr[abbr]{expansion}` | `<choice><abbr>abbr</abbr><expan>expansion</expan></choice>` | Abbreviation                          |
+| `[...]` or `[...n]`      | `<gap reason="illegible" quantity="n" unit="chars"/>`        | Gap/lacuna                            |
+| `[...<text>]`            | `<gap/><supplied>text</supplied>`                            | Gap with supplied reading             |
+| `[...n<text>]`           | `<gap quantity="n"/><supplied>text</supplied>`               | Gap with quantity and supplied        |
+| `<text>`                 | `<supplied>text</supplied>`                                  | Supplied/reconstructed text           |
+| `-{text}-`               | `<del>text</del>`                                            | Deletion                              |
+| `+{text}+`               | `<add>text</add>`                                            | Addition                              |
+| `^{text}`                | `<note>text</note>`                                          | Note/annotation                       |
+| `?{text}?`               | `<unclear>text</unclear>`                                    | Unclear reading                       |
+| `:name:`                 | `&name;`                                                     | Entity reference (XML entity)         |
+| `\|`                     | (word boundary)                                              | Explicit word boundary                |
+| `~//`                    | (continuation + lb)                                          | Word continues across line break      |
+| `~///n`                  | (continuation + pb)                                          | Word continues across page break      |
 
 ## Installation
 
@@ -60,28 +60,30 @@ bun run tauri build  # Production build
 
 ## Keyboard Shortcuts
 
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+S | Save project (.teis archive) |
-| Ctrl+O | Open project or DSL file |
-| Ctrl+F | Find in editor |
-| Ctrl+H | Find and replace |
-| Ctrl+Z | Undo (editor) |
-| Ctrl+Y | Redo (editor) |
-| Ctrl+Shift+[ | Fold section at cursor |
-| Ctrl+Shift+] | Unfold section at cursor |
-| Ctrl+Shift+Z | Undo lemmatization |
-| Ctrl+Shift+Y | Redo lemmatization |
-| F1 | Open help dialog |
-| Ctrl+/ | Open help dialog (alternative) |
+| Shortcut     | Action                         |
+| ------------ | ------------------------------ |
+| Ctrl+S       | Save project (.teis archive)   |
+| Ctrl+O       | Open project or DSL file       |
+| Ctrl+F       | Find in editor                 |
+| Ctrl+H       | Find and replace               |
+| Ctrl+Z       | Undo (editor)                  |
+| Ctrl+Y       | Redo (editor)                  |
+| Ctrl+Shift+[ | Fold section at cursor         |
+| Ctrl+Shift+] | Unfold section at cursor       |
+| Ctrl+Shift+Z | Undo lemmatization             |
+| Ctrl+Shift+Y | Redo lemmatization             |
+| F1           | Open help dialog               |
+| Ctrl+/       | Open help dialog (alternative) |
 
 The toolbar provides access to:
+
 - **Settings** (⚙️ icon): Appearance, editor, and template preferences
 - **Help** (? icon): Keyboard shortcuts, DSL syntax reference, and about information
 
 ## Documentation
 
 See `docs/user-guide.md` for detailed usage instructions including:
+
 - DSL syntax reference
 - Settings and preferences
 - Help system and keyboard shortcuts
@@ -101,5 +103,9 @@ See [LICENSES](static/fonts/LICENSES.md) for further licenses of used fonts.
 ## AI Assistance
 
 This project is developed with assistance from [Claude Code](https://claude.com/claude-code). AI-assisted commits are attributed with the `Co-Authored-By: Claude` tag.
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to get started, and our [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 
 Made with love in Norway.

@@ -17,6 +17,31 @@
     let error = $state<string | null>(null);
     let xslProcessor = $state<XSLTProcessor | null>(null);
     let containerEl: HTMLDivElement;
+    let enhanceVersion = 0;
+
+    const placeholderPattern = /__ENTITY_\d+__/g;
+    const yieldToMain = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    function resolveEntitiesToGlyphs(
+        text: string,
+        placeholderGlyphs: Map<string, string>
+    ): string {
+        if (!text.includes('__ENTITY_')) {
+            return text;
+        }
+        return text.replace(placeholderPattern, (placeholder) => {
+            return placeholderGlyphs.get(placeholder) ?? placeholder;
+        });
+    }
+
+    function sliceTag(xml: string, tagName: string): string | null {
+        const lower = xml.toLowerCase();
+        const start = lower.indexOf(`<${tagName}`);
+        if (start === -1) return null;
+        const end = lower.indexOf(`</${tagName}>`, start);
+        if (end === -1) return null;
+        return xml.slice(start, end + tagName.length + 3);
+    }
 
     // Load the XSL stylesheet once on mount
     onMount(async () => {
@@ -55,18 +80,30 @@
             // Prepare the XML content
             let xmlContent = content;
 
+            // Strip DOCTYPE/entity declarations (not supported by DOMParser)
+            xmlContent = xmlContent
+                .replace(/<!DOCTYPE[\s\S]*?\]>\s*/gi, '')
+                .replace(/<!DOCTYPE[^>]*>\s*/gi, '');
+
+            const bodyFragment = sliceTag(xmlContent, 'body') ?? sliceTag(xmlContent, 'text');
+            const xmlFragment = bodyFragment
+                ? `<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0">${bodyFragment}</TEI>`
+                : xmlContent;
+
             // Replace entity references with placeholders to avoid XML parsing errors
             const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
-            const entityMap = new Map<string, string>();
+            const placeholderGlyphs = new Map<string, string>();
             let entityCounter = 0;
+            const entities = $entityStore.entities;
 
-            xmlContent = xmlContent.replace(entityPattern, (match, name) => {
+            xmlContent = xmlFragment.replace(entityPattern, (match, name) => {
                 // Skip standard XML entities
                 if (['lt', 'gt', 'amp', 'quot', 'apos'].includes(name)) {
                     return match;
                 }
                 const placeholder = `__ENTITY_${entityCounter}__`;
-                entityMap.set(placeholder, name);
+                const glyph = entities[name]?.char || `[${name}]`;
+                placeholderGlyphs.set(placeholder, glyph);
                 entityCounter++;
                 return placeholder;
             });
@@ -94,12 +131,7 @@
             let html = resultDoc.documentElement.outerHTML;
 
             // Resolve entity placeholders to actual glyphs
-            const entities = $entityStore.entities;
-            for (const [placeholder, entityName] of entityMap) {
-                const entity = entities[entityName];
-                const glyph = entity?.char || `[${entityName}]`;
-                html = html.replaceAll(placeholder, glyph);
-            }
+            html = resolveEntitiesToGlyphs(html, placeholderGlyphs);
 
             renderedHtml = html;
             error = null;
@@ -110,34 +142,66 @@
         }
     });
 
-    // Set up word click handlers after rendering
+    // Set up delegated word click handlers
     $effect(() => {
-        if (!containerEl || !renderedHtml || !onwordclick) return;
+        if (!containerEl || !onwordclick) return;
 
-        // Find all word elements with data attributes
-        const wordElements = containerEl.querySelectorAll('[data-word-index]');
+        const handler = (event: MouseEvent) => {
+            const target = (event.target as HTMLElement | null)?.closest<HTMLElement>(
+                '[data-word-index]'
+            );
+            if (!target) return;
+            event.preventDefault();
+            const wordIndex = parseInt(target.dataset.wordIndex ?? '-1', 10);
+            const diplomatic = target.dataset.diplomatic || target.textContent || '';
+            const facsimile = target.textContent || '';
+            onwordclick(facsimile, diplomatic, wordIndex, target);
+        };
 
-        wordElements.forEach((el) => {
-            const element = el as HTMLElement;
-            const wordIndex = parseInt(element.dataset.wordIndex || '-1', 10);
-            const diplomatic = element.dataset.diplomatic || element.textContent || '';
-            const facsimile = element.textContent || '';
+        containerEl.addEventListener('click', handler);
+        return () => containerEl.removeEventListener('click', handler);
+    });
 
-            element.onclick = (e) => {
-                e.preventDefault();
-                onwordclick(facsimile, diplomatic, wordIndex, element);
-            };
+    // Add word styling in chunks to avoid blocking
+    $effect(() => {
+        if (!containerEl || !renderedHtml) return;
 
-            // Add styling based on lemmatization state
-            if (wordIndex in $lemmaMappings.mappings) {
-                element.classList.add('is-confirmed');
-            } else {
-                const inflections = $getInflections(diplomatic);
-                if (inflections.length > 0) {
-                    element.classList.add('has-suggestion');
+        const currentVersion = ++enhanceVersion;
+        const wordElements = Array.from(
+            containerEl.querySelectorAll<HTMLElement>('[data-word-index]')
+        );
+        const lemmaMap = $lemmaMappings.mappings;
+        const inflectionCache = new Map<string, boolean>();
+        const YIELD_EVERY = 500;
+
+        void (async () => {
+            for (let index = 0; index < wordElements.length; index++) {
+                if (currentVersion !== enhanceVersion) return;
+                const element = wordElements[index];
+                const wordIndex = index;
+                element.dataset.wordIndex = `${wordIndex}`;
+                const diplomatic = element.dataset.diplomatic || element.textContent || '';
+
+                element.classList.remove('is-confirmed', 'has-suggestion');
+
+                if (wordIndex in lemmaMap) {
+                    element.classList.add('is-confirmed');
+                } else if (diplomatic) {
+                    let hasSuggestion = inflectionCache.get(diplomatic);
+                    if (hasSuggestion === undefined) {
+                        hasSuggestion = $getInflections(diplomatic).length > 0;
+                        inflectionCache.set(diplomatic, hasSuggestion);
+                    }
+                    if (hasSuggestion) {
+                        element.classList.add('has-suggestion');
+                    }
+                }
+
+                if (index % YIELD_EVERY === 0) {
+                    await yieldToMain();
                 }
             }
-        });
+        })();
     });
 </script>
 

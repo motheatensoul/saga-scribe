@@ -1,5 +1,7 @@
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
+use crate::importer::tei::patching::{apply_patches_and_reconstruct, compute_patches};
+use crate::importer::tei::segments::{ImportedDocument, Segment};
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping};
 use std::collections::HashMap;
@@ -91,6 +93,86 @@ pub async fn compile_dsl(
 
         let body = compiler.compile(&input)?;
         Ok(format!("{}\n{}\n{}", template_header, body, template_footer))
+    })
+    .await
+    .map_err(|e| format!("Compilation task failed: {}", e))?
+}
+
+/// Compile an imported document using the patching system for round-trip fidelity.
+///
+/// This command takes edited DSL, the original segment manifest, and original body XML,
+/// computes the differences, and reconstructs the XML with minimal changes.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command(async, rename_all = "camelCase")]
+pub async fn compile_imported(
+    edited_dsl: String,
+    segments_json: String,
+    preamble: String,
+    postamble: String,
+    entities_json: Option<String>,
+    normalizer_json: Option<String>,
+    entity_mappings_json: Option<String>,
+    custom_mappings: Option<HashMap<String, String>>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        // Deserialize the imported document (accept either full manifest or raw segments list)
+        let imported_doc: ImportedDocument = match serde_json::from_str(&segments_json) {
+            Ok(doc) => doc,
+            Err(_) => {
+                let segments: Vec<Segment> = serde_json::from_str(&segments_json)
+                    .map_err(|e| format!("Failed to parse segments: {}", e))?;
+                ImportedDocument {
+                    segments,
+                    is_menota: false,
+                }
+            }
+        };
+        // Load entities if provided
+        let mut registry = EntityRegistry::new();
+        if let Some(json) = entities_json {
+            registry.load_from_str(&json)?;
+        }
+
+        // Load level dictionary if provided
+        let mut dictionary = match normalizer_json {
+            Some(json) => Some(LevelDictionary::load(&json)?),
+            None => None,
+        };
+
+        // Load entity base letter mappings if provided
+        if let Some(ref mut dict) = dictionary {
+            if let Some(ref json) = entity_mappings_json {
+                dict.load_entity_mappings(json)?;
+            }
+            if let Some(custom) = custom_mappings {
+                dict.add_entity_mappings(custom);
+            }
+        }
+
+        // Configure compiler for multi-level output
+        let config = CompilerConfig {
+            word_wrap: true,
+            auto_line_numbers: false,
+            multi_level: true,
+            wrap_pages: false,
+        };
+
+        let mut compiler = Compiler::new()
+            .with_entities(&registry)
+            .with_config(config);
+
+        if let Some(ref dict) = dictionary {
+            compiler = compiler.with_dictionary(dict);
+        }
+
+        // Compute patches between original segments and edited DSL
+        let patches = compute_patches(&imported_doc.segments, &edited_dsl);
+
+        // Apply patches and reconstruct the body XML
+        let body = apply_patches_and_reconstruct(&imported_doc.segments, &patches, &mut compiler);
+
+        // Combine with preamble (everything before body) and postamble (everything after)
+        Ok(format!("{}{}{}", preamble, body, postamble))
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
