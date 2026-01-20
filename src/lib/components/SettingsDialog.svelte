@@ -1,5 +1,8 @@
 <script lang="ts">
+    import { open } from "@tauri-apps/plugin-dialog";
+    import { deleteStylesheet, importStylesheet, listStylesheets } from "$lib/tauri";
     import { settings } from "$lib/stores/settings";
+    import { stylesheetStore, DEFAULT_STYLESHEET_ID } from "$lib/stores/stylesheets";
     import { templateStore } from "$lib/stores/template";
 
     //Icons
@@ -18,6 +21,7 @@
         autoPreview: $settings.autoPreview,
         previewDelay: $settings.previewDelay,
         activeTemplateId: $settings.activeTemplateId,
+        activeStylesheetId: $settings.activeStylesheetId,
     });
 
     // Sync local state when dialog opens
@@ -29,9 +33,67 @@
                 autoPreview: $settings.autoPreview,
                 previewDelay: $settings.previewDelay,
                 activeTemplateId: $settings.activeTemplateId,
+                activeStylesheetId: $settings.activeStylesheetId,
             };
+            refreshStylesheets();
         }
     });
+
+    let activeStylesheet = $derived(
+        $stylesheetStore.find(
+            (stylesheet) => stylesheet.id === localSettings.activeStylesheetId,
+        ),
+    );
+
+    async function refreshStylesheets() {
+        try {
+            const stylesheets = await listStylesheets();
+            stylesheetStore.setStylesheets(stylesheets);
+        } catch (e) {
+            console.error("Failed to load stylesheets:", e);
+        }
+    }
+
+    async function handleImportStylesheet() {
+        const path = await open({
+            filters: [{ name: "XSLT Stylesheet", extensions: ["xsl", "xslt"] }],
+        });
+
+        if (!path || Array.isArray(path)) {
+            return;
+        }
+
+        try {
+            const stylesheet = await importStylesheet(path);
+            await refreshStylesheets();
+            localSettings.activeStylesheetId = stylesheet.id;
+        } catch (e) {
+            console.error("Failed to import stylesheet:", e);
+            alert(`Failed to import stylesheet: ${e}`);
+        }
+    }
+
+    async function handleRemoveStylesheet() {
+        const stylesheet = activeStylesheet;
+        if (!stylesheet || stylesheet.builtIn) {
+            return;
+        }
+
+        if (!confirm(`Remove stylesheet "${stylesheet.name}"?`)) {
+            return;
+        }
+
+        try {
+            await deleteStylesheet(stylesheet.id);
+            await refreshStylesheets();
+            if (localSettings.activeStylesheetId === stylesheet.id) {
+                localSettings.activeStylesheetId = DEFAULT_STYLESHEET_ID;
+            }
+        } catch (e) {
+            console.error("Failed to remove stylesheet:", e);
+            alert(`Failed to remove stylesheet: ${e}`);
+        }
+    }
 
     function handleSave() {
         settings.update(localSettings);
@@ -205,7 +267,61 @@
 
                     <div class="divider"></div>
 
-                            <!-- Template Section -->
+                    <!-- Stylesheets Section -->
+                    <section>
+                        <h3 class="text-lg font-semibold mb-4 text-primary">
+                            Stylesheets
+                        </h3>
+                        <div class="space-y-4">
+                            <div class="form-control">
+                                <div class="mb-2">
+                                    <label
+                                        class="label-text font-medium"
+                                        for="stylesheet-select"
+                                    >
+                                        Active XSLT Stylesheet
+                                    </label>
+                                </div>
+                                <select
+                                    id="stylesheet-select"
+                                    class="select select-bordered w-full max-w-xs"
+                                    bind:value={localSettings.activeStylesheetId}
+                                >
+                                    {#each $stylesheetStore as stylesheet}
+                                        <option value={stylesheet.id}>
+                                            {stylesheet.name}
+                                        </option>
+                                    {/each}
+                                </select>
+                                <div class="mt-1">
+                                    <span class="label-text-alt text-base-content/60"
+                                        >Used for XSLT preview and exports</span
+                                    >
+                                </div>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <button
+                                    type="button"
+                                    class="btn btn-ghost btn-sm"
+                                    onclick={handleImportStylesheet}
+                                >
+                                    Import Stylesheet
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn btn-ghost btn-sm text-error"
+                                    onclick={handleRemoveStylesheet}
+                                    disabled={activeStylesheet?.builtIn ?? true}
+                                >
+                                    Remove Selected
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+
+                    <div class="divider"></div>
+
+                    <!-- Template Section -->
                     <section>
                         <h3 class="text-lg font-semibold mb-4 text-primary">
                             Default Template

@@ -266,6 +266,12 @@ impl<'a> Lexer<'a> {
                 }
             } else if c == '{' || c == '[' || c == '<' {
                 depth += 1;
+            } else if c == '}' || c == ']' || c == '>' {
+                // Decrement for closing brackets that aren't the end character
+                // (end character is already handled above)
+                if c != end && depth > 1 {
+                    depth -= 1;
+                }
             }
             self.advance();
         }

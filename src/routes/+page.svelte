@@ -2,6 +2,7 @@
     import { onMount, tick } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open, save } from "@tauri-apps/plugin-dialog";
+    import { readTextFile } from "@tauri-apps/plugin-fs";
     import Editor from "$lib/components/Editor.svelte";
     import Preview from "$lib/components/Preview.svelte";
     import Toolbar from "$lib/components/Toolbar.svelte";
@@ -18,6 +19,7 @@
     import { templateStore } from "$lib/stores/template";
     import { entityStore } from "$lib/stores/entities";
     import { settings } from "$lib/stores/settings";
+    import { stylesheetStore } from "$lib/stores/stylesheets";
     import { errorStore, errorCounts } from "$lib/stores/errors";
     import * as metadataStore from "$lib/stores/metadata.svelte";
     import { importedStore } from "$lib/stores/imported.svelte";
@@ -41,6 +43,7 @@
         importFile,
         exportInflections,
         generateTeiHeader,
+        listStylesheets,
     } from "$lib/tauri";
     import type { InflectedForm } from "$lib/tauri";
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
@@ -94,6 +97,12 @@
                   entities: $entityStore.entities,
               })
             : null,
+    );
+    const defaultStylesheetPath = "/xsl/simple.xsl";
+    let activeStylesheetPath = $derived(
+        $stylesheetStore.find(
+            (item) => item.id === $settings.activeStylesheetId,
+        )?.path ?? defaultStylesheetPath,
     );
     let normalizerJson = $state<string | null>(null);
     let entityMappingsJson = $state<string | null>(null);
@@ -179,6 +188,31 @@
             errorStore.error(
                 "Templates",
                 "Failed to load templates",
+                String(e),
+            );
+        }
+
+        // Load stylesheets
+        try {
+            errorStore.info("Stylesheets", "Loading stylesheets...");
+            const stylesheets = await listStylesheets();
+            stylesheetStore.setStylesheets(stylesheets);
+            if (
+                $settings.activeStylesheetId &&
+                !stylesheets.some(
+                    (stylesheet) => stylesheet.id === $settings.activeStylesheetId,
+                )
+            ) {
+                settings.update({ activeStylesheetId: "default" });
+            }
+            errorStore.info(
+                "Stylesheets",
+                `Loaded ${stylesheets.length} stylesheets`,
+            );
+        } catch (e) {
+            errorStore.error(
+                "Stylesheets",
+                "Failed to load stylesheets",
                 String(e),
             );
         }
@@ -867,17 +901,25 @@
         }
     }
 
+    async function loadStylesheetText(path: string): Promise<string> {
+        if (path.startsWith("/xsl/")) {
+            const response = await fetch(path);
+            if (!response.ok) {
+                throw new Error(`Failed to load stylesheet: ${response.statusText}`);
+            }
+            return response.text();
+        }
+
+        return readTextFile(path);
+    }
+
     /**
      * Apply XSLT transformation to XML content
      * Extracted from XsltRenderer.svelte for reuse in exports
      */
     async function applyXsltTransform(xmlContent: string): Promise<string> {
-        // Load XSL stylesheet
-        const response = await fetch("/xsl/simple.xsl");
-        if (!response.ok) {
-            throw new Error(`Failed to load stylesheet: ${response.statusText}`);
-        }
-        const xslText = await response.text();
+        const stylesheetPath = activeStylesheetPath;
+        const xslText = await loadStylesheetText(stylesheetPath);
 
         const parser = new DOMParser();
         const xslDoc = parser.parseFromString(xslText, "application/xml");
@@ -1399,6 +1441,7 @@
             <Pane minSize={20}>
                 <Preview
                     content={previewContent}
+                    xslPath={activeStylesheetPath}
                     onwordclick={handleWordClick}
                 />
             </Pane>

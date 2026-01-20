@@ -8,6 +8,7 @@ export interface Settings {
   autoPreview: boolean;
   previewDelay: number;
   activeTemplateId: string | null;
+  activeStylesheetId: string;
 }
 
 export async function loadSettings(): Promise<Settings> {
@@ -24,6 +25,27 @@ export async function getSystemTheme(): Promise<string> {
 
 export async function setWindowTheme(theme: string): Promise<void> {
   return invoke("set_window_theme", { theme });
+}
+
+export interface StylesheetEntry {
+  id: string;
+  name: string;
+  path: string;
+  builtIn: boolean;
+}
+
+export async function listStylesheets(): Promise<StylesheetEntry[]> {
+  return invoke("list_stylesheets");
+}
+
+export async function importStylesheet(
+  path: string,
+): Promise<StylesheetEntry> {
+  return invoke("import_stylesheet", { path });
+}
+
+export async function deleteStylesheet(id: string): Promise<void> {
+  return invoke("delete_stylesheet", { id });
 }
 
 export interface FileContent {

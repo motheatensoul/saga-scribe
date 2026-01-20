@@ -474,6 +474,18 @@
                         }
                         break;
                     }
+                    case 'head': {
+                        await extractTokensAsync(
+                            el,
+                            result,
+                            placeholderGlyphs,
+                            wordCounter,
+                            yieldCounter,
+                            yieldEvery,
+                        );
+                        result.push({ type: 'linebreak', displayText: '' });
+                        break;
+                    }
                     default:
                         // Recurse into other elements
                         await extractTokensAsync(el, result, placeholderGlyphs, wordCounter, yieldCounter, yieldEvery);

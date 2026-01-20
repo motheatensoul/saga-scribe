@@ -5,5 +5,6 @@ pub mod import;
 pub mod metadata;
 pub mod parse;
 pub mod settings;
+pub mod stylesheet;
 pub mod template;
 pub mod validate;

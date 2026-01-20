@@ -72,26 +72,30 @@
 
     <!-- Word elements with MENOTA multi-level structure -->
     <xsl:template match="tei:w | w">
+        <!-- Note: word index is assigned by JavaScript post-processing, not XSLT -->
+        <!-- Using count(preceding::...) here would be O(n²) and cause hangs on large documents -->
+        <!-- Get facsimile text: prefer me:facs, then facs, otherwise whole content -->
         <xsl:variable name="facsText">
             <xsl:choose>
-                <xsl:when test="me:facs">
-                    <xsl:value-of select="me:facs"/>
+                <xsl:when test=".//me:facs">
+                    <xsl:value-of select=".//me:facs"/>
                 </xsl:when>
-                <xsl:when test="*[local-name()='facs']">
-                    <xsl:value-of select="*[local-name()='facs']"/>
+                <xsl:when test=".//*[local-name()='facs']">
+                    <xsl:value-of select=".//*[local-name()='facs']"/>
                 </xsl:when>
                 <xsl:otherwise>
                     <xsl:value-of select="."/>
                 </xsl:otherwise>
             </xsl:choose>
         </xsl:variable>
+        <!-- Get diplomatic text: prefer me:dipl, then dipl, fallback to facs -->
         <xsl:variable name="diplText">
             <xsl:choose>
-                <xsl:when test="me:dipl">
-                    <xsl:value-of select="me:dipl"/>
+                <xsl:when test=".//me:dipl">
+                    <xsl:value-of select=".//me:dipl"/>
                 </xsl:when>
-                <xsl:when test="*[local-name()='dipl']">
-                    <xsl:value-of select="*[local-name()='dipl']"/>
+                <xsl:when test=".//*[local-name()='dipl']">
+                    <xsl:value-of select=".//*[local-name()='dipl']"/>
                 </xsl:when>
                 <xsl:otherwise>
                     <xsl:value-of select="$facsText"/>
@@ -100,7 +104,8 @@
         </xsl:variable>
 
         <span class="word"
-              data-diplomatic="{$diplText}">
+              data-word-index="0"
+              data-diplomatic="{normalize-space($diplText)}">
             <xsl:if test="@lemma">
                 <xsl:attribute name="title">
                     <xsl:value-of select="@lemma"/>
@@ -111,7 +116,7 @@
                     </xsl:if>
                 </xsl:attribute>
             </xsl:if>
-            <xsl:value-of select="$facsText"/>
+            <xsl:value-of select="normalize-space($facsText)"/>
         </span>
         <xsl:text> </xsl:text>
     </xsl:template>
@@ -120,11 +125,23 @@
     <xsl:template match="tei:pc | pc">
         <xsl:variable name="facsText">
             <xsl:choose>
-                <xsl:when test="me:facs">
-                    <xsl:value-of select="me:facs"/>
+                <xsl:when test=".//me:facs">
+                    <xsl:value-of select=".//me:facs"/>
                 </xsl:when>
-                <xsl:when test="*[local-name()='facs']">
-                    <xsl:value-of select="*[local-name()='facs']"/>
+                <xsl:when test=".//*[local-name()='facs']">
+                    <xsl:value-of select=".//*[local-name()='facs']"/>
+                </xsl:when>
+                <xsl:when test=".//me:dipl">
+                    <xsl:value-of select=".//me:dipl"/>
+                </xsl:when>
+                <xsl:when test=".//*[local-name()='dipl']">
+                    <xsl:value-of select=".//*[local-name()='dipl']"/>
+                </xsl:when>
+                <xsl:when test=".//me:norm">
+                    <xsl:value-of select=".//me:norm"/>
+                </xsl:when>
+                <xsl:when test=".//*[local-name()='norm']">
+                    <xsl:value-of select=".//*[local-name()='norm']"/>
                 </xsl:when>
                 <xsl:otherwise>
                     <xsl:value-of select="."/>
@@ -132,7 +149,7 @@
             </xsl:choose>
         </xsl:variable>
         <span class="punctuation">
-            <xsl:value-of select="$facsText"/>
+            <xsl:value-of select="normalize-space($facsText)"/>
         </span>
         <xsl:text> </xsl:text>
     </xsl:template>
@@ -171,16 +188,26 @@
 
     <!-- Choices (Abbr/Expan) -->
     <xsl:template match="tei:choice | choice">
-        <span class="group relative cursor-help border-b border-dotted border-info inline-block">
-            <!-- Show abbr by default -->
-            <span class="group-hover:hidden">
-                <xsl:apply-templates select="tei:abbr | abbr"/>
-            </span>
-            <!-- Show expan on hover -->
-            <span class="hidden group-hover:inline bg-info/10 px-1 rounded">
-                <xsl:apply-templates select="tei:expan | expan"/>
-            </span>
-        </span>
+        <xsl:choose>
+            <!-- If this choice has facs/dipl/norm, show facs content -->
+            <xsl:when test=".//me:facs | .//*[local-name()='facs']">
+                <xsl:value-of select=".//me:facs | .//*[local-name()='facs']"/>
+            </xsl:when>
+            <!-- Otherwise show abbreviation with hover expansion -->
+            <xsl:when test="tei:abbr | abbr">
+                <span class="group relative cursor-help border-b border-dotted border-info inline-block">
+                    <span class="group-hover:hidden">
+                        <xsl:apply-templates select="tei:abbr | abbr"/>
+                    </span>
+                    <span class="hidden group-hover:inline bg-info/10 px-1 rounded">
+                        <xsl:apply-templates select="tei:expan | expan"/>
+                    </span>
+                </span>
+            </xsl:when>
+            <xsl:otherwise>
+                <xsl:apply-templates/>
+            </xsl:otherwise>
+        </xsl:choose>
     </xsl:template>
 
     <!-- Entity names -->
@@ -192,20 +219,49 @@
 
     <!-- Highlighting -->
     <xsl:template match="tei:hi[@rend='bold'] | hi[@rend='bold']">
-        <strong><xsl:apply-templates/></strong>
+        <strong>
+            <xsl:apply-templates/>
+        </strong>
     </xsl:template>
 
     <xsl:template match="tei:hi[@rend='italic'] | hi[@rend='italic']">
-        <em><xsl:apply-templates/></em>
+        <em>
+            <xsl:apply-templates/>
+        </em>
     </xsl:template>
 
-    <!-- MENOTA-specific: hide the level elements, show only facsimile content by default -->
+    <!-- MENOTA-specific: Character elements -->
+    <xsl:template match="tei:c | c">
+        <xsl:choose>
+            <xsl:when test=".//me:facs">
+                <xsl:value-of select=".//me:facs"/>
+            </xsl:when>
+            <xsl:when test=".//*[local-name()='facs']">
+                <xsl:value-of select=".//*[local-name()='facs']"/>
+            </xsl:when>
+            <xsl:otherwise>
+                <xsl:value-of select="."/>
+            </xsl:otherwise>
+        </xsl:choose>
+    </xsl:template>
+
+    <!-- MENOTA level elements: show facs by default, hide others -->
     <xsl:template match="me:facs | *[local-name()='facs']">
-        <xsl:apply-templates/>
+        <xsl:value-of select="."/>
     </xsl:template>
 
     <xsl:template match="me:dipl | me:norm | *[local-name()='dipl'] | *[local-name()='norm']">
-        <!-- Hidden by default, diplomatic and normalized levels not shown -->
+        <!-- Hidden by default -->
+    </xsl:template>
+
+    <!-- Abbreviation markers: show content -->
+    <xsl:template match="me:am | *[local-name()='am']">
+        <xsl:value-of select="."/>
+    </xsl:template>
+
+    <!-- Expansion markers: show content -->
+    <xsl:template match="me:ex | *[local-name()='ex']">
+        <xsl:value-of select="."/>
     </xsl:template>
 
     <!-- Catch-all for unhandled elements: just process children -->

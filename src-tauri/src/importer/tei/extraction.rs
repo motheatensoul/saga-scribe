@@ -500,7 +500,37 @@ impl Extractor {
     ) {
         let mut child = node.get_first_child();
         while let Some(c) = child {
-            Self::node_to_dsl_with_options(&c, output, has_inline_lb, allow_norm_wrapper);
+            // Handle text nodes directly since node_to_dsl_with_options processes
+            // children of its input, not the input itself
+            if c.get_type() == Some(NodeType::TextNode) {
+                let content = c.get_content();
+                let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !normalized.is_empty() {
+                    let has_leading = content
+                        .chars()
+                        .next()
+                        .map(|ch| ch.is_whitespace())
+                        .unwrap_or(false);
+                    let has_trailing = content
+                        .chars()
+                        .last()
+                        .map(|ch| ch.is_whitespace())
+                        .unwrap_or(false);
+
+                    if has_leading && !output.is_empty() && !output.ends_with(' ') {
+                        output.push(' ');
+                    }
+                    output.push_str(&normalized);
+                    if has_trailing {
+                        let next = c.get_next_sibling();
+                        if next.is_some() && !output.ends_with(' ') {
+                            output.push(' ');
+                        }
+                    }
+                }
+            } else {
+                Self::node_to_dsl_with_options(&c, output, has_inline_lb, allow_norm_wrapper);
+            }
             child = c.get_next_sibling();
         }
     }

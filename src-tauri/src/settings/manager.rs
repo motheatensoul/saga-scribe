@@ -16,6 +16,8 @@ pub struct Settings {
     pub preview_delay: u32,
     #[serde(default)]
     pub active_template_id: Option<String>,
+    #[serde(default = "default_active_stylesheet_id")]
+    pub active_stylesheet_id: String,
 }
 
 fn default_font_size() -> u32 {
@@ -34,6 +36,10 @@ fn default_preview_delay() -> u32 {
     300
 }
 
+fn default_active_stylesheet_id() -> String {
+    "default".to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -42,6 +48,7 @@ impl Default for Settings {
             auto_preview: default_auto_preview(),
             preview_delay: default_preview_delay(),
             active_template_id: None,
+            active_stylesheet_id: default_active_stylesheet_id(),
         }
     }
 }

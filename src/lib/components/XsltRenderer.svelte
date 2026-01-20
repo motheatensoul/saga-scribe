@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
+    import { readTextFile } from '@tauri-apps/plugin-fs';
     import { entityStore } from '$lib/stores/entities';
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
 
@@ -16,6 +16,7 @@
     let renderedHtml = $state('');
     let error = $state<string | null>(null);
     let xslProcessor = $state<XSLTProcessor | null>(null);
+    let isTransforming = $state(false);
     let containerEl: HTMLDivElement;
     let enhanceVersion = 0;
 
@@ -43,103 +44,160 @@
         return xml.slice(start, end + tagName.length + 3);
     }
 
-    // Load the XSL stylesheet once on mount
-    onMount(async () => {
-        try {
-            const response = await fetch(xslPath);
+    let loadVersion = 0;
+
+    async function loadStylesheetText(path: string): Promise<string> {
+        if (path.startsWith('/xsl/')) {
+            const response = await fetch(path);
             if (!response.ok) {
                 throw new Error(`Failed to load stylesheet: ${response.statusText}`);
             }
-            const xslText = await response.text();
-
-            const parser = new DOMParser();
-            const xslDoc = parser.parseFromString(xslText, 'application/xml');
-
-            const parseError = xslDoc.querySelector('parsererror');
-            if (parseError) {
-                throw new Error(`XSL parse error: ${parseError.textContent}`);
-            }
-
-            const processor = new XSLTProcessor();
-            processor.importStylesheet(xslDoc);
-            xslProcessor = processor;
-        } catch (e) {
-            error = `Failed to load XSLT: ${e}`;
-            console.error(error);
+            return response.text();
         }
-    });
 
-    // Transform XML when content or processor changes
+        return readTextFile(path);
+    }
+
     $effect(() => {
-        if (!xslProcessor || !content.trim()) {
-            renderedHtml = '';
+        const currentPath = xslPath;
+        const version = ++loadVersion;
+        xslProcessor = null;
+        renderedHtml = '';
+        error = null;
+
+        if (!currentPath) {
+            error = 'No stylesheet selected';
             return;
         }
 
-        try {
-            // Prepare the XML content
-            let xmlContent = content;
+        (async () => {
+            try {
+                const xslText = await loadStylesheetText(currentPath);
+                if (version !== loadVersion) return;
 
-            // Strip DOCTYPE/entity declarations (not supported by DOMParser)
-            xmlContent = xmlContent
-                .replace(/<!DOCTYPE[\s\S]*?\]>\s*/gi, '')
-                .replace(/<!DOCTYPE[^>]*>\s*/gi, '');
+                const parser = new DOMParser();
+                const xslDoc = parser.parseFromString(xslText, 'application/xml');
 
-            const bodyFragment = sliceTag(xmlContent, 'body') ?? sliceTag(xmlContent, 'text');
-            const xmlFragment = bodyFragment
-                ? `<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0">${bodyFragment}</TEI>`
-                : xmlContent;
-
-            // Replace entity references with placeholders to avoid XML parsing errors
-            const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
-            const placeholderGlyphs = new Map<string, string>();
-            let entityCounter = 0;
-            const entities = $entityStore.entities;
-
-            xmlContent = xmlFragment.replace(entityPattern, (match, name) => {
-                // Skip standard XML entities
-                if (['lt', 'gt', 'amp', 'quot', 'apos'].includes(name)) {
-                    return match;
+                const parseError = xslDoc.querySelector('parsererror');
+                if (parseError) {
+                    throw new Error(`XSL parse error: ${parseError.textContent}`);
                 }
-                const placeholder = `__ENTITY_${entityCounter}__`;
-                const glyph = entities[name]?.char || `[${name}]`;
-                placeholderGlyphs.set(placeholder, glyph);
-                entityCounter++;
-                return placeholder;
-            });
 
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(xmlContent, 'application/xml');
-
-            const parseError = xmlDoc.querySelector('parsererror');
-            if (parseError) {
-                error = `XML parse error: ${parseError.textContent}`;
-                renderedHtml = '';
-                return;
+                const processor = new XSLTProcessor();
+                processor.importStylesheet(xslDoc);
+                if (version !== loadVersion) return;
+                xslProcessor = processor;
+            } catch (e) {
+                if (version !== loadVersion) return;
+                error = `Failed to load XSLT: ${e}`;
+                console.error(error);
             }
+        })();
+    });
 
-            // Apply XSLT transformation
-            const resultDoc = xslProcessor.transformToDocument(xmlDoc);
+    // Transform XML when content or processor changes
+    let transformVersion = 0;
 
-            if (!resultDoc || !resultDoc.documentElement) {
-                error = 'XSLT transformation produced no output';
-                renderedHtml = '';
-                return;
-            }
+    $effect(() => {
+        const processor = xslProcessor;
+        const xmlContent = content;
 
-            // Get the HTML content
-            let html = resultDoc.documentElement.outerHTML;
-
-            // Resolve entity placeholders to actual glyphs
-            html = resolveEntitiesToGlyphs(html, placeholderGlyphs);
-
-            renderedHtml = html;
-            error = null;
-        } catch (e) {
-            error = `Transform error: ${e}`;
-            console.error(error);
+        if (!processor || !xmlContent.trim()) {
             renderedHtml = '';
+            isTransforming = false;
+            return;
         }
+
+        const version = ++transformVersion;
+        isTransforming = true;
+        renderedHtml = '';
+        error = null;
+
+        // Defer transformation to allow loading spinner to render
+        (async () => {
+            await yieldToMain();
+            if (version !== transformVersion) return;
+
+            try {
+                // Prepare the XML content
+                let prepared = xmlContent;
+
+                // Strip DOCTYPE/entity declarations (not supported by DOMParser)
+                prepared = prepared
+                    .replace(/<!DOCTYPE[\s\S]*?\]>\s*/gi, '')
+                    .replace(/<!DOCTYPE[^>]*>\s*/gi, '');
+
+                const bodyFragment = sliceTag(prepared, 'body') ?? sliceTag(prepared, 'text');
+                const xmlFragment = bodyFragment
+                    ? `<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0">${bodyFragment}</TEI>`
+                    : prepared;
+
+                // Replace entity references with placeholders to avoid XML parsing errors
+                const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
+                const placeholderGlyphs = new Map<string, string>();
+                let entityCounter = 0;
+                const entities = $entityStore.entities;
+
+                prepared = xmlFragment.replace(entityPattern, (match, name) => {
+                    // Skip standard XML entities
+                    if (['lt', 'gt', 'amp', 'quot', 'apos'].includes(name)) {
+                        return match;
+                    }
+                    const placeholder = `__ENTITY_${entityCounter}__`;
+                    const glyph = entities[name]?.char || `[${name}]`;
+                    placeholderGlyphs.set(placeholder, glyph);
+                    entityCounter++;
+                    return placeholder;
+                });
+
+                if (version !== transformVersion) return;
+                await yieldToMain();
+
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(prepared, 'application/xml');
+
+                const parseError = xmlDoc.querySelector('parsererror');
+                if (parseError) {
+                    if (version !== transformVersion) return;
+                    error = `XML parse error: ${parseError.textContent}`;
+                    renderedHtml = '';
+                    isTransforming = false;
+                    return;
+                }
+
+                if (version !== transformVersion) return;
+                await yieldToMain();
+
+                // Apply XSLT transformation
+                const resultDoc = processor.transformToDocument(xmlDoc);
+
+                if (version !== transformVersion) return;
+
+                if (!resultDoc || !resultDoc.documentElement) {
+                    error = 'XSLT transformation produced no output';
+                    renderedHtml = '';
+                    isTransforming = false;
+                    return;
+                }
+
+                // Get the HTML content
+                let html = resultDoc.documentElement.outerHTML;
+
+                // Resolve entity placeholders to actual glyphs
+                html = resolveEntitiesToGlyphs(html, placeholderGlyphs);
+
+                if (version !== transformVersion) return;
+                renderedHtml = html;
+                error = null;
+                isTransforming = false;
+            } catch (e) {
+                if (version !== transformVersion) return;
+                error = `Transform error: ${e}`;
+                console.error(error);
+                renderedHtml = '';
+                isTransforming = false;
+            }
+        })();
     });
 
     // Set up delegated word click handlers
@@ -154,7 +212,7 @@
             event.preventDefault();
             const wordIndex = parseInt(target.dataset.wordIndex ?? '-1', 10);
             const diplomatic = target.dataset.diplomatic || target.textContent || '';
-            const facsimile = target.textContent || '';
+            const facsimile = target.dataset.facsimile || target.textContent || '';
             onwordclick(facsimile, diplomatic, wordIndex, target);
         };
 
@@ -215,6 +273,19 @@
             <span class="loading loading-spinner loading-md"></span>
             <span class="ml-2">Loading stylesheet...</span>
         </div>
+    {:else if isTransforming}
+        <div class="flex items-center justify-center h-32">
+            <!-- SVG spinner for reliable animation during heavy processing -->
+            <svg viewBox="0 0 50 50" width="32" height="32" class="text-primary">
+                <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor"
+                    stroke-width="4" stroke-linecap="round"
+                    stroke-dasharray="90, 150" stroke-dashoffset="0">
+                    <animateTransform attributeName="transform" type="rotate"
+                        from="0 25 25" to="360 25 25" dur="1s" repeatCount="indefinite"/>
+                </circle>
+            </svg>
+            <span class="ml-2">Transforming XML...</span>
+        </div>
     {:else if !renderedHtml}
         <div class="text-base-content/50 italic">(No content to render)</div>
     {:else}
@@ -237,6 +308,19 @@
         background: transparent;
         cursor: pointer;
         transition: all 0.15s ease;
+    }
+
+    .xslt-rendered :global(.word.word-stack),
+    .xslt-rendered :global(.punctuation.word-stack) {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: flex-start;
+        vertical-align: top;
+    }
+
+    .xslt-rendered :global(.word-line) {
+        display: block;
+        line-height: 1.4;
     }
 
     .xslt-rendered :global(.word:hover) {

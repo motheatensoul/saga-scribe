@@ -7,6 +7,7 @@ pub mod metadata;
 mod normalizer;
 mod parser;
 mod settings;
+mod stylesheet;
 mod template;
 mod validator;
 
@@ -74,6 +75,9 @@ pub fn run() {
             commands::template::get_template,
             commands::template::save_template,
             commands::template::delete_template,
+            commands::stylesheet::list_stylesheets,
+            commands::stylesheet::import_stylesheet,
+            commands::stylesheet::delete_stylesheet,
             commands::settings::load_settings,
             commands::settings::save_settings,
             commands::settings::get_system_theme,
