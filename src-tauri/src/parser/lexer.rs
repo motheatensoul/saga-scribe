@@ -44,6 +44,33 @@ impl<'a> Lexer<'a> {
                 continue;
             }
 
+            // Supplied block: .supplied{text}
+            if remaining.starts_with(".supplied{") {
+                self.flush_text(&mut doc, &mut text_buf);
+                self.pos += 10;
+                let text = self.consume_braced_block()?;
+                doc.push(Node::SuppliedBlock(text));
+                continue;
+            }
+
+            // Normalized-only wrapper: .norm{text}
+            if remaining.starts_with(".norm{") {
+                self.flush_text(&mut doc, &mut text_buf);
+                self.pos += 6;
+                let text = self.consume_braced_block()?;
+                doc.push(Node::Norm(text));
+                continue;
+            }
+
+            // Heading: .head{text}
+            if remaining.starts_with(".head{") {
+                self.flush_text(&mut doc, &mut text_buf);
+                self.pos += 6;
+                let text = self.consume_braced_block()?;
+                doc.push(Node::Head(text));
+                continue;
+            }
+
             // Abbreviation: .abbr[text]{expansion}
             if remaining.starts_with(".abbr[") {
                 self.flush_text(&mut doc, &mut text_buf);
@@ -239,10 +266,36 @@ impl<'a> Lexer<'a> {
                 }
             } else if c == '{' || c == '[' || c == '<' {
                 depth += 1;
+            } else if c == '}' || c == ']' || c == '>' {
+                // Decrement for closing brackets that aren't the end character
+                // (end character is already handled above)
+                if c != end && depth > 1 {
+                    depth -= 1;
+                }
             }
             self.advance();
         }
         Err(format!("Unclosed bracket, expected '{}'", end))
+    }
+
+    fn consume_braced_block(&mut self) -> Result<String, String> {
+        let start = self.pos;
+        let mut depth = 1;
+        while self.pos < self.input.len() {
+            let c = self.current_char().unwrap();
+            if c == '}' {
+                depth -= 1;
+                if depth == 0 {
+                    let result = self.input[start..self.pos].to_string();
+                    self.advance();
+                    return Ok(result);
+                }
+            } else if c == '{' {
+                depth += 1;
+            }
+            self.advance();
+        }
+        Err("Unclosed bracket, expected '}'".to_string())
     }
 
     fn consume_until(&mut self, end: char) -> Result<String, String> {

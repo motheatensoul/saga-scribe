@@ -49,6 +49,19 @@ export function generateStandaloneHtml(
             display: inline;
         }
 
+        .word.word-stack,
+        .punctuation.word-stack {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: flex-start;
+            vertical-align: top;
+        }
+
+        .word-line {
+            display: block;
+            line-height: 1.4;
+        }
+
         .line-number {
             display: inline-block;
             min-width: 2rem;

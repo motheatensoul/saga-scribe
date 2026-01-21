@@ -13,6 +13,7 @@ export interface Settings {
   autoPreview: boolean;
   previewDelay: number;
   activeTemplateId: string | null;
+  activeStylesheetId: string;
 }
 
 const defaultSettings: Settings = {
@@ -21,6 +22,7 @@ const defaultSettings: Settings = {
   autoPreview: true,
   previewDelay: 300,
   activeTemplateId: null,
+  activeStylesheetId: "default",
 };
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -113,6 +115,8 @@ function createSettingsStore() {
           autoPreview: loaded.autoPreview,
           previewDelay: loaded.previewDelay,
           activeTemplateId: loaded.activeTemplateId,
+          activeStylesheetId:
+            loaded.activeStylesheetId ?? defaultSettings.activeStylesheetId,
         };
         set(settings);
         await applyTheme(settings.theme);

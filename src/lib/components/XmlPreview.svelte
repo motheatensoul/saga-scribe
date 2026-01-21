@@ -3,7 +3,7 @@
     import { EditorView } from "@codemirror/view";
     import { EditorState } from "@codemirror/state";
     import { xml } from "@codemirror/lang-xml";
-    import { basicSetup } from "codemirror";
+    import { basicSetup } from "@codemirror/basic-setup";
     import { lintGutter, linter, type Diagnostic } from "@codemirror/lint";
     import { validationStore } from "$lib/stores/validation";
     import { daisyExtensions } from "$lib/editor/theme";

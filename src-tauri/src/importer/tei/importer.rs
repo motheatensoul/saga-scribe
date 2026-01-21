@@ -2,6 +2,9 @@ use crate::metadata::{
     Availability, DateRange, History, Language, Metadata, MsContents, MsIdentifier, Person,
     PhysDesc, PublicationStmt, RespStmt, TitleStmt,
 };
+use crate::importer::tei::extraction::Extractor;
+use crate::importer::tei::helpers;
+use crate::importer::tei::segments::ImportedDocument;
 use libxml::parser::Parser;
 use libxml::tree::{Document, Node, NodeType};
 
@@ -13,6 +16,16 @@ pub struct ImportResult {
     pub dsl: String,
     /// Metadata extracted from teiHeader (if present)
     pub metadata: Option<Metadata>,
+    /// Segment manifest for imported documents (enables round-trip fidelity)
+    pub imported_document: Option<ImportedDocument>,
+    /// Original body XML (for imported documents)
+    pub original_body_xml: Option<String>,
+    /// Original XML preamble (everything before <body>)
+    pub original_preamble: Option<String>,
+    /// Original XML postamble (everything after </body>)
+    pub original_postamble: Option<String>,
+    /// Whether this file was imported in "imported mode" (preserves structure)
+    pub is_imported_mode: bool,
 }
 
 /// Parses TEI-XML content and converts it to Saga-Scribe DSL, also extracting metadata
@@ -34,17 +47,106 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
     // Find the <body> element specifically to avoid importing header metadata
     let body = find_body(&root).ok_or("No <body> element found in XML")?;
 
-    let mut output = String::new();
-    // Only process children of body
-    process_children(&body, &mut output)?;
+    // Check if this is a MENOTA file (has me:facs/me:dipl/me:norm structure)
+    let is_menota = has_menota_structure(&body);
 
-    // Trim output to avoid massive trailing/leading whitespace from XML structure
-    let trimmed = output.trim();
+    // Split original XML into preamble/body/postamble for exact preservation
+    let (original_preamble, original_body_xml, original_postamble) =
+        match split_xml_sections(xml_content) {
+            Some((preamble, body_xml, postamble)) => (preamble, body_xml, postamble),
+            None => (
+                String::new(),
+                helpers::serialize_node(&body),
+                String::new(),
+            ),
+        };
+
+    // Extract segments using the new segment-based extractor
+    let mut extractor = Extractor::new();
+    let segments = extractor.extract_segments(&body);
+
+    // Generate DSL from segments (this is the new, segment-aware path)
+    let dsl = crate::importer::tei::extraction::segments_to_dsl(&segments);
+
+    // Create the imported document manifest
+    let imported_document = ImportedDocument {
+        segments,
+        is_menota,
+    };
+
+    // Trim output to avoid massive trailing/leading whitespace
+    let trimmed = dsl.trim();
 
     Ok(ImportResult {
         dsl: trimmed.to_string(),
         metadata,
+        imported_document: Some(imported_document),
+        original_body_xml: Some(original_body_xml),
+        original_preamble: Some(original_preamble),
+        original_postamble: Some(original_postamble),
+        is_imported_mode: true,
     })
+}
+
+/// Split original XML into preamble/body/postamble sections using string search.
+/// Returns None if <body> tags cannot be found.
+fn split_xml_sections(xml: &str) -> Option<(String, String, String)> {
+    let body_open = xml.find("<body")?;
+    let body_open_end = xml[body_open..].find('>')? + body_open + 1;
+    let body_close = xml[body_open_end..].find("</body>")? + body_open_end;
+    let body_end = body_close + "</body>".len();
+
+    Some((
+        xml[..body_open].to_string(),
+        xml[body_open..body_end].to_string(),
+        xml[body_end..].to_string(),
+    ))
+}
+
+/// Check if the document has MENOTA multi-level structure
+fn has_menota_structure(body: &Node) -> bool {
+    // Look for any <w> element with me:facs child
+    fn check_node(node: &Node) -> bool {
+        if node.get_type() == Some(NodeType::ElementNode) {
+            let name = node.get_name();
+            if name == "w" {
+                // Check for me:facs child
+                let mut child = node.get_first_child();
+                while let Some(c) = child {
+                    if c.get_type() == Some(NodeType::ElementNode) {
+                        let child_name = c.get_name();
+                        if child_name == "me:facs" || child_name.ends_with(":facs") {
+                            return true;
+                        }
+                        // Also check for <choice> containing me:facs
+                        if child_name == "choice" {
+                            let mut gc = c.get_first_child();
+                            while let Some(g) = gc {
+                                if g.get_type() == Some(NodeType::ElementNode) {
+                                    let gc_name = g.get_name();
+                                    if gc_name == "me:facs" || gc_name.ends_with(":facs") {
+                                        return true;
+                                    }
+                                }
+                                gc = g.get_next_sibling();
+                            }
+                        }
+                    }
+                    child = c.get_next_sibling();
+                }
+            }
+            // Recurse into children
+            let mut child = node.get_first_child();
+            while let Some(c) = child {
+                if check_node(&c) {
+                    return true;
+                }
+                child = c.get_next_sibling();
+            }
+        }
+        false
+    }
+    check_node(body)
 }
 
 /// Legacy function for backward compatibility - just returns DSL
@@ -445,212 +547,6 @@ fn find_body(node: &Node) -> Option<Node> {
         child = c.get_next_sibling();
     }
     None
-}
-
-fn process_node(node: &Node, output: &mut String) -> Result<(), String> {
-    match node.get_type() {
-        Some(NodeType::ElementNode) => {
-            let name = node.get_name();
-            match name.as_str() {
-                "lb" => {
-                    // Ensure we are on a new line for the break marker
-                    // But don't add double newlines if one is already present
-                    if !output.ends_with('\n') {
-                        output.push('\n');
-                    }
-                    output.push_str("//");
-                    if let Some(n) = node.get_property("n") {
-                        output.push_str(&n);
-                    }
-                }
-                "pb" => {
-                    if !output.ends_with('\n') {
-                        output.push('\n');
-                    }
-                    output.push_str("///");
-                    if let Some(n) = node.get_property("n") {
-                        output.push_str(&n);
-                    }
-                }
-                "gap" => {
-                    output.push_str("[...]");
-                }
-                "supplied" => {
-                    output.push('<');
-                    process_children(node, output)?;
-                    output.push('>');
-                }
-                "del" => {
-                    output.push_str("-{");
-                    process_children(node, output)?;
-                    output.push_str("}-");
-                }
-                "add" => {
-                    output.push_str("+{");
-                    process_children(node, output)?;
-                    output.push_str("}+");
-                }
-                "choice" => {
-                    // Specific handling for .abbr[a]{b} pattern: <choice><abbr>a</abbr><expan>b</expan></choice>
-                    let mut abbr_text = String::new();
-                    let mut expan_text = String::new();
-                    let mut found_abbr = false;
-                    let mut found_expan = false;
-
-                    let mut child = node.get_first_child();
-                    while let Some(c) = child {
-                        if c.get_type() == Some(NodeType::ElementNode) {
-                            let c_name = c.get_name();
-                            if c_name == "abbr" {
-                                found_abbr = true;
-                                extract_text(&c, &mut abbr_text)?;
-                            } else if c_name == "expan" {
-                                found_expan = true;
-                                extract_text(&c, &mut expan_text)?;
-                            }
-                        }
-                        child = c.get_next_sibling();
-                    }
-
-                    if found_abbr && found_expan {
-                        output.push_str(".abbr[");
-                        output.push_str(&abbr_text);
-                        output.push_str("]{");
-                        output.push_str(&expan_text);
-                        output.push('}');
-                    } else {
-                        // Fallback: just process children if it doesn't match our specific pattern
-                        process_children(node, output)?;
-                    }
-                }
-                "note" => {
-                    // Convert <note>text</note> to DSL syntax ^{text}
-                    output.push_str("^{");
-                    process_children(node, output)?;
-                    output.push('}');
-                }
-                "unclear" => {
-                    // Convert <unclear>text</unclear> to DSL syntax ?{text}?
-                    output.push_str("?{");
-                    process_children(node, output)?;
-                    output.push_str("}?");
-                }
-                // MENOTA multi-level elements: use the first one (facs) and ignore others
-                // This prevents text from being duplicated across all three levels
-                // Note: roxmltree returns local names without namespace prefix
-                "facs" | "me:facs" => {
-                    // Facsimile level - this is the primary source, process it
-                    process_children(node, output)?;
-                }
-                "dipl" | "norm" | "me:dipl" | "me:norm" => {
-                    // Diplomatic and normalized levels - skip to avoid duplication
-                    // The facs level is the authoritative source during import
-                }
-                // MENOTA abbreviation markers - just extract content, don't wrap
-                "am" => {
-                    // Abbreviation marker in facs level - extract text content
-                    process_children(node, output)?;
-                }
-                "ex" => {
-                    // Expansion marker in dipl level - skip (we use facs level)
-                    // This is NOT the same as <add> - it's part of abbreviation expansion
-                }
-                "TEI" | "teiHeader" | "text" | "body" | "div" | "p" => {
-                    // Structural elements we just traverse through without adding syntax
-                    process_children(node, output)?;
-                }
-                _ => {
-                    // Unknown element: Just traverse children
-                    process_children(node, output)?;
-                }
-            }
-        }
-        Some(NodeType::TextNode) => {
-            let content = node.get_content();
-
-            // Normalize whitespace:
-            // 1. If it contains newlines, it's likely structural XML formatting.
-            // 2. We want to preserve single spaces between words but kill indentation.
-
-            // Simple heuristic:
-            // If the content is ONLY whitespace and contains a newline, it's probably indentation -> ignore.
-            // If it has text, normalize spaces (replace \n\t with space).
-
-            if content.trim().is_empty() {
-                if !content.contains('\n') {
-                    // Just spaces, might be significant?
-                    // In XML, " " is usually significant unless schema says otherwise.
-                    // But often between tags like </lb> <w> it's just formatting.
-                    // Let's assume single space is significant, multiple spaces/newlines are not.
-                    output.push(' ');
-                }
-                // If it contains newline and is empty, ignore it (indentation)
-            } else {
-                // Has content. Collapse internal whitespace to single spaces.
-                let normalized: String = content.split_whitespace().collect::<Vec<&str>>().join(" ");
-                // Check if we need leading/trailing space based on original content
-                // (e.g. "word " + "next" should correspond)
-                // This is hard to get perfect without complex logic.
-                // For now, simply appending the normalized content is safer than raw.
-                // BUT, split_whitespace removes leading/trailing.
-
-                // Let's try a regex approach or manual char scan?
-                // Actually, `split_whitespace().join(" ")` is standard "normalize-space" behavior in XSLT.
-                // However, we need to know if we should prepend a space (if the original text started with one).
-
-                let starts_ws = content
-                    .chars()
-                    .next()
-                    .map(|c| c.is_whitespace())
-                    .unwrap_or(false);
-                let ends_ws = content
-                    .chars()
-                    .last()
-                    .map(|c| c.is_whitespace())
-                    .unwrap_or(false);
-
-                if starts_ws && !output.ends_with(' ') && !output.ends_with('\n') {
-                    output.push(' ');
-                }
-                output.push_str(&normalized);
-                if ends_ws {
-                    output.push(' ');
-                }
-            }
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn process_children(node: &Node, output: &mut String) -> Result<(), String> {
-    let mut child = node.get_first_child();
-    while let Some(c) = child {
-        process_node(&c, output)?;
-        child = c.get_next_sibling();
-    }
-    Ok(())
-}
-
-fn extract_text(node: &Node, output: &mut String) -> Result<(), String> {
-    // Simpler traversal just for text content inside abbr/expan
-    // We also normalize this text because abbreviation expansions shouldn't have newlines usually
-    match node.get_type() {
-        Some(NodeType::TextNode) => {
-            let content = node.get_content();
-            let normalized: String = content.split_whitespace().collect::<Vec<&str>>().join(" ");
-            output.push_str(&normalized);
-        }
-        Some(NodeType::ElementNode) => {
-            let mut child = node.get_first_child();
-            while let Some(c) = child {
-                extract_text(&c, output)?;
-                child = c.get_next_sibling();
-            }
-        }
-        _ => {}
-    }
-    Ok(())
 }
 
 #[cfg(test)]

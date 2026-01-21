@@ -5,9 +5,11 @@
 
     let {
         content = '',
+        xslPath = '/xsl/simple.xsl',
         onwordclick,
     }: {
         content?: string;
+        xslPath?: string;
         onwordclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) => void;
     } = $props();
 
@@ -66,7 +68,7 @@
         {#if viewMode === 'xml'}
             <XmlPreview {content} />
         {:else if viewMode === 'xslt'}
-            <XsltRenderer {content} {onwordclick} />
+            <XsltRenderer {content} {xslPath} {onwordclick} />
         {:else}
             <RenderedText {content} {onwordclick} />
         {/if}

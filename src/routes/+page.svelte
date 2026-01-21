@@ -2,6 +2,7 @@
     import { onMount, tick } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open, save } from "@tauri-apps/plugin-dialog";
+    import { readTextFile } from "@tauri-apps/plugin-fs";
     import Editor from "$lib/components/Editor.svelte";
     import Preview from "$lib/components/Preview.svelte";
     import Toolbar from "$lib/components/Toolbar.svelte";
@@ -18,8 +19,11 @@
     import { templateStore } from "$lib/stores/template";
     import { entityStore } from "$lib/stores/entities";
     import { settings } from "$lib/stores/settings";
+    import { stylesheetStore } from "$lib/stores/stylesheets";
     import { errorStore, errorCounts } from "$lib/stores/errors";
     import * as metadataStore from "$lib/stores/metadata.svelte";
+    import { importedStore } from "$lib/stores/imported.svelte";
+    import { preservationStore } from "$lib/stores/preservation.svelte";
     import type { Metadata } from "$lib/types/metadata";
     import { isMetadataEmpty } from "$lib/types/metadata";
     import {
@@ -39,7 +43,9 @@
         importFile,
         exportInflections,
         generateTeiHeader,
+        listStylesheets,
     } from "$lib/tauri";
+    import type { InflectedForm } from "$lib/tauri";
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
     import { printToPdf } from "$lib/utils/pdfExport";
     import {
@@ -92,6 +98,12 @@
               })
             : null,
     );
+    const defaultStylesheetPath = "/xsl/simple.xsl";
+    let activeStylesheetPath = $derived(
+        $stylesheetStore.find(
+            (item) => item.id === $settings.activeStylesheetId,
+        )?.path ?? defaultStylesheetPath,
+    );
     let normalizerJson = $state<string | null>(null);
     let entityMappingsJson = $state<string | null>(null);
     let isImporting = $state(false);
@@ -99,6 +111,42 @@
     let showMetadataEditor = $state(false);
     let currentMetadata = $state<Metadata | undefined>(undefined);
 
+    function stripXmlTags(text: string): string {
+        return text.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+    }
+
+    function extractTagText(xml: string, tagName: string): string | null {
+        const regex = new RegExp(
+            `<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`,
+            "i",
+        );
+        const match = xml.match(regex);
+        if (!match) {
+            return null;
+        }
+        const cleaned = stripXmlTags(match[1]);
+        return cleaned.length > 0 ? cleaned : null;
+    }
+
+    function extractMenotaText(xml: string, tagName: string): string | null {
+        return extractTagText(xml, `me:${tagName}`) ?? extractTagText(xml, tagName);
+    }
+
+    function countWordElements(xml: string): number {
+        if (!xml) return 0;
+        const matches = xml.match(/<w(?=[\s>])/g);
+        return matches ? matches.length : 0;
+    }
+
+    function countDslWords(dsl: string): number {
+        const headMatch = dsl.match(/^\s*\.head\{([\s\S]*)\}\s*$/);
+        const content = headMatch ? headMatch[1] : dsl;
+        const withoutKeywords = content.replace(/\.(head|abbr|supplied|norm)\b/g, " ");
+        const withoutEntities = withoutKeywords.replace(/:([^\s:]+):/g, "$1");
+        const normalized = withoutEntities.replace(/[<>{}\[\]+\-\?\^]/g, " ");
+        const tokens = normalized.match(/[\p{L}\p{N}]+/gu);
+        return tokens ? tokens.length : 0;
+    }
     onMount(async () => {
         errorStore.info("App", "Application starting...");
 
@@ -140,6 +188,31 @@
             errorStore.error(
                 "Templates",
                 "Failed to load templates",
+                String(e),
+            );
+        }
+
+        // Load stylesheets
+        try {
+            errorStore.info("Stylesheets", "Loading stylesheets...");
+            const stylesheets = await listStylesheets();
+            stylesheetStore.setStylesheets(stylesheets);
+            if (
+                $settings.activeStylesheetId &&
+                !stylesheets.some(
+                    (stylesheet) => stylesheet.id === $settings.activeStylesheetId,
+                )
+            ) {
+                settings.update({ activeStylesheetId: "default" });
+            }
+            errorStore.info(
+                "Stylesheets",
+                `Loaded ${stylesheets.length} stylesheets`,
+            );
+        } catch (e) {
+            errorStore.error(
+                "Stylesheets",
+                "Failed to load stylesheets",
                 String(e),
             );
         }
@@ -371,6 +444,17 @@
         const annotationSet = annotationStore.getSet();
         const hasAnnotations = annotationSet.annotations.length > 0;
 
+        const importOptions = {
+            entitiesJson: entitiesJson ?? undefined,
+            normalizerJson: normalizerJson ?? undefined,
+            entityMappingsJson: entityMappingsJson ?? undefined,
+            customMappings: $entityStore.customMappings,
+        };
+
+        if (importedStore.isImportedMode) {
+            return importedStore.compile(content, importOptions);
+        }
+
         // Use dynamic metadata header if metadata exists, otherwise use template header
         const currentMetadata = metadataStore.getMetadata();
         let header = template.header;
@@ -390,10 +474,7 @@
             autoLineNumbers: template.autoLineNumbers,
             multiLevel: template.multiLevel,
             wrapPages: template.wrapPages,
-            entitiesJson: entitiesJson ?? undefined,
-            normalizerJson: normalizerJson ?? undefined,
-            entityMappingsJson: entityMappingsJson ?? undefined,
-            customMappings: $entityStore.customMappings,
+            ...importOptions,
             lemmaMappingsJson:
                 Object.keys(compileLemmaMappings).length > 0
                     ? JSON.stringify(compileLemmaMappings)
@@ -657,6 +738,23 @@
                     metadataStore.resetMetadata();
                 }
 
+                if (project.imported_document && project.original_body_xml) {
+                    importedStore.load({
+                        segments: project.imported_document.segments,
+                        originalBodyXml: project.original_body_xml,
+                        originalPreamble: project.original_preamble ?? "",
+                        originalPostamble: project.original_postamble ?? "",
+                        isMenota: project.imported_document.is_menota ?? false,
+                    });
+                    preservationStore.setSections({
+                        preamble: project.original_preamble ?? "",
+                        postamble: project.original_postamble ?? "",
+                    });
+                } else {
+                    importedStore.reset();
+                    preservationStore.clear();
+                }
+
                 // Cancel any pending auto-preview compile and trigger recompile
                 clearTimeout(compileTimeout);
                 await doCompile(project.source);
@@ -671,6 +769,8 @@
                 // Clear history and annotations for new file
                 annotationHistory.clear();
                 sessionLemmaStore.clear();
+                importedStore.reset();
+                preservationStore.clear();
 
                 // Cancel any pending auto-preview compile
                 clearTimeout(compileTimeout);
@@ -720,6 +820,18 @@
             const metadataJson = currentMetadata
                 ? JSON.stringify(currentMetadata)
                 : undefined;
+            const segmentsJson = importedStore.isImportedMode
+                ? JSON.stringify(importedStore.segments)
+                : undefined;
+            const originalBodyXml = importedStore.isImportedMode
+                ? importedStore.originalBodyXml
+                : undefined;
+            const originalPreamble = importedStore.isImportedMode
+                ? importedStore.originalPreamble
+                : undefined;
+            const originalPostamble = importedStore.isImportedMode
+                ? importedStore.originalPostamble
+                : undefined;
             await saveProject(
                 path,
                 $editor.content,
@@ -728,6 +840,10 @@
                 template.id,
                 metadataJson,
                 annotationsJson,
+                segmentsJson,
+                originalBodyXml,
+                originalPreamble,
+                originalPostamble,
             );
 
             editor.setFile(path, $editor.content);
@@ -785,17 +901,25 @@
         }
     }
 
+    async function loadStylesheetText(path: string): Promise<string> {
+        if (path.startsWith("/xsl/")) {
+            const response = await fetch(path);
+            if (!response.ok) {
+                throw new Error(`Failed to load stylesheet: ${response.statusText}`);
+            }
+            return response.text();
+        }
+
+        return readTextFile(path);
+    }
+
     /**
      * Apply XSLT transformation to XML content
      * Extracted from XsltRenderer.svelte for reuse in exports
      */
     async function applyXsltTransform(xmlContent: string): Promise<string> {
-        // Load XSL stylesheet
-        const response = await fetch("/xsl/simple.xsl");
-        if (!response.ok) {
-            throw new Error(`Failed to load stylesheet: ${response.statusText}`);
-        }
-        const xslText = await response.text();
+        const stylesheetPath = activeStylesheetPath;
+        const xslText = await loadStylesheetText(stylesheetPath);
 
         const parser = new DOMParser();
         const xslDoc = parser.parseFromString(xslText, "application/xml");
@@ -810,6 +934,11 @@
 
         // Replace entity references with placeholders to avoid XML parsing errors
         let processedXml = xmlContent;
+
+        // Strip DOCTYPE/entity declarations (not supported by DOMParser)
+        processedXml = processedXml
+            .replace(/<!DOCTYPE[\s\S]*?\]>\s*/gi, "")
+            .replace(/<!DOCTYPE[^>]*>\s*/gi, "");
         const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
         const entityMap = new Map<string, string>();
         let entityCounter = 0;
@@ -959,7 +1088,132 @@
             sessionLemmaStore.clear();
             clearTimeout(compileTimeout);
 
-            const compiled = await compileOnly(result.dsl);
+            if (
+                result.isImportedMode &&
+                result.importedDocument &&
+                result.originalBodyXml
+            ) {
+                importedStore.load({
+                    segments: result.importedDocument.segments,
+                    originalBodyXml: result.originalBodyXml,
+                    originalPreamble: result.originalPreamble ?? "",
+                    originalPostamble: result.originalPostamble ?? "",
+                    isMenota: result.importedDocument.is_menota ?? false,
+                });
+                preservationStore.setSections({
+                    preamble: result.originalPreamble ?? "",
+                    postamble: result.originalPostamble ?? "",
+                });
+
+                const lemmaConfirmations: Record<
+                    number,
+                    { lemma: string; msa: string; normalized?: string }
+                > = {};
+                const inflectionMap = new Map<string, InflectedForm>();
+                const isMenotaImport = result.importedDocument.is_menota ?? false;
+                let missingLemmaCount = 0;
+                let missingNormalizedCount = 0;
+                let wordIndex = 0;
+
+                for (const segment of result.importedDocument.segments) {
+                    if (!("has_inline_lb" in segment)) {
+                        continue;
+                    }
+                    const isHead = segment.dsl_content.startsWith(".head{");
+                    if (isHead) {
+                        const headWordCount =
+                            countWordElements(segment.original_xml) ||
+                            countDslWords(segment.dsl_content);
+                        wordIndex += headWordCount;
+                        continue;
+                    }
+                    const lemma = segment.attributes.lemma;
+                    const msa =
+                        segment.attributes["me:msa"] ?? segment.attributes.msa ?? "";
+                    const normalized = extractMenotaText(
+                        segment.original_xml,
+                        "norm",
+                    );
+                    const isWordElement =
+                        segment.original_xml.trimStart().startsWith("<w");
+
+                    if (!isWordElement) {
+                        continue;
+                    }
+
+                    if (isMenotaImport) {
+                        if (!lemma) {
+                            missingLemmaCount += 1;
+                        }
+                        if (!normalized) {
+                            missingNormalizedCount += 1;
+                        }
+                    }
+
+                    if (lemma && msa) {
+                        lemmaConfirmations[wordIndex] = {
+                            lemma,
+                            msa,
+                            normalized: normalized ?? undefined,
+                        };
+
+                        const diplomatic = extractMenotaText(
+                            segment.original_xml,
+                            "dipl",
+                        );
+                        const facsimile = extractMenotaText(
+                            segment.original_xml,
+                            "facs",
+                        );
+                        const wordform = (diplomatic ?? facsimile ?? "").trim();
+
+                        if (wordform) {
+                            const partOfSpeech = msa.split(/\s+/)[0] ?? "";
+                            const key = `${wordform.toLowerCase()}|${lemma}|${msa}`;
+                            if (!inflectionMap.has(key)) {
+                                inflectionMap.set(key, {
+                                    onp_id: `imported:${lemma}`,
+                                    lemma,
+                                    analysis: msa,
+                                    part_of_speech: partOfSpeech,
+                                    facsimile: facsimile ?? undefined,
+                                    diplomatic: diplomatic ?? undefined,
+                                    normalized: normalized ?? undefined,
+                                });
+                            }
+                        }
+                    }
+
+                    wordIndex += 1;
+                }
+
+                if (isMenotaImport) {
+                    if (missingLemmaCount > 0) {
+                        errorStore.warning(
+                            "Import",
+                            `Missing lemma for ${missingLemmaCount} word(s); left empty.`,
+                        );
+                    }
+                    if (missingNormalizedCount > 0) {
+                        errorStore.warning(
+                            "Import",
+                            `Missing normalized form for ${missingNormalizedCount} word(s).`,
+                        );
+                    }
+                }
+
+                if (Object.keys(lemmaConfirmations).length > 0) {
+                    annotationStore.loadLegacyConfirmations(lemmaConfirmations);
+                }
+
+                for (const [key, mapping] of inflectionMap) {
+                    const [wordform] = key.split("|");
+                    inflectionStore.addMapping(wordform, mapping);
+                }
+            } else {
+                importedStore.reset();
+                preservationStore.clear();
+            }
 
             editorComponent?.setContent(result.dsl);
 
@@ -972,6 +1226,17 @@
             if (result.metadata) {
                 currentMetadata = result.metadata;
                 metadataStore.setMetadata(result.metadata);
+            }
+
+            isImporting = false;
+
+            // Let the editor render before compiling
+            await tick();
+            await new Promise((resolve) => setTimeout(resolve, 16));
+
+            const compiled = await compileOnly(result.dsl);
+
+            if (result.metadata) {
                 errorStore.info("Import", `Imported content and metadata from ${pathStr}`);
             } else {
                 errorStore.info("Import", `Imported content from ${pathStr}`);
@@ -983,8 +1248,6 @@
         } catch (e) {
             errorStore.error("Import", `Failed to import: ${e}`);
         } finally {
-            // Wait for RenderedText async parsing to complete before hiding spinner
-            await new Promise((resolve) => setTimeout(resolve, 500));
             isImporting = false;
         }
     }
@@ -1083,9 +1346,16 @@
                     <div
                         class="flex justify-between items-center px-4 py-2 bg-base-200 border-b border-base-300 font-medium text-sm"
                     >
-                        <span class="text-md xl:text-lg font-bold px-2"
-                            >DSL Editor</span
-                        >
+                        <div class="flex items-center gap-2 px-2">
+                            <span class="text-md xl:text-lg font-bold">
+                                DSL Editor
+                            </span>
+                            {#if importedStore.isImportedMode}
+                                <span class="badge badge-outline badge-sm text-xs">
+                                    Imported
+                                </span>
+                            {/if}
+                        </div>
                         <div class="flex gap-1">
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
@@ -1171,6 +1441,7 @@
             <Pane minSize={20}>
                 <Preview
                     content={previewContent}
+                    xslPath={activeStylesheetPath}
                     onwordclick={handleWordClick}
                 />
             </Pane>

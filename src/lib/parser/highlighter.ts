@@ -49,10 +49,19 @@ const parserWithMetadata = parser.configure({
       WordContinuationPageBreak: tags.separator,
       WordContinuationLineBreak: tags.separator,
 
+      // Heading
+      "Head/...": tags.keyword,
+
       // Abbreviation
       "Abbreviation/...": tags.keyword,
       BracketContent: tags.string,
       BraceContent: tags.string,
+
+      // Supplied block
+      "SuppliedBlock/...": tags.inserted,
+
+      // Normalized-only
+      "NormBlock/...": tags.keyword,
 
       // Gap
       Gap: tags.special(tags.string),

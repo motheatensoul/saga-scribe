@@ -8,6 +8,7 @@ export interface Settings {
   autoPreview: boolean;
   previewDelay: number;
   activeTemplateId: string | null;
+  activeStylesheetId: string;
 }
 
 export async function loadSettings(): Promise<Settings> {
@@ -24,6 +25,27 @@ export async function getSystemTheme(): Promise<string> {
 
 export async function setWindowTheme(theme: string): Promise<void> {
   return invoke("set_window_theme", { theme });
+}
+
+export interface StylesheetEntry {
+  id: string;
+  name: string;
+  path: string;
+  builtIn: boolean;
+}
+
+export async function listStylesheets(): Promise<StylesheetEntry[]> {
+  return invoke("list_stylesheets");
+}
+
+export async function importStylesheet(
+  path: string,
+): Promise<StylesheetEntry> {
+  return invoke("import_stylesheet", { path });
+}
+
+export async function deleteStylesheet(id: string): Promise<void> {
+  return invoke("delete_stylesheet", { id });
 }
 
 export interface FileContent {
@@ -58,11 +80,67 @@ export async function loadTextFile(path: string): Promise<string> {
 }
 
 /** Result from importing a file */
+export type Segment =
+  | {
+      type: "structural";
+      id: number;
+      xml: string;
+    }
+  | {
+      type: "word";
+      id: number;
+      original_xml: string;
+      attributes: Record<string, string>;
+      dsl_content: string;
+      has_inline_lb: boolean;
+    }
+  | {
+      type: "punctuation";
+      id: number;
+      original_xml: string;
+      dsl_content: string;
+    }
+  | {
+      type: "line_break";
+      id: number;
+      attributes: Record<string, string>;
+    }
+  | {
+      type: "page_break";
+      id: number;
+      attributes: Record<string, string>;
+    }
+  | {
+      type: "hand_shift";
+      id: number;
+      attributes: Record<string, string>;
+    }
+  | {
+      type: "whitespace";
+      id: number;
+      content: string;
+    };
+
+export interface ImportedDocument {
+  segments: Segment[];
+  is_menota: boolean;
+}
+
 export interface ImportResult {
   /** The DSL content extracted from the body */
   dsl: string;
   /** Metadata extracted from teiHeader (if present) */
   metadata?: import("$lib/types/metadata").Metadata;
+  /** Segment manifest for imported documents */
+  importedDocument?: ImportedDocument;
+  /** Original body XML for imported documents */
+  originalBodyXml?: string;
+  /** Original XML preamble (before <body>) */
+  originalPreamble?: string;
+  /** Original XML postamble (after </body>) */
+  originalPostamble?: string;
+  /** Indicates imported mode for round-trip fidelity */
+  isImportedMode?: boolean;
 }
 
 /**
@@ -122,6 +200,32 @@ export async function compileDsl(
     customMappings: options?.customMappings ?? null,
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     annotationsJson: options?.annotationsJson ?? null,
+  });
+}
+
+export interface CompileImportedOptions {
+  entitiesJson?: string;
+  normalizerJson?: string;
+  entityMappingsJson?: string;
+  customMappings?: Record<string, string>;
+}
+
+export async function compileImported(
+  editedDsl: string,
+  segmentsJson: string,
+  preamble: string,
+  postamble: string,
+  options?: CompileImportedOptions,
+): Promise<string> {
+  return invoke("compile_imported", {
+    editedDsl,
+    segmentsJson,
+    preamble,
+    postamble,
+    entitiesJson: options?.entitiesJson ?? null,
+    normalizerJson: options?.normalizerJson ?? null,
+    entityMappingsJson: options?.entityMappingsJson ?? null,
+    customMappings: options?.customMappings ?? null,
   });
 }
 
@@ -360,6 +464,14 @@ export interface ProjectData {
   metadata?: import("$lib/types/metadata").Metadata;
   /** Full annotation set (new in v1.2) */
   annotations?: import("$lib/types/annotations").AnnotationSet;
+  /** Imported document manifest (new in v1.3) */
+  imported_document?: ImportedDocument;
+  /** Original body XML for imported files (new in v1.3) */
+  original_body_xml?: string;
+  /** Original XML preamble (new in v1.4) */
+  original_preamble?: string;
+  /** Original XML postamble (new in v1.4) */
+  original_postamble?: string;
 }
 
 // Save project archive (.teis)
@@ -371,6 +483,10 @@ export async function saveProject(
   templateId: string,
   metadataJson?: string,
   annotationsJson?: string,
+  segmentsJson?: string,
+  originalBodyXml?: string,
+  originalPreamble?: string,
+  originalPostamble?: string,
 ): Promise<void> {
   return invoke("save_project", {
     path,
@@ -380,6 +496,10 @@ export async function saveProject(
     templateId,
     metadataJson,
     annotationsJson,
+    segmentsJson,
+    originalBodyXml,
+    originalPreamble,
+    originalPostamble,
   });
 }
 

@@ -18,12 +18,18 @@ pub enum Node {
     },
     /// Supplied text (standalone): <text>
     Supplied(String),
+    /// Supplied block wrapper: .supplied{text}
+    SuppliedBlock(String),
     /// Deletion: -{text}-
     Deletion(String),
     /// Addition: +{text}+
     Addition(String),
     /// Note: ^{text}
     Note(String),
+    /// Heading: .head{text}
+    Head(String),
+    /// Normalized-only wrapper: .norm{text}
+    Norm(String),
     /// Unclear reading: ?{text}?
     Unclear(String),
     /// Custom entity: :name:

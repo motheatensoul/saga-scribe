@@ -8,7 +8,10 @@ element {
   WordContinuationLineBreak |
   PageBreak |
   LineBreak |
+  Head |
   Abbreviation |
+  SuppliedBlock |
+  NormBlock |
   Gap |
   Supplied |
   Deletion |
@@ -28,8 +31,17 @@ WordContinuationLineBreak { wordContinuationLineBreak }
 PageBreak { pageBreak }
 LineBreak { lineBreak }
 
+// .head{heading text}
+Head { headKeyword BraceContent }
+
 // .abbr[abbreviated]{expansion}
 Abbreviation { abbrKeyword BracketContent BraceContent }
+
+// .supplied{supplied text}
+SuppliedBlock { suppliedKeyword BraceContent }
+
+// .norm{normalized-only content}
+NormBlock { normKeyword BraceContent }
 
 // [...] or [...n] for gaps/lacunae
 Gap { gap }
@@ -82,8 +94,18 @@ BraceContent { braceContent }
   // Line break: // optionally followed by line number (but not a third /)
   lineBreak { "//" ![/ \t\n\r]* }
 
-  // Abbreviation keyword
-  abbrKeyword { ".abbr" }
+// Abbreviation keyword
+abbrKeyword { ".abbr" }
+
+// Head keyword
+headKeyword { ".head" }
+
+// Supplied block keyword
+suppliedKeyword { ".supplied" }
+
+// Normalized-only keyword
+normKeyword { ".norm" }
+
 
   // Bracket content for abbreviation [...]
   bracketContent { "[" ![}\]]* "]" }
@@ -131,7 +153,7 @@ BraceContent { braceContent }
   // Each alternative handles a special char that doesn't start its construct
   text {
     ![/<\-+^?:|~\[.]+ |  // Normal text (no special chars)
-    "." ![a] | "." |     // Period (not before 'a' for .abbr, or at end)
+    "." ![ahns] | "." |     // Period (not before DSL keywords)
     "/" ![/] |           // Slash not followed by another slash
     "-" ![{] |           // Dash not followed by brace
     "+" ![{] |           // Plus not followed by brace
@@ -147,6 +169,9 @@ BraceContent { braceContent }
     lineBreak,
     gap,
     abbrKeyword,
+    headKeyword,
+    suppliedKeyword,
+    normKeyword,
     entity,
     deletionOpen,
     additionOpen,

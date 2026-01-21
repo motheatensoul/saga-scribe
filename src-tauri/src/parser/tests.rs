@@ -76,6 +76,22 @@ fn test_lexer_supplied() {
 }
 
 #[test]
+fn test_lexer_supplied_block() {
+    let mut lexer = Lexer::new(".supplied{missing text}");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::SuppliedBlock(t) if t == "missing text"));
+}
+
+#[test]
+fn test_lexer_norm_wrapper() {
+    let mut lexer = Lexer::new(".norm{,}");
+    let doc = lexer.parse().unwrap();
+    assert_eq!(doc.nodes.len(), 1);
+    assert!(matches!(&doc.nodes[0], Node::Norm(t) if t == ","));
+}
+
+#[test]
 fn test_lexer_deletion() {
     let mut lexer = Lexer::new("-{removed}-");
     let doc = lexer.parse().unwrap();
@@ -232,6 +248,20 @@ fn test_word_tokenizer_explicit_continuation() {
     assert!(matches!(&result[0], Node::Word(children) if children.len() >= 2));
 }
 
+#[test]
+fn test_word_tokenizer_norm_wrapper_boundary() {
+    let tokenizer = WordTokenizer::new();
+    let nodes = vec![
+        Node::Text("word".to_string()),
+        Node::Norm(",".to_string()),
+        Node::Text("next".to_string()),
+    ];
+    let result = tokenizer.tokenize(nodes);
+
+    assert_eq!(result.len(), 3);
+    assert!(matches!(&result[1], Node::Norm(text) if text == ","));
+}
+
 // ============================================================================
 // Compiler Tests
 // ============================================================================
@@ -297,6 +327,20 @@ fn test_compiler_supplied() {
     let mut compiler = Compiler::new();
     let result = compiler.compile("<missing>").unwrap();
     assert!(result.contains("<supplied>missing</supplied>"));
+}
+
+#[test]
+fn test_compiler_norm_wrapper() {
+    let config = CompilerConfig {
+        word_wrap: false,
+        auto_line_numbers: false,
+        multi_level: true,
+        wrap_pages: false,
+    };
+    let mut compiler = Compiler::new().with_config(config);
+    let result = compiler.compile(".norm{,}").unwrap();
+    assert!(result.contains("<pc>"));
+    assert!(result.contains("<me:norm>,</me:norm>"));
 }
 
 #[test]

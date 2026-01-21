@@ -35,7 +35,8 @@ jobs:
             CHANGELOG=$(git log --pretty=format:"- %s (%h)" --no-merges)
           else
             echo "Generating changelog since $PREV_TAG"
-            CHANGELOG=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+            CHANGELOG=$(git log ${PREV_TAG}..
+            --pretty=format:"- %s (%h)" --no-merges)
           fi
 
           # Write to file for multi-line output
