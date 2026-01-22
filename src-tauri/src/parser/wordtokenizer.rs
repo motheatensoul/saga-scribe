@@ -1,13 +1,56 @@
+//! # Word Tokenizer
+//!
+//! This module implements word boundary detection for grouping AST nodes into
+//! TEI `<w>` (word) and `<pc>` (punctuation) elements.
+//!
+//! ## State Machine Design
+//!
+//! The tokenizer uses a simple two-state machine:
+//!
+//! ```text
+//! [BetweenWords] ──text/entity──▶ [InWord]
+//!       ▲                            │
+//!       └──whitespace/punctuation────┘
+//! ```
+//!
+//! ## Word Boundary Rules
+//!
+//! Words are split by:
+//! - Whitespace characters
+//! - Punctuation marks (configurable set)
+//! - Explicit `|` word boundary markers
+//! - Block elements (`.head{}`, `.supplied{}`)
+//!
+//! Words continue across:
+//! - Line/page breaks when preceded by `~` (explicit continuation)
+//! - Line/page breaks when the word ends with a letter (heuristic continuation)
+//!
+//! ## Compound Word Handling
+//!
+//! The `~` marker between word parts (e.g., `upp~haf`) keeps them as a single
+//! word unit. The compiler handles the space insertion at facsimile/diplomatic
+//! levels and joining at the normalized level.
+
 use super::ast::Node;
 
-/// State machine for word tokenization
+/// State machine states for word tokenization.
 #[derive(Debug, PartialEq)]
 enum State {
+    /// Not currently inside a word (initial state, after whitespace/punctuation)
     BetweenWords,
+    /// Currently accumulating content for a word
     InWord,
 }
 
-/// Tokenizes a flat node stream into words wrapped in Word nodes
+/// Tokenizes a flat node stream into words wrapped in Word/Punctuation nodes.
+///
+/// The tokenizer transforms a flat sequence of AST nodes into a sequence where
+/// text content is grouped into `Word` nodes and punctuation into `Punctuation` nodes.
+///
+/// # Example
+///
+/// Input nodes: `[Text("Hello"), Text(" "), Text("world"), Text(".")]`
+/// Output nodes: `[Word([Text("Hello")]), Word([Text("world")]), Punctuation([Text(".")])]`
 pub struct WordTokenizer {
     /// Characters that trigger word boundaries (in addition to whitespace)
     punctuation: Vec<char>,
@@ -20,11 +63,20 @@ impl WordTokenizer {
         }
     }
 
-    /// Tokenize a flat node stream into words
+    /// Tokenizes a flat node stream into word-wrapped nodes.
+    ///
+    /// Processes each node and groups consecutive non-boundary nodes into
+    /// `Word` containers. Handles special cases:
+    ///
+    /// - **Continuation (`~`)**: Marks that the word continues across the next break
+    /// - **Line/page breaks**: Either split words or are included based on continuation
+    /// - **Block elements**: Always force word boundaries
+    /// - **Punctuation**: Wrapped in `Punctuation` nodes, not `Word`
     pub fn tokenize(&self, nodes: Vec<Node>) -> Vec<Node> {
         let mut result: Vec<Node> = Vec::new();
         let mut current_word: Vec<Node> = Vec::new();
         let mut state = State::BetweenWords;
+        // Flag set by WordContinuation node to indicate next break should be included
         let mut continuation_active = false;
 
         for node in nodes {
@@ -43,15 +95,20 @@ impl WordTokenizer {
                     continuation_active = true;
                 }
 
-                // Line/page breaks - check if continuation is active
+                // Line/page breaks - determine if word continues across the break
+                //
+                // Three cases:
+                // 1. Explicit continuation (`~//`): always continue
+                // 2. Heuristic continuation: if word ends with a letter, likely continues
+                // 3. Otherwise: end the word before the break
                 Node::LineBreak(_) | Node::PageBreak(_) => {
                     if continuation_active {
-                        // Word continues across the break
+                        // Case 1: Explicit continuation via ~ marker
                         current_word.push(node);
                         continuation_active = false;
                     } else {
-                        // Check heuristic: if we're in a word and last char is a letter,
-                        // include the break in the word (implicit continuation)
+                        // Case 2: Check heuristic - if we're in a word and last char is a letter,
+                        // include the break in the word (manuscript words often span lines)
                         let should_continue = state == State::InWord
                             && self.last_char_is_letter(&current_word);
 

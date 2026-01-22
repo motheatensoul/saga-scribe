@@ -1,9 +1,57 @@
+//! # TEI-XML Segment Extraction
+//!
+//! This module extracts segments from TEI-XML documents, converting editable content
+//! to DSL representation while preserving structural elements.
+//!
+//! ## Extraction Pipeline
+//!
+//! The extractor walks the XML DOM tree and categorizes nodes:
+//!
+//! ```text
+//! <body>                  → Structural (open)
+//!   <div>                 → Structural (open)
+//!     <pb n="1r"/>        → PageBreak segment
+//!     <lb n="1"/>         → LineBreak segment
+//!     <w lemma="maðr">    → Word segment with DSL content
+//!       <choice>
+//!         <me:facs>maþr</me:facs>  → Extracted as DSL
+//!         <me:dipl>...</me:dipl>   → Preserved in original_xml
+//!         <me:norm>...</me:norm>   → Preserved in original_xml
+//!       </choice>
+//!     </w>
+//!   </div>                → Structural (close)
+//! </body>                 → Structural (close)
+//! ```
+//!
+//! ## MENOTA Abbreviation Detection
+//!
+//! The [`menota_abbr_expansion`] function detects abbreviation patterns:
+//! 1. Look for `<am>` (abbreviation marker) in facs level
+//! 2. Look for `<ex>` (expansion) in dipl level
+//! 3. If both present, emit `.abbr[facs]{dipl}` DSL syntax
+//!
+//! ## DSL Conversion
+//!
+//! The [`node_to_dsl`] function recursively converts TEI elements to DSL:
+//! - `<supplied>text</supplied>` → `<text>`
+//! - `<del>text</del>` → `-{text}-`
+//! - `<add>text</add>` → `+{text}+`
+//! - `<gap quantity="3"/>` → `[...3]`
+//! - `<note>text</note>` → `^{text}`
+//! - `<lb n="5"/>` inside word → `~//5` (continuation marker)
+//! - Entity references → `:entityname:`
+
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::Segment;
 use libxml::tree::{Node, NodeType};
 use std::collections::HashMap;
 
+/// Extracts segments from TEI-XML DOM nodes.
+///
+/// The extractor maintains an incrementing ID counter to assign unique
+/// identifiers to each segment, enabling the patching system to track edits.
 pub struct Extractor {
+    /// Next segment ID to assign
     next_id: usize,
 }
 
@@ -18,12 +66,26 @@ impl Extractor {
         id
     }
 
+    /// Extracts all segments from the given XML node (typically the `<body>` element).
+    ///
+    /// Recursively processes the DOM tree, converting each node to the appropriate
+    /// segment type. Returns an ordered list of segments representing the document.
     pub fn extract_segments(&mut self, node: &Node) -> Vec<Segment> {
         let mut segments = Vec::new();
         self.process_node(node, &mut segments);
         segments
     }
 
+    /// Processes a single DOM node, dispatching to the appropriate handler.
+    ///
+    /// # Element Handling
+    ///
+    /// - `<w>`: Extracts as Word segment via [`extract_word`]
+    /// - `<pc>`: Extracts as Punctuation segment via [`extract_punctuation`]
+    /// - `<lb>`, `<pb>`: Extracts as LineBreak/PageBreak segments
+    /// - `<choice>`: Extracts as Word (may be abbreviation or multi-level)
+    /// - `<gap>`, `<supplied>`, `<del>`, `<add>`: Inline TEI elements → DSL
+    /// - Other elements: Treated as structural, preserved verbatim
     fn process_node(&mut self, node: &Node, segments: &mut Vec<Segment>) {
         match node.get_type() {
             Some(NodeType::ElementNode) => {
@@ -307,6 +369,11 @@ impl Extractor {
         helpers::attributes_with_ns(node).into_iter().collect()
     }
 
+    /// Converts a `<gap>` element to DSL syntax.
+    ///
+    /// Handles optional attributes:
+    /// - `quantity="3"` → `[...3]`
+    /// - With supplied text → `[...3<supplied text>]`
     fn gap_dsl(node: &Node, supplied: Option<&str>) -> String {
         let quantity = node.get_property("quantity");
         let digits = quantity
@@ -552,6 +619,29 @@ impl Extractor {
         })
     }
 
+    /// Detects and extracts MENOTA abbreviation patterns.
+    ///
+    /// MENOTA encodes abbreviations with expansion using `<am>` (abbreviation marker)
+    /// in the facsimile level and `<ex>` (expansion) in the diplomatic level.
+    ///
+    /// # Detection Algorithm
+    ///
+    /// 1. Find `<me:facs>` descendant containing `<am>` element
+    /// 2. Find `<me:dipl>` descendant containing `<ex>` element
+    /// 3. If both present, return `(facs_text, dipl_text)` for `.abbr[]{}` syntax
+    ///
+    /// # Example
+    ///
+    /// Input XML:
+    /// ```xml
+    /// <w><choice>
+    ///   <me:facs>w<am>̄</am></me:facs>
+    ///   <me:dipl>w<ex>ið</ex></me:dipl>
+    ///   <me:norm>við</me:norm>
+    /// </choice></w>
+    /// ```
+    ///
+    /// Returns: `Some(("w̄", "wið"))` → produces `.abbr[w̄]{wið}`
     fn menota_abbr_expansion(
         node: &Node,
         has_inline_lb: &mut bool,
@@ -580,10 +670,35 @@ impl Extractor {
         }
     }
 
+    /// Converts an XML node's content to DSL notation.
+    ///
+    /// This is a convenience wrapper around [`node_to_dsl_with_options`] with
+    /// `allow_norm_wrapper = true`.
     fn node_to_dsl(node: &Node, output: &mut String, has_inline_lb: &mut bool) {
         Self::node_to_dsl_with_options(node, output, has_inline_lb, true);
     }
 
+    /// Recursively converts XML content to DSL notation.
+    ///
+    /// # Parameters
+    ///
+    /// - `node`: The XML node to convert
+    /// - `output`: String buffer to append DSL to
+    /// - `has_inline_lb`: Set to true if `<lb>` is encountered inside a word
+    /// - `allow_norm_wrapper`: If true, norm-only content emits `.norm{}`; if false, raw text
+    ///
+    /// # Element Conversions
+    ///
+    /// | Element | DSL Output |
+    /// |---------|------------|
+    /// | `<choice>` | Abbreviation or level extraction |
+    /// | `<add>` | `+{content}+` |
+    /// | `<del>` | `-{content}-` |
+    /// | `<supplied>` | `<content>` or `.supplied{content}` |
+    /// | `<gap>` | `[...]` with quantity and supplied |
+    /// | `<unclear>` | `?{content}?` |
+    /// | `<note>` | `^{content}` |
+    /// | `<lb n="x">` | `~//x` (word continuation) |
     fn node_to_dsl_with_options(
         node: &Node,
         output: &mut String,
@@ -983,12 +1098,26 @@ impl Extractor {
     }
 }
 
+/// Convenience function to extract segments from a body node.
 #[allow(dead_code)]
 pub fn extract_segments(body_node: &Node) -> Vec<Segment> {
     let mut extractor = Extractor::new();
     extractor.extract_segments(body_node)
 }
 
+/// Converts a segment list back to DSL text representation.
+///
+/// This is used for:
+/// 1. Initial DSL generation after import
+/// 2. Fast-path comparison in patch computation (unchanged document detection)
+///
+/// # Formatting Rules
+///
+/// - Words are separated by spaces (from Whitespace segments)
+/// - Punctuation immediately follows words (no space)
+/// - Line breaks: newline + `//n` + space
+/// - Page breaks: newline + `///n`
+/// - Structural elements are skipped (not represented in DSL)
 pub fn segments_to_dsl(segments: &[Segment]) -> String {
     let mut dsl = String::new();
     let mut last_was_linebreak = false;

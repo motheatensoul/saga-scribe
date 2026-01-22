@@ -1,9 +1,48 @@
+//! # Round-Trip Patching System
+//!
+//! This module computes the minimal set of changes (patches) between the original
+//! imported document and the user's edited DSL, then applies those patches to
+//! reconstruct TEI-XML with preserved structure.
+//!
+//! ## Patch Computation Algorithm
+//!
+//! 1. **Fast path**: If edited DSL matches original, return empty patch list
+//! 2. **Tokenize**: Convert both original segments and edited DSL to token lists
+//! 3. **Diff**: Use LCS (Longest Common Subsequence) to find changes:
+//!    - Common prefix: Keep operations
+//!    - Common suffix: Keep operations
+//!    - Middle: LCS-based diff → Keep/Insert/Delete operations
+//! 4. **Combine**: Adjacent Delete+Insert pairs become Modify operations
+//!
+//! ## LCS Diff Algorithm
+//!
+//! The [`diff_tokens_lcs`] function implements the classic LCS algorithm:
+//!
+//! ```text
+//! Original: [A, B, C, D, E]
+//! Edited:   [A, B, X, Y, E]
+//!
+//! LCS:      [A, B, E]
+//!
+//! Patches:
+//!   Keep(A), Keep(B), Delete(C), Delete(D), Insert(X), Insert(Y), Keep(E)
+//!
+//! After combine_to_modify:
+//!   Keep(A), Keep(B), Modify(C→X), Modify(D→Y), Keep(E)
+//! ```
+//!
+//! ## Safety Limits
+//!
+//! For very large documents (>1000 tokens on both sides), the LCS algorithm
+//! falls back to a linear comparison to avoid O(n²) memory usage.
+
 use crate::importer::tei::extraction::segments_to_dsl;
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::Segment;
 use crate::parser::{Compiler, Lexer, Node, WordTokenizer};
 use std::collections::HashMap;
 
+/// A patch operation describing how to transform a segment.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum PatchOperation {
     #[serde(rename = "keep")]
@@ -16,6 +55,13 @@ pub enum PatchOperation {
     Delete { segment_id: usize },
 }
 
+/// Computes the patch operations needed to transform original segments into edited DSL.
+///
+/// This is the main entry point for the patching system. It handles:
+/// - Fast-path detection (no changes → empty patch list)
+/// - Token extraction from both sources
+/// - LCS-based diffing
+/// - Patch combination (Delete+Insert → Modify)
 pub fn compute_patches(segments: &[Segment], edited_dsl: &str) -> Vec<PatchOperation> {
     // Fast-path: if the edited DSL matches the original extraction, keep everything.
     let original_dsl = segments_to_dsl(segments);
@@ -214,6 +260,20 @@ fn diff_tokens(original: &[TokenInfo], edited: &[TokenInfo]) -> Vec<PatchOperati
     combine_to_modify(patches)
 }
 
+/// Computes patches using the Longest Common Subsequence algorithm.
+///
+/// # Algorithm
+///
+/// 1. Build LCS length table via dynamic programming: O(m×n) time and space
+/// 2. Backtrack through table to generate patch operations
+/// 3. Matching tokens → Keep
+/// 4. Tokens in edited but not LCS → Insert
+/// 5. Tokens in original but not LCS → Delete
+///
+/// # Safety Limit
+///
+/// If both sequences exceed 1000 tokens, falls back to linear comparison
+/// to avoid O(m×n) memory allocation on very large documents.
 fn diff_tokens_lcs(original: &[TokenInfo], edited: &[TokenInfo]) -> Vec<PatchOperation> {
     let m = original.len();
     let n = edited.len();
@@ -320,6 +380,19 @@ fn combine_to_modify(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
     result
 }
 
+/// Applies patch operations to reconstruct TEI-XML from segments.
+///
+/// This function walks through the original segments and patches in parallel,
+/// producing XML that combines preserved original structure with edited content.
+///
+/// # Reconstruction Strategy
+///
+/// - **Keep**: Emit original XML verbatim (preserves attributes, structure)
+/// - **Modify**: Compile new DSL to XML, preserving original word attributes
+/// - **Delete**: Skip the segment
+/// - **Insert**: Compile new DSL to XML (no original attributes available)
+/// - **Structural**: Always emit verbatim (divs, paragraphs, etc.)
+/// - **Whitespace**: Always emit verbatim (formatting preservation)
 pub fn apply_patches_and_reconstruct(
     segments: &[Segment],
     patches: &[PatchOperation],
@@ -328,6 +401,10 @@ pub fn apply_patches_and_reconstruct(
     reconstruct_from_segments_and_patches(segments, patches, compiler)
 }
 
+/// Internal implementation of patch application.
+///
+/// Processes segments in order, interleaving patch operations. Uses the compiler
+/// to generate multi-level XML for modified and inserted content.
 fn reconstruct_from_segments_and_patches(
     segments: &[Segment],
     patches: &[PatchOperation],

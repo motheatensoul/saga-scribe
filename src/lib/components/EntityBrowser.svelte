@@ -1,7 +1,8 @@
 <script lang="ts">
     import { entityStore, entityNames, type Entity } from '$lib/stores/entities';
-    import { 
-        saveEntityMapping, 
+    import { errorStore } from '$lib/stores/errors';
+    import {
+        saveEntityMapping,
         removeEntityMapping,
         saveCustomEntity,
         removeCustomEntity,
@@ -186,8 +187,7 @@
             entityStore.removeCustomEntity(name);
             if (selectedEntity === name) selectedEntity = null;
         } catch (e) {
-            console.error('Failed to delete entity:', e);
-            alert(`Failed to delete entity: ${e}`);
+            errorStore.error('Entity Browser', `Failed to delete entity: ${e}`);
         }
     }
 

@@ -1,9 +1,33 @@
+//! # RelaxNG Validation
+//!
+//! This module provides RelaxNG schema validation using direct FFI calls to libxml2.
+//! The libxml crate doesn't expose RelaxNG validation, so we call the C functions directly.
+//!
+//! ## Safety
+//!
+//! The FFI layer carefully manages:
+//! - Memory allocation/deallocation of libxml2 objects
+//! - Error collection via structured error callbacks
+//! - Thread safety via Send/Sync implementations
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! // From file
+//! let schema = RelaxNgSchema::parse_file(Path::new("schema.rng"))?;
+//! let result = schema.validate(xml_content, "my-schema")?;
+//!
+//! // From string
+//! let schema = RelaxNgSchema::parse_string(schema_content)?;
+//! let result = schema.validate(xml_content, "my-schema")?;
+//! ```
+
 use super::types::{ValidationError, ValidationResult};
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_void};
 use std::path::Path;
 
-// FFI Definitions
+// FFI Definitions for libxml2 RelaxNG API
 #[repr(C)]
 pub struct xmlRelaxNG {
     _private: [u8; 0],

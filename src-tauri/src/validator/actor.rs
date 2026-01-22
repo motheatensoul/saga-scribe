@@ -1,3 +1,26 @@
+//! # Validation Actor
+//!
+//! This module implements an actor-based pattern for async XML validation.
+//! The actor runs on a dedicated thread, processes validation requests via a channel,
+//! and caches parsed schemas for performance.
+//!
+//! ## Why an Actor?
+//!
+//! 1. **Thread isolation**: libxml2 is not thread-safe; the actor serializes access
+//! 2. **Schema caching**: Parsed RelaxNG schemas are expensive; we cache them
+//! 3. **Panic safety**: `catch_unwind` prevents libxml2 panics from killing the thread
+//! 4. **Async integration**: tokio oneshot channels bridge to async/await
+//!
+//! ## Request Flow
+//!
+//! ```text
+//! async fn validate_xml() {
+//!     let (tx, rx) = oneshot::channel();
+//!     actor.send(ValidationRequest::RelaxNg { xml, schema_path, reply: tx });
+//!     let result = rx.await?;  // Blocks async task, not OS thread
+//! }
+//! ```
+
 use super::{RelaxNgValidator, XsdValidator};
 use crate::validator::relaxng::RelaxNgSchema;
 use crate::validator::ValidationResult;
@@ -8,29 +31,40 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use tokio::sync::oneshot;
 
+/// Validation actor that runs on a dedicated thread.
+///
+/// The actor maintains a cache of parsed RelaxNG schemas and processes
+/// validation requests sequentially from a channel.
 pub struct ValidationActor {
     rx: Receiver<ValidationRequest>,
     rng_cache: HashMap<PathBuf, RelaxNgSchema>,
     // TODO: Add XSD cache when we implement XSD reuse
 }
 
+/// A request to validate XML against a schema.
+///
+/// Each variant includes a `reply` channel for async response delivery.
 pub enum ValidationRequest {
+    /// Validate against XSD schema from file path
     Xsd {
         xml: String,
         schema_path: PathBuf,
         reply: oneshot::Sender<Result<ValidationResult, String>>,
     },
+    /// Validate against XSD schema from string content
     XsdString {
         xml: String,
         schema_content: String,
         schema_name: String,
         reply: oneshot::Sender<Result<ValidationResult, String>>,
     },
+    /// Validate against RelaxNG schema from file path (cached)
     RelaxNg {
         xml: String,
         schema_path: PathBuf,
         reply: oneshot::Sender<Result<ValidationResult, String>>,
     },
+    /// Validate against RelaxNG schema from string content (not cached)
     RelaxNgString {
         xml: String,
         schema_content: String,
@@ -39,10 +73,17 @@ pub enum ValidationRequest {
     },
 }
 
+/// Handle for sending validation requests to the actor.
+///
+/// This can be cloned and shared across threads.
 #[derive(Clone)]
 pub struct ValidationSender(pub Sender<ValidationRequest>);
 
 impl ValidationActor {
+    /// Spawns the validation actor on a new thread.
+    ///
+    /// Returns a [`ValidationSender`] that can be used to submit validation requests.
+    /// The actor thread runs until the sender is dropped and all requests are processed.
     pub fn spawn() -> ValidationSender {
         let (tx, rx) = channel();
 
@@ -63,6 +104,8 @@ impl ValidationActor {
     fn run(&mut self) {
         while let Ok(req) = self.rx.recv() {
             let start = std::time::Instant::now();
+            
+            //FIXME The comment below reads like Opus thought output, not actual documentation. Redo.
             
             // We use catch_unwind to ensure that if libxml panics (e.g. on internal error),
             // the actor thread doesn't die and can continue processing requests.

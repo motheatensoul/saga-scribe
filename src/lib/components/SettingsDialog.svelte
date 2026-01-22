@@ -4,6 +4,7 @@
     import { settings } from "$lib/stores/settings";
     import { stylesheetStore, DEFAULT_STYLESHEET_ID } from "$lib/stores/stylesheets";
     import { templateStore } from "$lib/stores/template";
+    import { errorStore } from "$lib/stores/errors";
 
     //Icons
     import { X as CloseButton } from "@lucide/svelte";
@@ -68,8 +69,7 @@
             await refreshStylesheets();
             localSettings.activeStylesheetId = stylesheet.id;
         } catch (e) {
-            console.error("Failed to import stylesheet:", e);
-            alert(`Failed to import stylesheet: ${e}`);
+            errorStore.error("Settings", `Failed to import stylesheet: ${e}`);
         }
     }
 
@@ -90,8 +90,7 @@
                 localSettings.activeStylesheetId = DEFAULT_STYLESHEET_ID;
             }
         } catch (e) {
-            console.error("Failed to remove stylesheet:", e);
-            alert(`Failed to remove stylesheet: ${e}`);
+            errorStore.error("Settings", `Failed to remove stylesheet: ${e}`);
         }
     }
 

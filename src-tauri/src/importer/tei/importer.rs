@@ -1,3 +1,21 @@
+//! # TEI-XML Import Entry Point
+//!
+//! This module provides the main [`parse`] function for importing TEI-XML documents.
+//! It handles:
+//!
+//! - XML parsing via libxml2
+//! - Metadata extraction from `<teiHeader>`
+//! - Body content extraction and DSL conversion
+//! - Document structure preservation for round-trip fidelity
+//!
+//! ## Imported Mode
+//!
+//! All TEI imports operate in "imported mode" which preserves:
+//! - Original XML preamble (DOCTYPE, comments before body)
+//! - Original XML postamble (content after body)
+//! - Segment manifest for structure preservation
+//! - MENOTA detection for multi-level handling
+
 use crate::metadata::{
     Availability, DateRange, History, Language, Metadata, MsContents, MsIdentifier, Person,
     PhysDesc, PublicationStmt, RespStmt, TitleStmt,
@@ -8,7 +26,13 @@ use crate::importer::tei::segments::ImportedDocument;
 use libxml::parser::Parser;
 use libxml::tree::{Document, Node, NodeType};
 
-/// Result of parsing a TEI-XML file
+/// Result of parsing a TEI-XML file.
+///
+/// Contains all information needed for editing and round-trip export:
+/// - DSL content for the editor
+/// - Metadata for the metadata panel
+/// - Segment manifest for structure preservation
+/// - Original XML sections for exact reconstruction
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
@@ -28,7 +52,24 @@ pub struct ImportResult {
     pub is_imported_mode: bool,
 }
 
-/// Parses TEI-XML content and converts it to Saga-Scribe DSL, also extracting metadata
+/// Parses TEI-XML content into Saga-Scribe format.
+///
+/// This is the main import entry point. It performs:
+///
+/// 1. **XML Parsing**: Parse input via libxml2
+/// 2. **Metadata Extraction**: Extract teiHeader into [`Metadata`] struct
+/// 3. **Body Location**: Find the `<body>` element
+/// 4. **MENOTA Detection**: Check for multi-level structure
+/// 5. **Section Splitting**: Preserve preamble/body/postamble for round-trip
+/// 6. **Segment Extraction**: Convert body to segment manifest
+/// 7. **DSL Generation**: Convert segments to editable DSL text
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - XML is malformed
+/// - No root element found
+/// - No `<body>` element found
 pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
     let parser = Parser::default();
 

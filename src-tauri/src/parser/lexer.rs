@@ -1,24 +1,73 @@
+//! # DSL Lexer
+//!
+//! This module implements the lexical analyzer (lexer/tokenizer) for the Saga-Scribe DSL.
+//!
+//! ## Design
+//!
+//! The lexer is a single-pass, greedy parser that processes input left-to-right.
+//! It uses prefix matching to identify DSL constructs, with longer prefixes checked
+//! first to handle overlapping syntax (e.g., `///` page break before `//` line break).
+//!
+//! ## Parsing Strategy
+//!
+//! The lexer maintains a position cursor and a text buffer:
+//! - When a DSL construct is recognized, the text buffer is flushed as a `Text` node
+//! - The construct is then parsed and added to the document
+//! - Unknown characters are accumulated in the text buffer
+//!
+//! ## Entity Reference Handling
+//!
+//! Entity references (`:name:`) use a try-parse approach: if the pattern doesn't
+//! complete with a closing colon, the position resets and the colon is treated as text.
+
 use super::ast::{Document, Node};
 
-/// Tokenizes and parses the DSL input into an AST
+/// Tokenizes and parses DSL input into an abstract syntax tree.
+///
+/// The lexer performs single-pass parsing with greedy prefix matching.
+/// DSL constructs are recognized by their opening delimiters and parsed
+/// according to their specific grammar rules.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let mut lexer = Lexer::new("//1 Hello .abbr[w]{world}");
+/// let doc = lexer.parse()?;
+/// // doc.nodes contains: [LineBreak(Some("1")), Text("Hello "), Abbreviation{...}]
+/// ```
 pub struct Lexer<'a> {
+    /// The input DSL string being parsed
     input: &'a str,
+    /// Current byte position in the input (UTF-8 aware)
     pos: usize,
 }
 
 impl<'a> Lexer<'a> {
+    /// Creates a new lexer for the given input string.
     pub fn new(input: &'a str) -> Self {
         Self { input, pos: 0 }
     }
 
+    /// Parses the input and returns a [`Document`] containing the AST.
+    ///
+    /// The parser recognizes DSL constructs in order of prefix length (longest first)
+    /// to correctly handle overlapping syntax like `///` vs `//`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if:
+    /// - A bracketed construct is unclosed (e.g., `.abbr[text` without `]`)
+    /// - An expected delimiter is missing (e.g., `-{text}` without trailing `-`)
     pub fn parse(&mut self) -> Result<Document, String> {
         let mut doc = Document::new();
         let mut text_buf = String::new();
 
+        // Main parsing loop: check DSL constructs in order of prefix length (longest first)
+        // to correctly handle overlapping syntax patterns.
         while self.pos < self.input.len() {
             let remaining = &self.input[self.pos..];
 
-            // Check for page break first (/// before //)
+            // Page break (///) must be checked before line break (//)
             if remaining.starts_with("///") {
                 self.flush_text(&mut doc, &mut text_buf);
                 self.pos += 3;
@@ -206,12 +255,14 @@ impl<'a> Lexer<'a> {
         Ok(doc)
     }
 
+    /// Flushes accumulated text buffer as a Text node if non-empty.
     fn flush_text(&self, doc: &mut Document, buf: &mut String) {
         if !buf.is_empty() {
             doc.push(Node::Text(std::mem::take(buf)));
         }
     }
 
+    /// Returns the current character at the cursor position.
     fn current_char(&self) -> Option<char> {
         self.input[self.pos..].chars().next()
     }
@@ -223,6 +274,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Consumes characters while the predicate returns true.
     fn consume_while<F>(&mut self, predicate: F) -> String
     where
         F: Fn(char) -> bool,
@@ -241,6 +293,8 @@ impl<'a> Lexer<'a> {
         self.input[start..self.pos].to_string()
     }
 
+    /// Consumes characters until whitespace is encountered.
+    /// Used for parsing identifiers like page/line numbers.
     fn consume_until_whitespace(&mut self) -> String {
         let start = self.pos;
         while self.pos < self.input.len() {
@@ -252,6 +306,10 @@ impl<'a> Lexer<'a> {
         self.input[start..self.pos].to_string()
     }
 
+    /// Consumes content within brackets, handling nested brackets.
+    ///
+    /// This is used for constructs like `.abbr[text]` where the text may contain
+    /// other bracketed content. Tracks nesting depth to find the matching closer.
     fn consume_bracketed(&mut self, end: char) -> Result<String, String> {
         let start = self.pos;
         let mut depth = 1;
@@ -278,6 +336,8 @@ impl<'a> Lexer<'a> {
         Err(format!("Unclosed bracket, expected '{}'", end))
     }
 
+    /// Consumes content within braces `{}`, tracking nesting depth.
+    /// Used for constructs like `.head{content}` and `.norm{content}`.
     fn consume_braced_block(&mut self) -> Result<String, String> {
         let start = self.pos;
         let mut depth = 1;
@@ -298,6 +358,8 @@ impl<'a> Lexer<'a> {
         Err("Unclosed bracket, expected '}'".to_string())
     }
 
+    /// Consumes characters until the specified end character is found.
+    /// Does not handle nesting - used for simple delimiters like `<text>`.
     fn consume_until(&mut self, end: char) -> Result<String, String> {
         let start = self.pos;
         while self.pos < self.input.len() {
@@ -311,6 +373,7 @@ impl<'a> Lexer<'a> {
         Err(format!("Expected '{}'", end))
     }
 
+    /// Expects and consumes a specific character, returning an error if not found.
     fn expect(&mut self, c: char) -> Result<(), String> {
         if self.current_char() == Some(c) {
             self.advance();
@@ -324,6 +387,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Parses an optional numeric value (for gap quantities like `[...3]`).
     fn parse_optional_number(&mut self) -> Option<u32> {
         let start = self.pos;
         while self.pos < self.input.len() {

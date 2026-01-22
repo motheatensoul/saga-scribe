@@ -1,7 +1,26 @@
+//! # Document Segments
+//!
+//! This module defines the segment-based document representation used for round-trip
+//! TEI-XML editing. Segments preserve the structure of the original document while
+//! allowing targeted content edits.
+//!
+//! ## Design Philosophy
+//!
+//! The segment approach divides a TEI document into discrete units:
+//! - **Editable segments**: Words, punctuation, line/page breaks (can be modified)
+//! - **Structural segments**: Div, p, s elements (preserved verbatim)
+//! - **Whitespace segments**: Formatting between elements (preserved)
+//!
+//! Each segment has a unique ID, allowing the patching system to track which
+//! segments were modified, deleted, or have new content inserted nearby.
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Represents a segment of the document - either structural XML or editable content
+/// A segment of the TEI document, either structural or editable.
+///
+/// Segments form the intermediate representation between raw TEI-XML and
+/// editable DSL. They preserve original XML while enabling targeted edits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Segment {
@@ -70,10 +89,16 @@ impl Segment {
     }
 }
 
-/// The complete imported document manifest
+/// Complete manifest for an imported TEI document.
+///
+/// This structure preserves all information needed for round-trip fidelity:
+/// the segment list tracks structural and content elements, while `is_menota`
+/// indicates whether the document uses MENOTA multi-level transcription.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedDocument {
+    /// Ordered list of document segments (structural, words, breaks, etc.)
     pub segments: Vec<Segment>,
-    pub is_menota: bool, // Has me:facs/dipl/norm structure
+    /// Whether the document has MENOTA three-level structure (me:facs/dipl/norm)
+    pub is_menota: bool,
 }

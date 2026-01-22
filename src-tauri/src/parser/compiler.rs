@@ -1,3 +1,29 @@
+//! # DSL Compiler
+//!
+//! This module transforms the parsed AST into TEI-XML output.
+//!
+//! ## Compilation Modes
+//!
+//! The compiler supports two output modes:
+//!
+//! ### Single-Level Mode (default)
+//! Generates standard TEI-XML with `<w>` elements for words.
+//! Suitable for simple transcriptions without diplomatic/normalized variants.
+//!
+//! ### Multi-Level Mode (`multi_level: true`)
+//! Generates MENOTA-compliant three-level transcriptions:
+//! - **Facsimile (`<me:facs>`)**: Exact manuscript representation with entity references
+//! - **Diplomatic (`<me:dipl>`)**: Resolved entities, expanded abbreviations
+//! - **Normalized (`<me:norm>`)**: Modern orthographic normalization
+//!
+//! ## Word Annotation Integration
+//!
+//! The compiler integrates with the annotation system to add:
+//! - Lemma attributes (`lemma`, `me:msa`) from lemma mappings
+//! - Semantic analysis (`@ana`) from annotations
+//! - Character-level tags (`<c type="initial">`) for paleographic markup
+//! - Inline notes from word annotations
+
 use super::ast::Node;
 use super::lexer::Lexer;
 use super::wordtokenizer::WordTokenizer;
@@ -7,38 +33,73 @@ use crate::normalizer::LevelDictionary;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Configuration for the compiler
+/// Configuration options for the DSL compiler.
+///
+/// Controls output format, word wrapping, and multi-level MENOTA support.
 #[derive(Debug, Clone, Default)]
 pub struct CompilerConfig {
+    /// Wrap text content in `<w>` (word) and `<pc>` (punctuation) elements.
+    /// Required for multi-level mode and lemmatization support.
     pub word_wrap: bool,
+    /// Automatically number line breaks if no explicit number is provided.
+    /// When true, `//` becomes `<lb n="1"/>`, `<lb n="2"/>`, etc.
     pub auto_line_numbers: bool,
+    /// Generate MENOTA three-level transcription (`<me:facs>`, `<me:dipl>`, `<me:norm>`).
+    /// Requires `word_wrap: true` to function correctly.
     pub multi_level: bool,
-    /// Wrap page content in <p> tags (TEI requires content in structural elements)
+    /// Wrap page content in `<p>` tags for TEI structural compliance.
+    /// TEI requires text to be inside structural elements like `<p>` or `<ab>`.
     pub wrap_pages: bool,
 }
 
-/// A lemma mapping for a wordform
+/// A lemmatization mapping for a word token.
+///
+/// Associates a word instance with its dictionary lemma and morphosyntactic analysis.
+/// These mappings are stored by word index to support confirmed instance-level annotation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LemmaMapping {
+    /// The dictionary headword (e.g., "maðr" for "manni")
     pub lemma: String,
+    /// Morphosyntactic analysis tag (e.g., "nmsn" for noun-masculine-singular-nominative)
     pub msa: String,
+    /// Optional user-provided normalized form (overrides auto-normalization)
     #[serde(default)]
     pub normalized: Option<String>,
 }
 
-/// Compiles DSL input into TEI-XML
+/// Compiles DSL input into TEI-XML output.
+///
+/// The compiler processes an AST (optionally word-tokenized) and generates TEI-XML.
+/// It supports single-level and multi-level (MENOTA) output modes.
+///
+/// # Builder Pattern
+///
+/// Use the builder methods to configure the compiler before calling [`compile`]:
+///
+/// ```rust,ignore
+/// let mut compiler = Compiler::new()
+///     .with_entities(&entity_registry)
+///     .with_dictionary(&level_dictionary)
+///     .with_lemma_mappings(lemmas)
+///     .with_annotations(&annotations)
+///     .with_config(config);
+/// ```
 pub struct Compiler<'a> {
+    /// Entity registry for resolving `:entity:` references
     entities: Option<&'a EntityRegistry>,
+    /// Level dictionary for character normalization and combining mark handling
     dictionary: Option<&'a LevelDictionary>,
-    /// Lemma mappings by word INDEX (for confirmed instances only)
+    /// Lemma mappings indexed by word position (0-based)
     lemma_mappings: HashMap<u32, LemmaMapping>,
-    /// Full annotation set (for non-lemma annotations)
+    /// Full annotation set for semantic, paleographic, and note annotations
     annotations: Option<&'a AnnotationSet>,
+    /// Compiler configuration options
     config: CompilerConfig,
+    /// Running line number counter (for auto_line_numbers)
     line_number: u32,
-    /// Current word index counter
+    /// Running word index counter (reset per compilation)
     word_index: u32,
-    /// Whether we're currently inside a page <p> wrapper
+    /// Tracks whether we're inside a page `<p>` wrapper (for wrap_pages mode)
     in_page_paragraph: bool,
 }
 
@@ -83,6 +144,16 @@ impl<'a> Compiler<'a> {
         self
     }
 
+    /// Compiles DSL input to TEI-XML.
+    ///
+    /// This is the main entry point. The compilation pipeline:
+    /// 1. Parse DSL to AST via [`Lexer`]
+    /// 2. Optionally tokenize into words via [`WordTokenizer`] (if `word_wrap` enabled)
+    /// 3. Transform each AST node to XML via [`node_to_xml`]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the DSL parsing fails (unclosed brackets, etc.)
     pub fn compile(&mut self, input: &str) -> Result<String, String> {
         let mut lexer = Lexer::new(input);
         let doc = lexer.parse()?;
@@ -186,8 +257,14 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_entity(&self, name: &str) -> String {
-        // Output as XML entity reference &name;
-        // The entity must be defined in the TEI header or be a standard XML entity
+        // Try to resolve entity to its character value if registry is available.
+        // This produces valid XML without requiring entity definitions in a DTD.
+        if let Some(registry) = self.entities {
+            if let Some(entity) = registry.get(name) {
+                return self.escape_xml(&entity.char);
+            }
+        }
+        // Fallback to entity reference (requires DTD definition to be valid)
         format!("&{};", name)
     }
 
@@ -220,6 +297,14 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// Compiles a word to MENOTA three-level format.
+    ///
+    /// Generates separate representations for each transcription level:
+    /// - **Facsimile**: Entity references preserved, abbreviation forms only
+    /// - **Diplomatic**: Entities resolved, abbreviations expanded, combining marks removed
+    /// - **Normalized**: Full character normalization applied
+    ///
+    /// Also injects character-level `<c>` tags from paleographic annotations.
     fn compile_word_multi_level(&mut self, children: &[Node]) -> String {
         let facs = self.nodes_to_facs(children);
         let dipl = self.nodes_to_diplomatic(children);
@@ -254,9 +339,27 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Inject <c> tags for character annotations into an XML string
-    /// Walks the XML string, skipping tags and treating entities as single chars
-    /// to align with frontend visual indexing.
+    /// Injects `<c>` tags for character annotations into compiled XML.
+    ///
+    /// This algorithm walks the XML string, maintaining a "visual index" that
+    /// counts displayable characters while skipping over XML tags. Entity references
+    /// like `&eth;` are treated as single characters to align with the frontend's
+    /// visual character indexing.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Collect character annotations for the word (type=initial, capital, etc.)
+    /// 2. Walk the XML string character by character:
+    ///    - Skip `<...>` tag content (don't increment visual index)
+    ///    - Treat `&...;` entities as single characters
+    ///    - At each visual index, check if any annotation starts/ends
+    ///    - Insert `<c type="...">` and `</c>` tags accordingly
+    ///
+    /// # Example
+    ///
+    /// For word "Maðr" with initial annotation on char 0:
+    /// - Input: `M&eth;r`
+    /// - Output: `<c type="initial">M</c>&eth;r`
     fn inject_character_tags(&self, xml: &str, word_index: u32) -> String {
         use crate::annotations::{AnnotationType, AnnotationValue, MenotaObservationType};
         
@@ -575,7 +678,13 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Generate facsimile level content: entity refs, abbreviation form only
+    /// Generates facsimile level content for MENOTA output.
+    ///
+    /// The facsimile level represents the manuscript exactly as it appears:
+    /// - Entity references are preserved (e.g., `&eth;`)
+    /// - Abbreviations show the abbreviated form only (e.g., `<abbr>w</abbr>`)
+    /// - Supplied text is omitted (editor's additions not visible in facsimile)
+    /// - Gaps show only the gap marker, not supplied readings
     fn nodes_to_facs(&self, nodes: &[Node]) -> String {
         let mut output = String::new();
         for node in nodes {
@@ -608,7 +717,13 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Generate diplomatic level content: resolve entities, expand abbreviations, remove combining marks
+    /// Generates diplomatic level content for MENOTA output.
+    ///
+    /// The diplomatic level is a readable interpretation of the manuscript:
+    /// - Entities are resolved to their character values
+    /// - Combining marks (abbreviation markers) are removed
+    /// - Abbreviations are expanded (e.g., `<expan>world</expan>`)
+    /// - Supplied text is shown with `<supplied>` tags
     fn nodes_to_diplomatic(&self, nodes: &[Node]) -> String {
         let mut output = String::new();
         for node in nodes {
@@ -664,7 +779,13 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    /// Generate normalized level content: apply character normalization
+    /// Generates normalized level content for MENOTA output.
+    ///
+    /// The normalized level applies full orthographic normalization:
+    /// - Character normalization (ð→d, þ→th, etc. per dictionary rules)
+    /// - Entities resolved and normalized
+    /// - Combining marks removed
+    /// - Compound joins produce no space (upp~haf → upphaf)
     fn nodes_to_normalized(&self, nodes: &[Node]) -> String {
         let mut output = String::new();
         for node in nodes {
@@ -900,9 +1021,14 @@ impl<'a> Compiler<'a> {
         output
     }
 
-    /// Compile a DSL fragment (for insertions).
-    /// Used by patching module to compile new content that isn't tied to an existing segment.
-    /// Returns compiled XML for all words/punctuation in the fragment.
+    /// Compiles a DSL fragment to XML (for insertions and inline content).
+    ///
+    /// Used by:
+    /// - The patching module to compile newly inserted content
+    /// - Block elements like `.head{content}` and `.supplied{content}`
+    ///
+    /// Unlike the main `compile()` method, this doesn't track word indices
+    /// for annotation purposes.
     pub fn compile_fragment_from_dsl(&mut self, dsl: &str) -> String {
         // Parse the DSL fragment
         let mut lexer = Lexer::new(dsl);

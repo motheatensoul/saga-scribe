@@ -1,6 +1,19 @@
+//! # Abstract Syntax Tree
+//!
+//! This module defines the AST nodes produced by the lexer and consumed by the compiler.
+//!
+//! The AST is a flat sequence of nodes (not a tree in the traditional sense),
+//! where container nodes like `Word` and `Punctuation` are introduced by the
+//! word tokenizer stage.
+
+//TODO We have to check whether a flat sequence still makes sense, since we do have hierarchical structures within the DSL now, even if largely simple.
+
 use serde::{Deserialize, Serialize};
 
-/// Represents a node in the TEI-DSL abstract syntax tree
+/// A node in the DSL abstract syntax tree.
+///
+/// The AST starts as a flat sequence from the lexer, then the word tokenizer
+/// groups content into `Word` and `Punctuation` container nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Node {
     /// Plain text content
@@ -13,8 +26,9 @@ pub enum Node {
     Abbreviation { abbr: String, expansion: String },
     /// Gap/lacuna: [...] or [...n] or [...<text>] or [...n<text>]
     Gap {
-        quantity: Option<u32>,
+        quantity: Option<u32>, //can theoretically sized down or set to usize? if a gap would reach anywhere close to the limit of u16 for any given unit, the unit should be scaled up instead. 
         supplied: Option<String>,
+        //TODO per MENOTA spec unit field is mandatory, how to handle? 
     },
     /// Supplied text (standalone): <text>
     Supplied(String),

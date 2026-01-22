@@ -1,3 +1,35 @@
+//! # File Operations Commands
+//!
+//! This module provides file I/O commands for project management and export.
+//!
+//! ## Project Archive Format (.teis)
+//!
+//! Saga-Scribe projects are stored as ZIP archives with the following structure:
+//!
+//! ```text
+//! project.teis (ZIP)
+//! ├── source.dsl           # DSL source text
+//! ├── output.xml           # Compiled TEI-XML
+//! ├── confirmations.json   # Legacy lemma mappings (v1.0 compat)
+//! ├── annotations.json     # Full annotation set (v1.2+)
+//! ├── metadata.json        # Manuscript metadata (v1.1+)
+//! ├── segments.json        # Import segment manifest (v1.3+)
+//! ├── original_body.xml    # Original body for round-trip (v1.3+)
+//! ├── original_preamble.xml # XML before <body> (v1.4+)
+//! ├── original_postamble.xml # XML after </body> (v1.4+)
+//! └── manifest.json        # Project metadata
+//! ```
+//!
+//! ## Version History
+//!
+//! | Version | Changes |
+//! |---------|---------|
+//! | 1.0 | Initial format with source, output, confirmations |
+//! | 1.1 | Added metadata.json |
+//! | 1.2 | Added annotations.json (full annotation set) |
+//! | 1.3 | Added segments.json and original_body.xml for round-trip |
+//! | 1.4 | Added original_preamble.xml and original_postamble.xml |
+
 use crate::annotations::AnnotationSet;
 use crate::importer::tei::segments::ImportedDocument;
 use crate::metadata::Metadata;
@@ -9,9 +41,12 @@ use std::path::PathBuf;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
+/// Result of opening a text file.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileContent {
+    /// The path that was opened
     pub path: String,
+    /// The file's text content
     pub content: String,
 }
 
@@ -50,11 +85,16 @@ pub fn export_html(path: String, html_content: String) -> Result<(), String> {
 // - confirmations.json: Word index -> lemma mapping
 // - manifest.json: Project metadata
 
+/// Project metadata stored in manifest.json within the archive.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectManifest {
+    /// Archive format version (e.g., "1.4")
     pub version: String,
+    /// ID of the TEI template used
     pub template_id: String,
+    /// ISO 8601 timestamp of creation
     pub created: String,
+    /// ISO 8601 timestamp of last modification
     pub modified: String,
 }
 
@@ -66,33 +106,44 @@ pub struct LemmaConfirmation {
     pub normalized: Option<String>,
 }
 
+/// Complete project data loaded from a .teis archive.
+///
+/// This struct is returned by [`open_project`] and contains all data
+/// needed to restore the editor state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectData {
+    /// DSL source text from source.dsl
     pub source: String,
+    /// Compiled TEI-XML from output.xml
     pub output: String,
-    /// Legacy lemma confirmations (for backward compat, derived from annotations)
+    /// Legacy lemma confirmations (v1.0 backward compatibility)
     pub confirmations: HashMap<u32, LemmaConfirmation>,
+    /// Project metadata from manifest.json
     pub manifest: ProjectManifest,
-    /// Optional manuscript metadata (new in v1.1)
+    /// Manuscript metadata (v1.1+)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Metadata>,
-    /// Full annotation set (new in v1.2)
+    /// Full annotation set including lemmas, semantics, paleography (v1.2+)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<AnnotationSet>,
-    /// Imported document manifest for round-trip fidelity (new in v1.3)
+    /// Segment manifest for imported documents (v1.3+)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub imported_document: Option<ImportedDocument>,
-    /// Original body XML for imported files (new in v1.3)
+    /// Original body XML for round-trip fidelity (v1.3+)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_body_xml: Option<String>,
-    /// Original XML preamble (everything before <body>, new in v1.4)
+    /// XML content before `<body>` element (v1.4+)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_preamble: Option<String>,
-    /// Original XML postamble (everything after </body>, new in v1.4)
+    /// XML content after `</body>` element (v1.4+)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_postamble: Option<String>,
 }
 
+/// Saves a project to a .teis archive file.
+///
+/// Creates a ZIP archive containing all project data. The archive format
+/// is versioned to support backward compatibility with older app versions.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn save_project(
@@ -201,6 +252,10 @@ pub fn save_project(
     Ok(())
 }
 
+/// Opens a .teis project archive and loads all contained data.
+///
+/// Handles backward compatibility with older archive versions by
+/// gracefully handling missing optional files.
 #[tauri::command]
 pub fn open_project(path: String) -> Result<ProjectData, String> {
     let path = PathBuf::from(&path);

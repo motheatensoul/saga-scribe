@@ -1,3 +1,31 @@
+//! # Stylesheet Manager
+//!
+//! This module manages XSLT stylesheets for rendering TEI-XML output.
+//!
+//! ## Storage Structure
+//!
+//! Stylesheets are stored in the app's data directory:
+//! ```text
+//! $APP_DATA/stylesheets/
+//! ├── manifest.json        # Metadata for user-imported stylesheets
+//! ├── my-stylesheet.xsl    # User-imported stylesheet
+//! └── another.xsl          # Another user stylesheet
+//! ```
+//!
+//! ## Built-in Stylesheet
+//!
+//! The default stylesheet (`simple.xsl`) is bundled with the app and cannot
+//! be deleted. It's served from `/xsl/simple.xsl` via Tauri's asset protocol.
+//!
+//! ## Manifest Format
+//!
+//! The manifest tracks imported stylesheets with their display names:
+//! ```json
+//! [
+//!   { "id": "my-stylesheet", "name": "My Stylesheet", "fileName": "my-stylesheet.xsl" }
+//! ]
+//! ```
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -8,6 +36,7 @@ const DEFAULT_STYLESHEET_NAME: &str = "Default (simple.xsl)";
 const DEFAULT_STYLESHEET_PATH: &str = "/xsl/simple.xsl";
 const MANIFEST_FILE: &str = "manifest.json";
 
+/// Internal metadata stored in the manifest for each imported stylesheet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StylesheetMetadata {
@@ -16,21 +45,35 @@ pub struct StylesheetMetadata {
     pub file_name: String,
 }
 
+/// Public stylesheet information returned to the frontend.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StylesheetInfo {
+    /// Unique identifier (used for selection)
     pub id: String,
+    /// Human-readable display name
     pub name: String,
+    /// Full path to the stylesheet file
     pub path: String,
+    /// Whether this is the built-in default stylesheet
     pub built_in: bool,
 }
 
+/// Manages XSLT stylesheet storage and retrieval.
+///
+/// The manager maintains a manifest of user-imported stylesheets and
+/// provides a unified list that includes the built-in default.
 pub struct StylesheetManager {
+    /// Directory where user stylesheets are stored
     stylesheets_dir: PathBuf,
+    /// Path to the manifest.json file
     manifest_path: PathBuf,
 }
 
 impl StylesheetManager {
+    /// Creates a new stylesheet manager for the given app handle.
+    ///
+    /// Creates the stylesheets directory if it doesn't exist.
     pub fn new(app: &AppHandle) -> Result<Self, String> {
         let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
         let stylesheets_dir = app_data.join("stylesheets");
@@ -43,6 +86,10 @@ impl StylesheetManager {
         })
     }
 
+    /// Lists all available stylesheets (built-in + user-imported).
+    ///
+    /// The built-in default is always first, followed by user stylesheets
+    /// sorted alphabetically by name.
     pub fn list_stylesheets(&self) -> Result<Vec<StylesheetInfo>, String> {
         let mut entries = vec![StylesheetInfo {
             id: DEFAULT_STYLESHEET_ID.to_string(),
@@ -71,6 +118,10 @@ impl StylesheetManager {
         Ok(entries)
     }
 
+    /// Imports a stylesheet from an external file path.
+    ///
+    /// Copies the file to the stylesheets directory, generates a unique ID,
+    /// and updates the manifest. Returns the new stylesheet's info.
     pub fn import_stylesheet(&self, source_path: &str) -> Result<StylesheetInfo, String> {
         let source = PathBuf::from(source_path);
         if !source.exists() {
@@ -115,6 +166,10 @@ impl StylesheetManager {
         })
     }
 
+    /// Deletes a user-imported stylesheet.
+    ///
+    /// Removes the file and updates the manifest. Returns an error if
+    /// attempting to delete the built-in default stylesheet.
     pub fn delete_stylesheet(&self, id: &str) -> Result<(), String> {
         if id == DEFAULT_STYLESHEET_ID {
             return Err("Cannot delete the default stylesheet".to_string());
