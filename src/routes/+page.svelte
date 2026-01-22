@@ -557,13 +557,8 @@
         lemma?: string,
         msa?: string,
     ) {
-        console.log("handleLemmatizerSave called", { wordIndex, lemma, msa });
         // Wait for Svelte reactivity to propagate store updates
         await tick();
-        console.log(
-            "Current session lemma mappings:",
-            $lemmaMappings.mappings,
-        );
         // Trigger immediate recompile to update TEI output with new lemma
         // Cancel any pending auto-preview and compile directly
         clearTimeout(compileTimeout);

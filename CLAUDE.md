@@ -157,7 +157,7 @@ All Tauri commands that do heavy work should:
 - `src-tauri/src/commands/parse.rs` - Async compile with `spawn_blocking()`
 - `src-tauri/src/commands/import.rs` - Async import with `spawn_blocking()`
 
-## Missing features:
+## Feature status:
 
 - [x] Search/replace functionality in editor
 - [x] Editor undo/redo (CodeMirror has built-in support, needs UI integration)
@@ -170,6 +170,7 @@ All Tauri commands that do heavy work should:
 - [x] Word- and character-level annotations beyond lemmatization
 - [x] Export to additional formats (HTML, PDF)
 - [x] Custom entity set management (add/remove entities beyond MENOTA)
-- Performance optimization
-- Code cleanup, refactoring
+- [x] Imported mode for round-trip TEI-XML editing with structure preservation
+- [ ] Performance optimization
+- [ ] Code cleanup, refactoring
 

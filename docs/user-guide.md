@@ -442,6 +442,142 @@ Click the "☰" button to view the application log. This shows:
 - Errors during parsing or compilation
 - Debug information
 
+## Exporting Your Work
+
+Saga-Scribe supports multiple export formats for different publication and archival needs.
+
+### TEI-XML Export
+
+Export your transcription as a standalone TEI-XML document:
+
+1. Click **File > Export XML** in the toolbar menu
+2. Choose a location and filename (`.xml` extension)
+3. The complete TEI document is saved, including header metadata
+
+The exported XML includes all lemma annotations, entity references, and multi-level transcription data if enabled.
+
+### HTML Export
+
+Export a standalone HTML file for web publication or archiving:
+
+1. Click **File > Export HTML** in the toolbar menu
+2. Choose a location and filename (`.html` extension)
+3. The HTML file includes embedded styles for display
+
+The HTML export:
+- Includes all necessary CSS for medieval character display
+- Embeds the Junicode font for MUFI characters
+- Works offline without external dependencies
+- Preserves clickable word structure when applicable
+
+### PDF Export
+
+Create a PDF for printing or sharing:
+
+1. Click **File > Export PDF** in the toolbar menu
+2. Your system's print dialog opens with "Save as PDF" option
+3. Select your PDF settings and save
+
+**Note**: PDF export uses your browser's print functionality. The print dialog settings (margins, scaling, etc.) affect the final PDF appearance.
+
+### Dictionary Export
+
+Export your lemmatization data as JSON for backup or analysis:
+
+1. Click **File > Export Dictionary** in the toolbar menu
+2. Choose a location and filename (`.json` extension)
+3. All confirmed word-to-lemma mappings are exported
+
+The JSON format includes:
+- Word forms (facsimile and diplomatic)
+- Lemma assignments
+- Morphological analysis codes (me:msa)
+- Normalized forms
+
+## Working with Imported Documents
+
+When you import a TEI-XML file, Saga-Scribe enters **Imported Mode** to preserve the original structure during round-trip editing.
+
+### The Imported Badge
+
+Documents opened from TEI-XML show an "Imported" badge in the toolbar. This indicates:
+- The document retains its original XML structure
+- Segments not editable in DSL are preserved exactly
+- Re-exporting maintains fidelity with the source file
+
+### Segment Preservation
+
+Imported documents track which XML segments came from the original file. When you compile:
+
+1. **Editable segments**: Your DSL changes compile normally
+2. **Preserved segments**: Original XML is kept verbatim
+3. **New content**: Added material follows your template settings
+
+This allows you to edit specific passages while keeping complex markup (like existing apparatus entries) intact.
+
+### Round-Trip Fidelity
+
+The imported mode ensures that:
+- Original namespace declarations are preserved
+- Processing instructions remain intact
+- Attributes not expressible in DSL are not lost
+- Comments and whitespace in preserved sections stay unchanged
+
+### Clearing Import State
+
+To start fresh without preservation:
+1. Create a new document (File > New)
+2. Copy your DSL content to the new document
+3. The new document uses your template settings exclusively
+
+## Managing Custom Entities
+
+The Entity Browser supports creating and managing custom entities beyond the built-in MENOTA/MUFI character set.
+
+### Adding Custom Entities
+
+1. Open the Entity Browser (click "ꝥ" in the editor header)
+2. Click the **+** button in the header to create a new entity
+3. Fill in:
+   - **Name**: The identifier used in DSL (e.g., `mychar` for `:mychar:`)
+   - **Character**: The Unicode character or characters to insert
+   - **Description**: Optional explanatory text
+4. Click **Save**
+
+Custom entities appear in the entity list with an "custom" indicator and can be used immediately in your transcription.
+
+### Editing Custom Entities
+
+1. Click the **pencil icon** next to any custom entity
+2. Modify the character or description
+3. Click **Save**
+
+**Note**: Changing an entity's character affects all future uses of that entity in your documents.
+
+### Removing Custom Entities
+
+1. Click the **trash icon** next to the custom entity
+2. Confirm the deletion
+
+Removing a custom entity does not affect already-compiled XML, but the entity reference will become invalid for new compilations.
+
+### Custom Entity Persistence
+
+Custom entities are stored locally and persist across sessions. They are independent of your project files, meaning:
+- All projects on your system share the same custom entity set
+- Custom entities are not included in `.teis` project archives
+- Export your entity mappings separately for backup if needed
+
+### Custom Diplomatic Mappings
+
+Beyond creating new entities, you can customize how built-in entities normalize:
+
+1. Select any entity in the browser
+2. Edit the **Translation** field
+3. Press Enter to save
+
+This affects the diplomatic and normalized levels without changing the entity definition itself.
+
 ## Tips
 
 1. **Start simple**: Use basic syntax first, add markup incrementally
