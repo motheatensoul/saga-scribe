@@ -14,6 +14,19 @@
         type InflectedForm,
     } from '$lib/tauri';
     import { X as CloseButton } from "@lucide/svelte";
+    import {
+        wordClasses,
+        cases,
+        numbers,
+        genders,
+        species,
+        grades,
+        persons,
+        tenses,
+        moods,
+        voices,
+        finitenessOptions,
+    } from '$lib/constants/menota';
 
     let {
         facsimile,
@@ -28,89 +41,6 @@
         onclose?: () => void;
         onsave?: (wordIndex: number, lemma: string, msa: string) => void;
     } = $props();
-
-    // MENOTA word classes
-    const wordClasses = [
-        { code: 'xNC', label: 'Noun (common)' },
-        { code: 'xNP', label: 'Noun (proper)' },
-        { code: 'xAJ', label: 'Adjective' },
-        { code: 'xPE', label: 'Pronoun (personal)' },
-        { code: 'xPR', label: 'Pronoun (reflexive)' },
-        { code: 'xPQ', label: 'Pronoun (interrogative)' },
-        { code: 'xPI', label: 'Pronoun (indefinite)' },
-        { code: 'xDD', label: 'Determiner (demonstrative)' },
-        { code: 'xDQ', label: 'Determiner (quantifier)' },
-        { code: 'xDP', label: 'Determiner (possessive)' },
-        { code: 'xVB', label: 'Verb' },
-        { code: 'xAV', label: 'Adverb' },
-        { code: 'xAQ', label: 'Adverb (interrogative)' },
-        { code: 'xAP', label: 'Preposition' },
-        { code: 'xCC', label: 'Conjunction (coordinating)' },
-        { code: 'xCS', label: 'Conjunction (subordinating)' },
-        { code: 'xIT', label: 'Interjection' },
-        { code: 'xIM', label: 'Infinitive marker' },
-        { code: 'xUA', label: 'Unassigned' },
-    ];
-
-    // Morphological categories
-    const cases = [
-        { code: 'cN', label: 'Nominative' },
-        { code: 'cG', label: 'Genitive' },
-        { code: 'cD', label: 'Dative' },
-        { code: 'cA', label: 'Accusative' },
-    ];
-
-    const numbers = [
-        { code: 'nS', label: 'Singular' },
-        { code: 'nD', label: 'Dual' },
-        { code: 'nP', label: 'Plural' },
-    ];
-
-    const genders = [
-        { code: 'gM', label: 'Masculine' },
-        { code: 'gF', label: 'Feminine' },
-        { code: 'gN', label: 'Neuter' },
-    ];
-
-    const species = [
-        { code: 'sI', label: 'Indefinite' },
-        { code: 'sD', label: 'Definite' },
-    ];
-
-    const grades = [
-        { code: 'rP', label: 'Positive' },
-        { code: 'rC', label: 'Comparative' },
-        { code: 'rS', label: 'Superlative' },
-    ];
-
-    const persons = [
-        { code: 'p1', label: '1st person' },
-        { code: 'p2', label: '2nd person' },
-        { code: 'p3', label: '3rd person' },
-    ];
-
-    const tenses = [
-        { code: 'tPS', label: 'Present' },
-        { code: 'tPT', label: 'Preterite' },
-    ];
-
-    const moods = [
-        { code: 'mIN', label: 'Indicative' },
-        { code: 'mSU', label: 'Subjunctive' },
-        { code: 'mIP', label: 'Imperative' },
-    ];
-
-    const voices = [
-        { code: 'vA', label: 'Active' },
-        { code: 'vR', label: 'Reflexive (middle)' },
-    ];
-
-    const finitenessOptions = [
-        { code: 'fF', label: 'Finite' },
-        { code: 'fP', label: 'Participle' },
-        { code: 'fS', label: 'Supine' },
-        { code: 'fI', label: 'Infinitive' },
-    ];
 
     // Search state - use diplomatic form for searching
     // svelte-ignore state_referenced_locally 
@@ -350,9 +280,7 @@
     }
 
     async function handleSave() {
-        console.log('handleSave called', { selectedEntry, msaString, wordClass, normalizedForm, wordIndex });
         if (!selectedEntry || !msaString) {
-            console.log('Save blocked: missing selectedEntry or msaString');
             return;
         }
 
@@ -360,8 +288,6 @@
         const normForm = normalizedForm.trim() || suggestedNorm;
 
         try {
-            console.log('Saving inflection...', { facsimile, diplomatic, wordIndex, lemma: selectedEntry.lemma, msa: msaString, normalized: normForm });
-
             // Save to persistent inflection store (by diplomatic form for consistent lookup)
             await addInflection(
                 diplomatic,  // Key by diplomatic form
@@ -392,9 +318,7 @@
                 normalized: normForm,
             });
 
-            console.log('Calling onsave callback with wordIndex:', wordIndex);
             onsave?.(wordIndex, selectedEntry.lemma, msaString);
-            console.log('Calling onclose callback...');
             onclose?.();
         } catch (e) {
             console.error('Failed to save inflection:', e);
