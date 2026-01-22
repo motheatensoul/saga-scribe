@@ -63,6 +63,19 @@ jobs:
             Copy-Item $libxml2Lib $xml2Lib
             Write-Host "Created xml2.lib alias"
           }
+          # Find Windows SDK and MSVC paths for bindgen/clang
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $msvcPath = Get-ChildItem "$vsPath\VC\Tools\MSVC" | Sort-Object Name -Descending | Select-Object -First 1
+          $msvcInclude = "$($msvcPath.FullName)\include"
+          # Find Windows SDK
+          $sdkVersion = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object Name -Descending | Select-Object -First 1
+          $sdkInclude = "C:\Program Files (x86)\Windows Kits\10\Include\$($sdkVersion.Name)\ucrt"
+          # Set bindgen clang args to find system headers
+          $clangArgs = "-I`"$msvcInclude`" -I`"$sdkInclude`" -I`"$vcpkgInstalled\include`" -I`"$vcpkgInstalled\include\libxml2`""
+          echo "BINDGEN_EXTRA_CLANG_ARGS=$clangArgs" >> $env:GITHUB_ENV
+          Write-Host "MSVC include: $msvcInclude"
+          Write-Host "SDK include: $sdkInclude"
+          Write-Host "Clang args: $clangArgs"
           # List what was installed for debugging
           Write-Host "Installed libraries:"
           Get-ChildItem "$vcpkgInstalled\lib\*.lib" | ForEach-Object { Write-Host $_.Name }
