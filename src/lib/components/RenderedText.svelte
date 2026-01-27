@@ -442,11 +442,30 @@
                         break;
                     }
                     case 'supplied': {
-                        const text = normalizeWhitespace(
-                            resolveEntitiesToGlyphs(el.textContent || '', placeholderGlyphs),
-                        );
-                        if (text) {
-                            result.push({ type: 'text', displayText: `⟨${text}⟩` });
+                        // Check if supplied contains word elements - if so, recurse to make them interactive
+                        const hasWordChildren = el.querySelector('w') !== null;
+                        if (hasWordChildren) {
+                            // Add opening bracket
+                            result.push({ type: 'text', displayText: '⟨' });
+                            // Recurse to extract word tokens
+                            await extractTokensAsync(
+                                el,
+                                result,
+                                placeholderGlyphs,
+                                wordCounter,
+                                yieldCounter,
+                                yieldEvery,
+                            );
+                            // Add closing bracket
+                            result.push({ type: 'text', displayText: '⟩' });
+                        } else {
+                            // No word children - just extract text content
+                            const text = normalizeWhitespace(
+                                resolveEntitiesToGlyphs(el.textContent || '', placeholderGlyphs),
+                            );
+                            if (text) {
+                                result.push({ type: 'text', displayText: `⟨${text}⟩` });
+                            }
                         }
                         break;
                     }
