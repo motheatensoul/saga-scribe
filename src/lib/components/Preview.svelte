@@ -14,6 +14,21 @@
     } = $props();
 
     let viewMode = $state<'xml' | 'rendered' | 'xslt'>('rendered');
+
+    // Track which views have been visited (for lazy mount + keep alive)
+    // Once a view is visited, it stays mounted but hidden when inactive
+    let visited = $state<Record<'xml' | 'rendered' | 'xslt', boolean>>({
+        rendered: true,  // Default view, always visited
+        xslt: false,
+        xml: false,
+    });
+
+    // Mark view as visited when selected
+    $effect(() => {
+        if (!visited[viewMode]) {
+            visited[viewMode] = true;
+        }
+    });
 </script>
 
 <div class="w-full h-full flex flex-col bg-base-200">
@@ -64,13 +79,22 @@
             </button>
         </div>
     </div>
-    <div class="flex-1 overflow-auto h-full">
-        {#if viewMode === 'xml'}
-            <XmlPreview {content} />
-        {:else if viewMode === 'xslt'}
-            <XsltRenderer {content} {xslPath} {onwordclick} />
-        {:else}
-            <RenderedText {content} {onwordclick} />
+    <div class="flex-1 overflow-hidden h-full relative">
+        <!-- Lazy mount + keep alive: only mount when first visited, then keep mounted but hidden -->
+        {#if visited.rendered}
+            <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'rendered'}>
+                <RenderedText {content} {onwordclick} />
+            </div>
+        {/if}
+        {#if visited.xslt}
+            <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'xslt'}>
+                <XsltRenderer {content} {xslPath} {onwordclick} />
+            </div>
+        {/if}
+        {#if visited.xml}
+            <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'xml'}>
+                <XmlPreview {content} />
+            </div>
         {/if}
     </div>
 </div>

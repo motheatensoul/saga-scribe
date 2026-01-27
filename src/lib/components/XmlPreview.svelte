@@ -6,6 +6,7 @@
     import { basicSetup } from "@codemirror/basic-setup";
     import { lintGutter, linter, type Diagnostic } from "@codemirror/lint";
     import { validationStore } from "$lib/stores/validation";
+    import { scrollPositionStore } from "$lib/stores/scrollPosition.svelte";
     import { daisyExtensions } from "$lib/editor/theme";
 
     let {
@@ -68,9 +69,26 @@
             state: startState,
             parent: container,
         });
+
+        // Restore scroll position after CodeMirror is ready
+        requestAnimationFrame(() => {
+            if (view?.scrollDOM) {
+                const saved = scrollPositionStore.getPosition('xml');
+                view.scrollDOM.scrollTop = saved.scrollTop;
+                view.scrollDOM.scrollLeft = saved.scrollLeft;
+            }
+        });
     });
 
     onDestroy(() => {
+        // Save scroll position before destroying
+        if (view?.scrollDOM) {
+            scrollPositionStore.savePosition(
+                'xml',
+                view.scrollDOM.scrollTop,
+                view.scrollDOM.scrollLeft
+            );
+        }
         view?.destroy();
     });
 
