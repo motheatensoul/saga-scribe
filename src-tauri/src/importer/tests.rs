@@ -470,6 +470,113 @@ fn test_import_character_annotation() {
     assert_eq!(result.dsl.trim(), "Maðr");
 }
 
+#[test]
+fn test_import_word_with_character_annotations_preserves_lemma() {
+    // Words with <c> elements inside <me:facs> should still preserve lemma/msa attributes
+    // This is the structure used in HolmPerg for decorated initials
+    let xml = r#"<body xmlns:me="http://www.menota.org/ns/1.0">
+        <w lemma="Magnús" me:msa="xNP gM nS cN sI">
+            <choice>
+                <me:facs><c type="initial">M</c><c type="littNot">A</c>gnus</me:facs>
+                <me:dipl><c type="initial">M</c><c type="littNot">A</c>gnus</me:dipl>
+                <me:norm>Magnús</me:norm>
+            </choice>
+        </w>
+    </body>"#;
+    let result = parse(xml).unwrap();
+    let doc = result.imported_document.expect("Expected imported document");
+
+    // Find the word segment
+    let word_segment = doc
+        .segments
+        .iter()
+        .find_map(|segment| match segment {
+            Segment::Word { attributes, dsl_content, .. } => Some((attributes, dsl_content)),
+            _ => None,
+        })
+        .expect("Expected word segment");
+
+    let (attrs, dsl) = word_segment;
+
+    // Lemma and msa should be preserved in attributes
+    assert_eq!(attrs.get("lemma"), Some(&"Magnús".to_string()),
+        "Lemma attribute should be preserved");
+    assert_eq!(attrs.get("me:msa"), Some(&"xNP gM nS cN sI".to_string()),
+        "me:msa attribute should be preserved");
+
+    // DSL content should have the facs level text
+    assert!(dsl.contains("MAgnus") || dsl.contains("M") && dsl.contains("gnus"),
+        "DSL should contain facs level text: got '{}'", dsl);
+}
+
+#[test]
+fn test_holmperg_first_words_have_lemma() {
+    // Test that the first few words from HolmPerg are extracted with their lemma attributes
+    let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+
+    if !test_file_path.exists() {
+        println!("Test file not found at {:?}, skipping", test_file_path);
+        return;
+    }
+
+    let xml_content = std::fs::read_to_string(&test_file_path)
+        .expect("Should read test file");
+
+    let result = parse(&xml_content).unwrap();
+    let doc = result.imported_document.expect("Expected imported document");
+
+    // Collect all word segments with their attributes
+    let words_with_lemma: Vec<_> = doc
+        .segments
+        .iter()
+        .filter_map(|segment| match segment {
+            Segment::Word { attributes, dsl_content, original_xml, .. } => {
+                if original_xml.trim_start().starts_with("<w") {
+                    Some((attributes.clone(), dsl_content.clone(), original_xml.clone()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        })
+        .collect();
+
+    // Print first 10 words for debugging
+    println!("First 10 word segments:");
+    for (i, (attrs, dsl, xml)) in words_with_lemma.iter().take(10).enumerate() {
+        let lemma = attrs.get("lemma").map(|s| s.as_str()).unwrap_or("<none>");
+        let msa = attrs.get("me:msa").map(|s| s.as_str()).unwrap_or("<none>");
+        println!("  {}: lemma='{}', msa='{}', dsl='{}'", i, lemma, msa, dsl);
+        if lemma == "<none>" {
+            println!("    xml preview: {}", &xml.chars().take(100).collect::<String>());
+        }
+    }
+
+    // Count words with lemma attributes
+    let words_with_lemma_count = words_with_lemma
+        .iter()
+        .filter(|(attrs, _, _)| attrs.contains_key("lemma"))
+        .count();
+
+    println!("Words with lemma: {} / {}", words_with_lemma_count, words_with_lemma.len());
+
+    // The file has heavily annotated words - most should have lemma attributes
+    assert!(words_with_lemma_count > 0, "Should have at least some words with lemma attributes");
+
+    // Check that specific words we know exist have their lemma
+    // Look for "Magnús" which appears early in the text
+    let magnus_word = words_with_lemma
+        .iter()
+        .find(|(attrs, _, _)| attrs.get("lemma") == Some(&"Magnús".to_string()));
+
+    assert!(magnus_word.is_some(),
+        "Should find a word with lemma='Magnús'. First 5 lemmas: {:?}",
+        words_with_lemma.iter().take(5).map(|(a, _, _)| a.get("lemma")).collect::<Vec<_>>());
+}
+
 // ============================================================================
 // ABBREVIATION MARKER TESTS
 // ============================================================================
