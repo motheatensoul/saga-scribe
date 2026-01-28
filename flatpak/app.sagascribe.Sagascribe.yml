@@ -27,14 +27,16 @@ modules:
   - name: saga-scribe
     buildsystem: simple
     build-commands:
-      # Install the main binary
-      - install -Dm755 saga-scribe ${FLATPAK_DEST}/bin/saga-scribe
-      # Install bundled resources
-      - mkdir -p ${FLATPAK_DEST}/share/saga-scribe
-      - cp -r entities ${FLATPAK_DEST}/share/saga-scribe/
-      - cp -r normalizer ${FLATPAK_DEST}/share/saga-scribe/
-      - cp -r dictionary ${FLATPAK_DEST}/share/saga-scribe/
-      - cp -r schemas ${FLATPAK_DEST}/share/saga-scribe/
+      # Install the main binary (renamed so wrapper takes precedence)
+      - install -Dm755 saga-scribe ${FLATPAK_DEST}/bin/saga-scribe.bin
+      # Install wrapper script that sets APPIMAGE env var for Tauri resource resolution
+      - install -Dm755 saga-scribe-wrapper.sh ${FLATPAK_DEST}/bin/saga-scribe
+      # Install bundled resources next to the binary
+      - mkdir -p ${FLATPAK_DEST}/bin
+      - cp -r entities ${FLATPAK_DEST}/bin/
+      - cp -r normalizer ${FLATPAK_DEST}/bin/
+      - cp -r dictionary ${FLATPAK_DEST}/bin/
+      - cp -r schemas ${FLATPAK_DEST}/bin/
       # Install desktop file
       - install -Dm644 app.sagascribe.Sagascribe.desktop ${FLATPAK_DEST}/share/applications/app.sagascribe.Sagascribe.desktop
       # Install AppStream metainfo
@@ -46,14 +48,20 @@ modules:
     sources:
       - type: file
         path: saga-scribe
+      - type: file
+        path: saga-scribe-wrapper.sh
       - type: dir
         path: entities
+        dest: entities
       - type: dir
         path: normalizer
+        dest: normalizer
       - type: dir
         path: dictionary
+        dest: dictionary
       - type: dir
         path: schemas
+        dest: schemas
       - type: file
         path: app.sagascribe.Sagascribe.desktop
       - type: file

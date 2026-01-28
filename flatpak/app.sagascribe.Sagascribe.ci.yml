@@ -21,12 +21,16 @@ modules:
   - name: saga-scribe
     buildsystem: simple
     build-commands:
-      - install -Dm755 saga-scribe ${FLATPAK_DEST}/bin/saga-scribe
-      - mkdir -p ${FLATPAK_DEST}/share/saga-scribe
-      - cp -r entities ${FLATPAK_DEST}/share/saga-scribe/
-      - cp -r normalizer ${FLATPAK_DEST}/share/saga-scribe/
-      - cp -r dictionary ${FLATPAK_DEST}/share/saga-scribe/
-      - cp -r schemas ${FLATPAK_DEST}/share/saga-scribe/
+      # Install the main binary (renamed so wrapper takes precedence)
+      - install -Dm755 saga-scribe ${FLATPAK_DEST}/bin/saga-scribe.bin
+      # Install wrapper script that sets APPIMAGE env var for Tauri resource resolution
+      - install -Dm755 saga-scribe-wrapper.sh ${FLATPAK_DEST}/bin/saga-scribe
+      # Install bundled resources next to the binary
+      - mkdir -p ${FLATPAK_DEST}/bin
+      - cp -r entities ${FLATPAK_DEST}/bin/
+      - cp -r normalizer ${FLATPAK_DEST}/bin/
+      - cp -r dictionary ${FLATPAK_DEST}/bin/
+      - cp -r schemas ${FLATPAK_DEST}/bin/
       - install -Dm644 app.sagascribe.Sagascribe.desktop ${FLATPAK_DEST}/share/applications/app.sagascribe.Sagascribe.desktop
       - install -Dm644 app.sagascribe.Sagascribe.metainfo.xml ${FLATPAK_DEST}/share/metainfo/app.sagascribe.Sagascribe.metainfo.xml
       - install -Dm644 icon-512.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/app.sagascribe.Sagascribe.png

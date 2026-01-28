@@ -38,6 +38,7 @@ done
 # Copy Flatpak metadata files
 cp flatpak/app.sagascribe.Sagascribe.desktop "$OUTPUT_DIR/"
 cp flatpak/app.sagascribe.Sagascribe.metainfo.xml "$OUTPUT_DIR/"
+cp flatpak/saga-scribe-wrapper.sh "$OUTPUT_DIR/"
 
 # Copy icons (resize if needed)
 # The main icon is 512x512

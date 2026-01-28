@@ -186,6 +186,7 @@ jobs:
           # Copy Flatpak metadata files
           cp flatpak/app.sagascribe.Sagascribe.desktop flatpak-build/
           cp flatpak/app.sagascribe.Sagascribe.metainfo.xml flatpak-build/
+          cp flatpak/saga-scribe-wrapper.sh flatpak-build/
 
           # Copy icons
           cp src-tauri/icons/icon.png flatpak-build/icon-512.png

@@ -17,7 +17,9 @@
 		"clean": "rm -rf node_modules/.vite .svelte-kit",
 		"tauri": "tauri",
 		"tauri:dev": "tauri dev",
-		"tauri:build": "tauri build"
+		"tauri:build": "tauri build",
+		"flatpak:build": "bash flatpak/build-flatpak.sh",
+		"flatpak:bundle": "flatpak build-bundle flatpak-repo saga-scribe.flatpak app.sagascribe.Sagascribe"
 	},
 	"devDependencies": {
 		"@lezer/generator": "^1.8.0",

@@ -62,6 +62,28 @@
     } from "$lib/stores/dictionary";
     import { resolveResource, appDataDir } from "@tauri-apps/api/path";
 
+    // Flatpak resource path prefix
+    const FLATPAK_RESOURCE_PREFIX = "/app/bin";
+
+    /**
+     * Generate all possible paths for a resource file.
+     * Tries: Tauri resolved path, dev path, Flatpak path
+     */
+    async function getResourcePaths(resourceName: string): Promise<string[]> {
+        const tauriPath = await resolveResource(resourceName);
+
+        // Dev path: transform Tauri path to static folder
+        const devPath = tauriPath.replace(
+            new RegExp(`src-tauri/target/[^/]+/${resourceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
+            `static/${resourceName}`,
+        );
+
+        // Flatpak path: /app/bin/{resourceName}
+        const flatpakPath = `${FLATPAK_RESOURCE_PREFIX}/${resourceName}`;
+
+        return [tauriPath, devPath, flatpakPath];
+    }
+
     //Icon imports
     import {
         BookDashed,
@@ -267,17 +289,8 @@
         }
 
         // Load default MENOTA entities
-        // Try resource path (production), then derive static folder from resource path (development)
-        const resourcePath = await resolveResource("entities/menota.json");
-
-        // For development, the resource path is like: .../src-tauri/target/debug/entities/menota.json
-        // We need: .../static/entities/menota.json
-        const devPath = resourcePath.replace(
-            /src-tauri\/target\/[^/]+\/entities\/menota\.json$/,
-            "static/entities/menota.json",
-        );
-
-        const entityPaths = [resourcePath, devPath];
+        // Try resource path (production), dev path, and Flatpak path
+        const entityPaths = await getResourcePaths("entities/menota.json");
 
         let entities = null;
         let loadedFrom = "";
@@ -325,17 +338,9 @@
             }
 
             // Load base entity mappings (diplomatic normalization defaults)
-            const baseMappingsResourcePath = await resolveResource(
+            const baseMappingsPaths = await getResourcePaths(
                 "normalizer/entity-base-letters.json",
             );
-            const baseMappingsDevPath = baseMappingsResourcePath.replace(
-                /src-tauri\/target\/[^/]+\/normalizer\/entity-base-letters\.json$/,
-                "static/normalizer/entity-base-letters.json",
-            );
-            const baseMappingsPaths = [
-                baseMappingsResourcePath,
-                baseMappingsDevPath,
-            ];
 
             for (const path of baseMappingsPaths) {
                 try {
@@ -390,14 +395,9 @@
         }
 
         // Load normalizer dictionary for multi-level transcription
-        const normalizerResourcePath = await resolveResource(
+        const normalizerPaths = await getResourcePaths(
             "normalizer/menota-levels.json",
         );
-        const normalizerDevPath = normalizerResourcePath.replace(
-            /src-tauri\/target\/[^/]+\/normalizer\/menota-levels\.json$/,
-            "static/normalizer/menota-levels.json",
-        );
-        const normalizerPaths = [normalizerResourcePath, normalizerDevPath];
 
         for (const path of normalizerPaths) {
             try {
@@ -425,14 +425,7 @@
         }
 
         // Load ONP dictionary for lemmatization
-        const onpResourcePath = await resolveResource(
-            "dictionary/onp-headwords.json",
-        );
-        const onpDevPath = onpResourcePath.replace(
-            /src-tauri\/target\/[^/]+\/dictionary\/onp-headwords\.json$/,
-            "static/dictionary/onp-headwords.json",
-        );
-        const onpPaths = [onpResourcePath, onpDevPath];
+        const onpPaths = await getResourcePaths("dictionary/onp-headwords.json");
 
         dictionaryStore.setLoading();
         for (const path of onpPaths) {

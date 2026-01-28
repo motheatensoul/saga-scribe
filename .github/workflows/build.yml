@@ -94,3 +94,68 @@ jobs:
           releaseDraft: false
           prerelease: true
           args: ${{ matrix.args }}
+
+      # Upload Linux binary as artifact for Flatpak build
+      - name: Upload Linux binary for Flatpak
+        if: matrix.platform == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-binary-nightly
+          path: src-tauri/target/release/saga-scribe
+          retention-days: 1
+
+  build-flatpak:
+    needs: test-tauri
+    runs-on: ubuntu-latest
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:gnome-49
+      options: --privileged
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux binary
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-binary-nightly
+          path: flatpak-build
+
+      - name: Prepare Flatpak build directory
+        run: |
+          # Make binary executable
+          chmod +x flatpak-build/saga-scribe
+
+          # Copy resource directories
+          cp -r static/entities flatpak-build/
+          cp -r static/normalizer flatpak-build/
+          cp -r static/dictionary flatpak-build/
+          cp -r static/schemas flatpak-build/
+
+          # Copy Flatpak metadata files
+          cp flatpak/app.sagascribe.Sagascribe.desktop flatpak-build/
+          cp flatpak/app.sagascribe.Sagascribe.metainfo.xml flatpak-build/
+          cp flatpak/saga-scribe-wrapper.sh flatpak-build/
+
+          # Copy icons
+          cp src-tauri/icons/icon.png flatpak-build/icon-512.png
+          cp src-tauri/icons/128x128@2x.png flatpak-build/icon-256.png
+          cp src-tauri/icons/128x128.png flatpak-build/icon-128.png
+
+          # Copy and use the CI-specific manifest
+          cp flatpak/app.sagascribe.Sagascribe.ci.yml flatpak-build/app.sagascribe.Sagascribe.yml
+
+          ls -la flatpak-build/
+
+      - name: Build Flatpak
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          manifest-path: flatpak-build/app.sagascribe.Sagascribe.yml
+          bundle: saga-scribe-nightly.flatpak
+          cache-key: flatpak-builder-${{ github.sha }}
+
+      - name: Upload Flatpak to Nightly Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: nightly
+          files: saga-scribe-nightly.flatpak
+          token: ${{ secrets.PAT_TOKEN }}
