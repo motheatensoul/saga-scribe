@@ -160,7 +160,7 @@ jobs:
     needs: [create-release, build-release]
     runs-on: ubuntu-latest
     container:
-      image: bilelmoussaoui/flatpak-github-actions:gnome-49
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
       options: --privileged
 
     steps:
