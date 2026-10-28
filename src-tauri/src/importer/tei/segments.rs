@@ -89,16 +89,25 @@ impl Segment {
     }
 }
 
+/// Byte ranges of segments within the original `<body>` source, indexed by segment ID.
+///
+/// Only editable segments (words, punctuation, breaks) carry a span. The whole
+/// map is absent when the source could not be aligned with the parsed DOM.
+pub type SourceSpans = Vec<Option<(usize, usize)>>;
+
 /// Complete manifest for an imported TEI document.
 ///
 /// This structure preserves all information needed for round-trip fidelity:
 /// the segment list tracks structural and content elements, while `is_menota`
 /// indicates whether the document uses MENOTA multi-level transcription.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedDocument {
     /// Ordered list of document segments (structural, words, breaks, etc.)
     pub segments: Vec<Segment>,
     /// Whether the document has MENOTA three-level structure (me:facs/dipl/norm)
     pub is_menota: bool,
+    /// Source spans for splicing edits into the original bytes (absent in
+    /// projects saved before spans existed; recomputed on demand).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spans: Option<SourceSpans>,
 }

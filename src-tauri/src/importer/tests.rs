@@ -1,6 +1,9 @@
 use super::tei::parse;
 use crate::importer::tei::helpers;
-use crate::importer::tei::patching::{apply_patches_and_reconstruct, compute_patches};
+use crate::importer::tei::patching::{
+    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body,
+    PatchOperation,
+};
 use crate::importer::tei::segments::Segment;
 use crate::parser::{Compiler, CompilerConfig, Lexer};
 use libxml::parser::Parser;
@@ -692,7 +695,7 @@ fn test_menota_file_roundtrip_stability() {
         .expect("Imported document manifest should exist");
 
     // Roundtrip using the imported patching path
-    let patches = compute_patches(&imported_doc.segments, &import_result.dsl);
+    let patches = compute_patches(&imported_doc.segments, &import_result.dsl).unwrap();
     let mut compiler = Compiler::new().with_config(CompilerConfig {
         word_wrap: true,
         auto_line_numbers: false,
@@ -786,7 +789,7 @@ fn test_menota_file_imported_roundtrip_xml() {
         .parse()
         .expect("Imported DSL should parse without errors");
 
-    let patches = compute_patches(&imported_doc.segments, &import_result.dsl);
+    let patches = compute_patches(&imported_doc.segments, &import_result.dsl).unwrap();
     let mut compiler = Compiler::new().with_config(CompilerConfig {
         word_wrap: true,
         auto_line_numbers: false,
@@ -972,3 +975,165 @@ fn test_roundtrip_space_before_tag() {
     assert_eq!(dsl2, "word +{added}+", "Cycle 1 should preserve space before tag");
 }
 
+
+// ============================================================================
+// SOURCE-PRESERVING ROUND-TRIP TESTS
+// The user's file is privileged: reading must never change it, and edits must
+// only touch the bytes of what was edited.
+// ============================================================================
+
+const MENOTA_SAMPLE: &str = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
+<p><lb n="3"/><w me:msa="xNC" lemma="maðr"><choice><me:facs>maþr</me:facs><me:dipl>maþr</me:dipl><me:norm>maðr</me:norm></choice></w> <w lemma="ganga"><choice><me:facs>geck</me:facs><me:dipl>gekk</me:dipl><me:norm>gekk</me:norm></choice></w><pc><choice><me:facs>.</me:facs><me:dipl>.</me:dipl><me:norm>.</me:norm></choice></pc></p>
+<p><w><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w></p>
+</body></text></TEI>"#;
+
+/// Imports `xml`, applies `edit` to the DSL, and compiles back the way
+/// `compile_imported` does. Returns (original body, new body).
+fn imported_roundtrip(xml: &str, edit: impl Fn(&str) -> String) -> Result<(String, String), String> {
+    let import = parse(xml)?;
+    let doc = import.imported_document.expect("manifest");
+    let original_body = import.original_body_xml.expect("body");
+    let patches = compute_patches(&doc.segments, &edit(&import.dsl))?;
+    let mut compiler = Compiler::new().with_config(compiler_config_for(&doc));
+    let body = render_body(&doc, Some(&original_body), &patches, &mut compiler);
+    Ok((original_body, body))
+}
+
+#[test]
+fn test_unchanged_import_is_byte_identical() {
+    let (original, body) = imported_roundtrip(MENOTA_SAMPLE, |d| d.to_string()).unwrap();
+    assert_eq!(original, body);
+}
+
+#[test]
+fn test_whitespace_only_edit_is_byte_identical() {
+    let (original, body) =
+        imported_roundtrip(MENOTA_SAMPLE, |d| format!("\n\n{}\n\n", d.replace(' ', "   "))).unwrap();
+    assert_eq!(original, body);
+}
+
+#[test]
+fn test_dsl_parse_error_is_an_error_not_a_wipe() {
+    let result = imported_roundtrip(MENOTA_SAMPLE, |d| format!("{} -{{broken", d));
+    assert!(result.is_err(), "unparseable DSL must not produce output");
+}
+
+#[test]
+fn test_edit_touches_only_the_edited_word() {
+    let (original, body) = imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("geck", "gekk")).unwrap();
+    // Untouched word keeps its exact original bytes, including attribute order.
+    assert!(body.contains(r#"<w me:msa="xNC" lemma="maðr"><choice><me:facs>maþr</me:facs>"#));
+    // Edited word keeps its lemma.
+    assert!(body.contains(r#"lemma="ganga""#));
+    assert!(body.contains("<me:facs>gekk</me:facs>"));
+    assert!(!body.contains("geck"));
+    // Everything outside the edited <w> is unchanged.
+    let start = original.find(r#"<w lemma="ganga">"#).unwrap();
+    assert_eq!(&body[..start], &original[..start]);
+    assert!(body.ends_with(&original[original.find("<pc>").unwrap()..]));
+}
+
+#[test]
+fn test_line_break_edit_is_applied() {
+    let (_, body) = imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("//3", "//4")).unwrap();
+    assert!(body.contains(r#"<lb n="4"/>"#), "{}", body);
+    assert!(!body.contains(r#"<lb n="3"/>"#));
+}
+
+#[test]
+fn test_insert_at_paragraph_end_stays_in_paragraph() {
+    let (_, body) = imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("geck.", "geck. hann")).unwrap();
+    let first_p_end = body.find("</p>").unwrap();
+    let inserted = body.find("<me:facs>hann</me:facs>").expect("inserted word");
+    assert!(inserted < first_p_end, "insert must land in the first paragraph:\n{}", body);
+}
+
+#[test]
+fn test_non_menota_insert_is_single_level() {
+    let xml = "<TEI><text><body><p><w>alpha</w> <w>beta</w></p></body></text></TEI>";
+    let (_, body) = imported_roundtrip(xml, |d| format!("{} gamma", d)).unwrap();
+    assert!(body.contains("<w>gamma</w>"), "{}", body);
+    assert!(!body.contains("me:facs"));
+}
+
+#[test]
+fn test_plain_text_edit_stays_plain_text() {
+    let xml = "<TEI><text><body><p>Hello brave world</p></body></text></TEI>";
+    let (original, body) = imported_roundtrip(xml, |d| d.replace("brave", "bold")).unwrap();
+    assert_eq!(body, original.replace("brave", "bold"));
+}
+
+#[test]
+fn test_entities_and_comments_survive_untouched() {
+    let xml = "<TEI><text><body><!-- keep me --><p>a &amp; b<lb n='1' />c</p></body></text></TEI>";
+    let (original, body) = imported_roundtrip(xml, |d| d.replace('c', "cc")).unwrap();
+    assert_eq!(body, original.replace(">c<", ">cc<"));
+}
+
+fn load_holmperg() -> Option<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+    std::fs::read_to_string(path).ok()
+}
+
+#[test]
+fn test_menota_file_unchanged_is_byte_identical() {
+    let Some(xml) = load_holmperg() else { return };
+    let import = parse(&xml).unwrap();
+    assert!(
+        import.imported_document.as_ref().unwrap().spans.is_some(),
+        "source spans should align for the reference MENOTA file"
+    );
+    let (original, body) = imported_roundtrip(&xml, |d| d.to_string()).unwrap();
+    assert!(original == body, "unchanged import must reproduce the body byte-for-byte");
+}
+
+#[test]
+fn test_menota_file_distant_edits_preserve_everything_else() {
+    let Some(xml) = load_holmperg() else { return };
+    let import = parse(&xml).unwrap();
+    let doc = import.imported_document.unwrap();
+    // First plain word outside any block construct (a word inside `.head{...}`
+    // is part of one opaque segment and would regenerate the whole head).
+    let mut depth = 0i32;
+    let mut first = None;
+    for token in import.dsl.split_whitespace() {
+        if depth == 0 && token.len() > 3 && token.chars().all(char::is_alphabetic) {
+            first = Some(token.to_string());
+            break;
+        }
+        depth += token.matches('{').count() as i32 - token.matches('}').count() as i32;
+    }
+    let first = first.unwrap();
+    let edited = format!(
+        "{} extra",
+        import.dsl.replacen(&format!(" {} ", first), " XXX ", 1)
+    );
+
+    // Exactly two changes: the edited token's segment and the appended word.
+    let patches = compute_patches(&doc.segments, &edited).unwrap();
+    let changes: Vec<_> = patches
+        .iter()
+        .filter(|p| !matches!(p, PatchOperation::Keep { .. }))
+        .collect();
+    assert_eq!(changes.len(), 2, "unexpected changes: {:?}", changes);
+
+    let (original, body) = imported_roundtrip(&xml, |_| edited.clone()).unwrap();
+    assert_eq!(
+        original.matches("lemma=").count(),
+        body.matches("lemma=").count(),
+        "no lemma attributes may be lost"
+    );
+    assert!(body.contains("<me:facs>XXX</me:facs>"));
+    assert!(body.contains("<me:facs>extra</me:facs>"));
+}
+
+#[test]
+fn test_multi_word_w_edit_stays_one_word() {
+    let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="þó at"><choice><me:facs>þo at</me:facs><me:dipl>þo at</me:dipl><me:norm>þó at</me:norm></choice></w> <w><choice><me:facs>x</me:facs><me:dipl>x</me:dipl><me:norm>x</me:norm></choice></w></p></body></text></TEI>"#;
+    let (_, body) = imported_roundtrip(xml, |d| d.replace("þo at", "þa at")).unwrap();
+    assert!(body.contains("<me:facs>þa at</me:facs>"), "{}", body);
+    assert_eq!(body.matches("<w").count(), 2, "{}", body);
+    assert!(body.contains(r#"lemma="þó at""#));
+}

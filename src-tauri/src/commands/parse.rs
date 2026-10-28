@@ -1,6 +1,6 @@
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
-use crate::importer::tei::patching::{apply_patches_and_reconstruct, compute_patches};
+use crate::importer::tei::patching::{compiler_config_for, compute_patches, render_body};
 use crate::importer::tei::segments::{ImportedDocument, Segment};
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping};
@@ -101,7 +101,13 @@ pub async fn compile_dsl(
 /// Compile an imported document using the patching system for round-trip fidelity.
 ///
 /// This command takes edited DSL, the original segment manifest, and original body XML,
-/// computes the differences, and reconstructs the XML with minimal changes.
+/// computes the differences, and splices them into the original XML. Unedited content
+/// is emitted byte-for-byte.
+///
+/// # Errors
+///
+/// Returns an error if the edited DSL does not parse; callers must keep the
+/// previous output rather than writing anything.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command(async, rename_all = "camelCase")]
 pub async fn compile_imported(
@@ -109,6 +115,7 @@ pub async fn compile_imported(
     segments_json: String,
     preamble: String,
     postamble: String,
+    original_body_xml: Option<String>,
     entities_json: Option<String>,
     normalizer_json: Option<String>,
     entity_mappings_json: Option<String>,
@@ -124,6 +131,7 @@ pub async fn compile_imported(
                 ImportedDocument {
                     segments,
                     is_menota: false,
+                    spans: None,
                 }
             }
         };
@@ -149,13 +157,8 @@ pub async fn compile_imported(
             }
         }
 
-        // Configure compiler for multi-level output
-        let config = CompilerConfig {
-            word_wrap: true,
-            auto_line_numbers: false,
-            multi_level: true,
-            wrap_pages: false,
-        };
+        // Match the document's own encoding style
+        let config = compiler_config_for(&imported_doc);
 
         let mut compiler = Compiler::new()
             .with_entities(&registry)
@@ -166,10 +169,15 @@ pub async fn compile_imported(
         }
 
         // Compute patches between original segments and edited DSL
-        let patches = compute_patches(&imported_doc.segments, &edited_dsl);
+        let patches = compute_patches(&imported_doc.segments, &edited_dsl)?;
 
-        // Apply patches and reconstruct the body XML
-        let body = apply_patches_and_reconstruct(&imported_doc.segments, &patches, &mut compiler);
+        // Apply patches to the original body XML
+        let body = render_body(
+            &imported_doc,
+            original_body_xml.as_deref(),
+            &patches,
+            &mut compiler,
+        );
 
         // Combine with preamble (everything before body) and postamble (everything after)
         Ok(format!("{}{}{}", preamble, body, postamble))

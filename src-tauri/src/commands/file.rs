@@ -29,15 +29,20 @@
 //! | 1.2 | Added annotations.json (full annotation set) |
 //! | 1.3 | Added segments.json and original_body.xml for round-trip |
 //! | 1.4 | Added original_preamble.xml and original_postamble.xml |
+//! | 1.5 | segments.json is always the full manifest (incl. `is_menota`, source spans) |
+//!
+//! All writes are atomic: data is written to a temporary file next to the target
+//! and renamed over it, so a crash mid-save never leaves a truncated file.
 
 use crate::annotations::AnnotationSet;
-use crate::importer::tei::segments::ImportedDocument;
+use crate::importer::tei::recompute_spans;
+use crate::importer::tei::segments::{ImportedDocument, Segment};
 use crate::metadata::Metadata;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
@@ -63,19 +68,53 @@ pub fn load_text_file(path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn save_file(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, &content).map_err(|e| e.to_string())
+    write_file_atomic(Path::new(&path), content.as_bytes())
 }
 
 #[tauri::command]
 pub fn export_tei(path: String, tei_content: String) -> Result<(), String> {
-    let path = PathBuf::from(path);
-    fs::write(&path, &tei_content).map_err(|e| e.to_string())
+    write_file_atomic(Path::new(&path), tei_content.as_bytes())
 }
 
 #[tauri::command]
 pub fn export_html(path: String, html_content: String) -> Result<(), String> {
-    let path = PathBuf::from(path);
-    fs::write(&path, &html_content).map_err(|e| e.to_string())
+    write_file_atomic(Path::new(&path), html_content.as_bytes())
+}
+
+/// Writes `contents` to `path` without ever leaving a partially written file.
+pub fn write_file_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
+    write_atomic_with(path, |file| {
+        file.write_all(contents)
+            .map_err(|e| format!("Failed to write file: {}", e))
+    })
+}
+
+/// Creates a temporary file beside `path`, lets `write` fill it, syncs it to disk
+/// and renames it over `path`. On any failure the original file is untouched.
+fn write_atomic_with(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> Result<(), String>,
+) -> Result<(), String> {
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("Invalid file path: {}", path.display()))?;
+    let tmp_path = path.with_file_name(format!(".{}.tmp", file_name.to_string_lossy()));
+
+    let result = File::create(&tmp_path)
+        .map_err(|e| format!("Failed to create file: {}", e))
+        .and_then(|mut file| {
+            write(&mut file)?;
+            file.sync_all()
+                .map_err(|e| format!("Failed to flush file: {}", e))
+        })
+        .and_then(|_| {
+            fs::rename(&tmp_path, path).map_err(|e| format!("Failed to replace file: {}", e))
+        });
+
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
 }
 
 // Project archive format (.teis)
@@ -159,8 +198,52 @@ pub fn save_project(
     original_preamble: Option<String>,
     original_postamble: Option<String>,
 ) -> Result<(), String> {
-    let path = PathBuf::from(&path);
-    let file = File::create(&path).map_err(|e| format!("Failed to create file: {}", e))?;
+    write_atomic_with(Path::new(&path), |file| {
+        write_project_archive(
+            file,
+            ProjectContents {
+                source,
+                output,
+                confirmations_json,
+                template_id,
+                metadata_json,
+                annotations_json,
+                segments_json,
+                original_body_xml,
+                original_preamble,
+                original_postamble,
+            },
+        )
+    })
+}
+
+/// Everything written into a project archive.
+struct ProjectContents {
+    source: String,
+    output: String,
+    confirmations_json: String,
+    template_id: String,
+    metadata_json: Option<String>,
+    annotations_json: Option<String>,
+    segments_json: Option<String>,
+    original_body_xml: Option<String>,
+    original_preamble: Option<String>,
+    original_postamble: Option<String>,
+}
+
+fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(), String> {
+    let ProjectContents {
+        source,
+        output,
+        confirmations_json,
+        template_id,
+        metadata_json,
+        annotations_json,
+        segments_json,
+        original_body_xml,
+        original_preamble,
+        original_postamble,
+    } = contents;
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated)
@@ -234,7 +317,7 @@ pub fn save_project(
     // Create and write manifest.json
     let now = chrono_lite_now();
     let manifest = ProjectManifest {
-        version: "1.4".to_string(),
+        version: "1.5".to_string(),
         template_id,
         created: now.clone(),
         modified: now,
@@ -290,14 +373,28 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         .ok()
         .and_then(|ann_str| serde_json::from_str(&ann_str).ok());
 
-    // Read imported document data (optional, new in v1.3)
-    let imported_document: Option<ImportedDocument> = read_zip_file(&mut archive, "segments.json")
-        .ok()
-        .and_then(|seg_str| serde_json::from_str(&seg_str).ok());
-
     let original_body_xml = read_zip_file(&mut archive, "original_body.xml").ok();
     let original_preamble = read_zip_file(&mut archive, "original_preamble.xml").ok();
     let original_postamble = read_zip_file(&mut archive, "original_postamble.xml").ok();
+
+    // Read imported document data (optional, new in v1.3)
+    let mut imported_document = match read_zip_file(&mut archive, "segments.json") {
+        Ok(seg_str) => Some(parse_imported_document(&seg_str)?),
+        Err(_) => None,
+    };
+
+    // Projects saved before v1.5 have no source spans; derive them from the
+    // stored original XML so edits can be spliced in byte-for-byte.
+    if let (Some(doc), Some(body)) = (imported_document.as_mut(), original_body_xml.as_deref()) {
+        if doc.spans.is_none() {
+            doc.spans = recompute_spans(
+                original_preamble.as_deref().unwrap_or_default(),
+                body,
+                original_postamble.as_deref().unwrap_or_default(),
+                &doc.segments,
+            );
+        }
+    }
 
     Ok(ProjectData {
         source,
@@ -310,6 +407,28 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         original_body_xml,
         original_preamble,
         original_postamble,
+    })
+}
+
+/// Parses segments.json, which is the full manifest since v1.5. Versions up to
+/// 1.4 wrote a bare segment array, which lost `is_menota`; MENOTA structure is
+/// then re-detected from the segments themselves.
+fn parse_imported_document(json: &str) -> Result<ImportedDocument, String> {
+    if let Ok(doc) = serde_json::from_str::<ImportedDocument>(json) {
+        return Ok(doc);
+    }
+    let segments: Vec<Segment> = serde_json::from_str(json)
+        .map_err(|e| format!("Failed to parse segments.json: {}", e))?;
+    let is_menota = segments.iter().any(|seg| match seg {
+        Segment::Word { original_xml, .. } | Segment::Punctuation { original_xml, .. } => {
+            original_xml.contains(":facs")
+        }
+        _ => false,
+    });
+    Ok(ImportedDocument {
+        segments,
+        is_menota,
+        spans: None,
     })
 }
 
@@ -377,4 +496,78 @@ fn chrono_lite_now() -> String {
 
 fn is_leap_year(year: i64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_imported_document_accepts_full_manifest() {
+        let json = r#"{"segments":[{"type":"whitespace","id":0,"content":" "}],"is_menota":true,"spans":[null]}"#;
+        let doc = parse_imported_document(json).unwrap();
+        assert!(doc.is_menota);
+        assert_eq!(doc.spans, Some(vec![None]));
+    }
+
+    #[test]
+    fn test_parse_imported_document_accepts_legacy_bare_array() {
+        // Projects up to v1.4 saved a bare segment array.
+        let json = r#"[{"type":"word","id":0,"original_xml":"<w><choice><me:facs>a</me:facs></choice></w>","attributes":{},"dsl_content":"a","has_inline_lb":false}]"#;
+        let doc = parse_imported_document(json).unwrap();
+        assert_eq!(doc.segments.len(), 1);
+        assert!(doc.is_menota, "MENOTA structure should be re-detected");
+        assert!(doc.spans.is_none());
+    }
+
+    #[test]
+    fn test_parse_imported_document_reports_garbage() {
+        assert!(parse_imported_document("{not json").is_err());
+    }
+
+    #[test]
+    fn test_project_archive_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("saga-scribe-project-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.teis");
+        let manifest_json = r#"{"segments":[],"is_menota":true,"spans":[]}"#;
+
+        save_project(
+            path.to_string_lossy().into_owned(),
+            "//1 maþr".into(),
+            "<TEI/>".into(),
+            "{}".into(),
+            "menota".into(),
+            None,
+            None,
+            Some(manifest_json.into()),
+            Some("<body></body>".into()),
+            Some("<TEI><text>".into()),
+            Some("</text></TEI>".into()),
+        )
+        .unwrap();
+        let project = open_project(path.to_string_lossy().into_owned()).unwrap();
+
+        assert_eq!(project.source, "//1 maþr");
+        assert_eq!(project.output, "<TEI/>");
+        assert_eq!(project.manifest.version, "1.5");
+        assert_eq!(project.manifest.template_id, "menota");
+        assert!(project.imported_document.unwrap().is_menota);
+        assert_eq!(project.original_body_xml.as_deref(), Some("<body></body>"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_write_file_atomic_replaces_and_cleans_up() {
+        let dir = std::env::temp_dir().join(format!("saga-scribe-atomic-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.xml");
+        fs::write(&path, "old").unwrap();
+
+        write_file_atomic(&path, b"new").unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        assert!(!dir.join(".out.xml.tmp").exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

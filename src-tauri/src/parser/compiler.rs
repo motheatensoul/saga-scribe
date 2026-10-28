@@ -144,6 +144,11 @@ impl<'a> Compiler<'a> {
         self
     }
 
+    /// The active compiler configuration.
+    pub fn config(&self) -> &CompilerConfig {
+        &self.config
+    }
+
     /// Compiles DSL input to TEI-XML.
     ///
     /// This is the main entry point. The compilation pipeline:
@@ -430,7 +435,7 @@ impl<'a> Compiler<'a> {
             .collect();
         
         // Sort to close inner-most first (reverse of start)
-        unclosed.sort_by(|a, b| b.0.cmp(&a.0));
+        unclosed.sort_by_key(|a| std::cmp::Reverse(a.0));
 
         for _ in unclosed {
             result.push_str("</c>");
@@ -900,30 +905,43 @@ impl<'a> Compiler<'a> {
         let tokenizer = WordTokenizer::new();
         let nodes = tokenizer.tokenize(doc.nodes);
 
-        // Find the first Word node (there should only be one for a word fragment)
-        for node in &nodes {
-            if let Node::Word(children) = node {
-                // Generate the three levels
-                let facs = self.nodes_to_facs(children);
-                let dipl = self.nodes_to_diplomatic(children);
-                let norm = self.nodes_to_normalized(children);
+        // A single <w> may span several DSL words (e.g. "þo at"); each level
+        // joins them with a space, mirroring how the importer reads them.
+        let words: Vec<&Vec<Node>> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Word(children) => Some(children),
+                _ => None,
+            })
+            .collect();
 
-                // Format attributes from provided map
-                let mut attr_str = String::new();
-                // Sort keys for consistent output
-                let mut keys: Vec<_> = attributes.keys().collect();
-                keys.sort();
-                for key in keys {
-                    if let Some(value) = attributes.get(key) {
-                        attr_str.push_str(&format!(" {}=\"{}\"", key, self.escape_xml(value)));
-                    }
+        if !words.is_empty() {
+            // Format attributes from provided map
+            let mut attr_str = String::new();
+            // Sort keys for consistent output
+            let mut keys: Vec<_> = attributes.keys().collect();
+            keys.sort();
+            for key in keys {
+                if let Some(value) = attributes.get(key) {
+                    attr_str.push_str(&format!(" {}=\"{}\"", key, self.escape_xml(value)));
                 }
-
-                return format!(
-                    "<w{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</w>\n",
-                    attr_str, facs, dipl, norm
-                );
             }
+
+            if !self.config.multi_level {
+                let content: Vec<String> = words.iter().map(|w| self.nodes_to_xml(w)).collect();
+                return format!("<w{}>{}</w>\n", attr_str, content.join(" "));
+            }
+
+            // Generate the three levels
+            let join = |level: Vec<String>| level.join(" ");
+            let facs = join(words.iter().map(|w| self.nodes_to_facs(w)).collect());
+            let dipl = join(words.iter().map(|w| self.nodes_to_diplomatic(w)).collect());
+            let norm = join(words.iter().map(|w| self.nodes_to_normalized(w)).collect());
+
+            return format!(
+                "<w{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</w>\n",
+                attr_str, facs, dipl, norm
+            );
         }
 
         // Fallback: if no Word node found, compile as plain text
@@ -947,6 +965,10 @@ impl<'a> Compiler<'a> {
         // Find the first Punctuation node
         for node in &nodes {
             if let Node::Punctuation(children) = node {
+                if !self.config.multi_level {
+                    return format!("<pc>{}</pc>\n", self.nodes_to_xml(children));
+                }
+
                 // Generate the three levels for punctuation
                 let facs = self.nodes_to_facs(children);
                 let dipl = self.nodes_to_diplomatic(children);
@@ -1045,6 +1067,15 @@ impl<'a> Compiler<'a> {
         let mut output = String::new();
         for node in &nodes {
             match node {
+                Node::Word(children) if !self.config.multi_level => {
+                    let content = self.nodes_to_xml(children);
+                    if !content.is_empty() {
+                        output.push_str(&format!("<w>{}</w>\n", content));
+                    }
+                }
+                Node::Punctuation(children) if !self.config.multi_level => {
+                    output.push_str(&format!("<pc>{}</pc>\n", self.nodes_to_xml(children)));
+                }
                 Node::Word(children) => {
                     let facs = self.nodes_to_facs(children);
                     let dipl = self.nodes_to_diplomatic(children);
@@ -1083,6 +1114,24 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        output
+    }
+
+    /// Compiles a DSL fragment without word wrapping, for documents whose text
+    /// is not wrapped in `<w>` elements.
+    pub fn compile_inline_from_dsl(&mut self, dsl: &str) -> String {
+        match Lexer::new(dsl).parse() {
+            Ok(doc) => self.nodes_to_xml(&doc.nodes),
+            Err(_) => format!("<!-- parse error: {} -->", self.escape_xml(dsl)),
+        }
+    }
+
+    /// Compiles child nodes in single-level form, without tracking word indices.
+    fn nodes_to_xml(&mut self, nodes: &[Node]) -> String {
+        let mut output = String::new();
+        for node in nodes {
+            output.push_str(&self.node_to_xml(node));
+        }
         output
     }
 }

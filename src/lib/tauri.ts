@@ -124,6 +124,8 @@ export type Segment =
 export interface ImportedDocument {
   segments: Segment[];
   is_menota: boolean;
+  /** Byte ranges of segments in the original body, indexed by segment id */
+  spans?: ([number, number] | null)[];
 }
 
 export interface ImportResult {
@@ -215,6 +217,7 @@ export async function compileImported(
   segmentsJson: string,
   preamble: string,
   postamble: string,
+  originalBodyXml: string,
   options?: CompileImportedOptions,
 ): Promise<string> {
   return invoke("compile_imported", {
@@ -222,6 +225,7 @@ export async function compileImported(
     segmentsJson,
     preamble,
     postamble,
+    originalBodyXml,
     entitiesJson: options?.entitiesJson ?? null,
     normalizerJson: options?.normalizerJson ?? null,
     entityMappingsJson: options?.entityMappingsJson ?? null,

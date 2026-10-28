@@ -534,28 +534,30 @@
         );
     }
 
-    async function doCompile(content: string) {
+    /** Compiles and validates; returns whether compilation succeeded. */
+    async function doCompile(content: string): Promise<boolean> {
         try {
             const result = await compileOnly(content);
-            if (result !== null) {
-                previewContent = result;
+            if (result === null) return false;
+            previewContent = result;
 
-                // Validate the compiled XML against the schema
-                // This ensures validation errors have correct line numbers for the displayed XML
-                const template = $templateStore.active;
-                const schemaId = template?.validationSchemaId || "tei-p5";
-                try {
-                    const validationResult = await validateXml(result, schemaId);
-                    validationStore.setResult(validationResult);
-                } catch (validationError) {
-                    console.warn("Validation failed:", validationError);
-                    // Don't block on validation errors - just clear the validation state
-                    validationStore.setResult(null);
-                }
+            // Validate the compiled XML against the schema
+            // This ensures validation errors have correct line numbers for the displayed XML
+            const template = $templateStore.active;
+            const schemaId = template?.validationSchemaId || "tei-p5";
+            try {
+                const validationResult = await validateXml(result, schemaId);
+                validationStore.setResult(validationResult);
+            } catch (validationError) {
+                console.warn("Validation failed:", validationError);
+                // Don't block on validation errors - just clear the validation state
+                validationStore.setResult(null);
             }
+            return true;
         } catch (e) {
             previewContent = `Error: ${e}`;
             validationStore.setResult(null);
+            return false;
         }
     }
 
@@ -608,11 +610,27 @@
         spanEndWordIndex = null;
     }
 
+    let warnedAnnotationsNotExported = false;
+
+    /**
+     * Imported-mode output is spliced from the original XML and does not yet
+     * include annotations made in the editor. Say so once per session.
+     */
+    function warnIfAnnotationsNotExported() {
+        if (!importedStore.isImportedMode || warnedAnnotationsNotExported) return;
+        warnedAnnotationsNotExported = true;
+        errorStore.warning(
+            "Annotations",
+            "Annotations on an imported TEI file are kept in the project but are not yet written to its XML output.",
+        );
+    }
+
     async function handleLemmatizerSave(
         wordIndex: number,
         lemma?: string,
         msa?: string,
     ) {
+        warnIfAnnotationsNotExported();
         // Wait for Svelte reactivity to propagate store updates
         await tick();
         // Trigger immediate recompile to update TEI output with new lemma
@@ -626,6 +644,7 @@
      * Triggers recompile to update the XML output.
      */
     async function handleAnnotationSave() {
+        warnIfAnnotationsNotExported();
         // Wait for Svelte reactivity to propagate store updates
         await tick();
         // Trigger immediate recompile to update TEI output
@@ -792,6 +811,7 @@
                 if (project.imported_document && project.original_body_xml) {
                     importedStore.load({
                         segments: project.imported_document.segments,
+                        spans: project.imported_document.spans,
                         originalBodyXml: project.original_body_xml,
                         originalPreamble: project.original_preamble ?? "",
                         originalPostamble: project.original_postamble ?? "",
@@ -857,9 +877,15 @@
         if (!path) return;
 
         try {
-            // Ensure we have fresh compiled output
+            // Ensure we have fresh compiled output; never write a failed compile
             clearTimeout(compileTimeout);
-            await doCompile($editor.content);
+            if (!(await doCompile($editor.content))) {
+                errorStore.error(
+                    "Save",
+                    "Project not saved: the document could not be compiled. Fix the errors and save again.",
+                );
+                return;
+            }
 
             // Serialize session confirmations (lemma mappings for backward compat)
             const confirmationsJson = JSON.stringify($lemmaMappings.mappings);
@@ -872,7 +898,7 @@
                 ? JSON.stringify(currentMetadata)
                 : undefined;
             const segmentsJson = importedStore.isImportedMode
-                ? JSON.stringify(importedStore.segments)
+                ? importedStore.buildManifestJson()
                 : undefined;
             const originalBodyXml = importedStore.isImportedMode
                 ? importedStore.originalBodyXml
@@ -923,9 +949,15 @@
         if (!path) return;
 
         try {
-            // Ensure we have fresh compiled output
+            // Ensure we have fresh compiled output; never export a failed compile
             clearTimeout(compileTimeout);
-            await doCompile($editor.content);
+            if (!(await doCompile($editor.content))) {
+                errorStore.error(
+                    "Export",
+                    "Not exported: the document could not be compiled. Fix the errors and export again.",
+                );
+                return;
+            }
 
             await exportTei(path, previewContent);
             errorStore.info("Export", `Exported TEI-XML to ${path}`);
@@ -1146,6 +1178,7 @@
             ) {
                 importedStore.load({
                     segments: result.importedDocument.segments,
+                    spans: result.importedDocument.spans,
                     originalBodyXml: result.originalBodyXml,
                     originalPreamble: result.originalPreamble ?? "",
                     originalPostamble: result.originalPostamble ?? "",
