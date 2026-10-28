@@ -2,7 +2,6 @@
     import { onMount, tick } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open, save } from "@tauri-apps/plugin-dialog";
-    import { readTextFile } from "@tauri-apps/plugin-fs";
     import Editor from "$lib/components/Editor.svelte";
     import Preview from "$lib/components/Preview.svelte";
     import Toolbar from "$lib/components/Toolbar.svelte";
@@ -51,10 +50,11 @@
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
     import { printToPdf } from "$lib/utils/pdfExport";
     import {
-        escapeHtml,
-        sanitizeXsltHtml,
-        transformResultToHtml,
-    } from "$lib/utils/xsltOutput";
+        type XsltStage,
+        createXsltProcessor,
+        loadStylesheetText,
+        runXsltTransform,
+    } from "$lib/utils/xslt";
     import {
         dictionaryStore,
         inflectionStore,
@@ -989,86 +989,66 @@
         }
     }
 
-    async function loadStylesheetText(path: string): Promise<string> {
-        if (path.startsWith("/xsl/")) {
-            const response = await fetch(path);
-            if (!response.ok) {
-                throw new Error(`Failed to load stylesheet: ${response.statusText}`);
-            }
-            return response.text();
-        }
+    /** Label of the running HTML/PDF export step; non-null shows the progress overlay. */
+    let exportProgress = $state<string | null>(null);
+    let exportController: AbortController | null = null;
 
-        return readTextFile(path);
-    }
+    const EXPORT_STAGE_LABELS: Record<XsltStage, string> = {
+        preparing: "Preparing document…",
+        parsing: "Parsing XML…",
+        transforming: "Applying stylesheet…",
+        sanitizing: "Cleaning up output…",
+    };
 
     /**
-     * Apply XSLT transformation to XML content
-     * Extracted from XsltRenderer.svelte for reuse in exports
+     * Runs an export behind the progress overlay. The work yields between steps,
+     * so the UI stays painted and the user can cancel.
      */
-    async function applyXsltTransform(xmlContent: string): Promise<string> {
-        const stylesheetPath = activeStylesheetPath;
-        const xslText = await loadStylesheetText(stylesheetPath);
-
-        const parser = new DOMParser();
-        const xslDoc = parser.parseFromString(xslText, "application/xml");
-
-        const parseError = xslDoc.querySelector("parsererror");
-        if (parseError) {
-            throw new Error(`XSL parse error: ${parseError.textContent}`);
-        }
-
-        const processor = new XSLTProcessor();
-        processor.importStylesheet(xslDoc);
-
-        // Replace entity references with placeholders to avoid XML parsing errors
-        let processedXml = xmlContent;
-
-        // Strip DOCTYPE/entity declarations (not supported by DOMParser)
-        processedXml = processedXml
-            .replace(/<!DOCTYPE[\s\S]*?\]>\s*/gi, "")
-            .replace(/<!DOCTYPE[^>]*>\s*/gi, "");
-        const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
-        const entityMap = new Map<string, string>();
-        let entityCounter = 0;
-
-        processedXml = processedXml.replace(entityPattern, (match, name) => {
-            // Skip standard XML entities
-            if (["lt", "gt", "amp", "quot", "apos"].includes(name)) {
-                return match;
+    async function withExportProgress(
+        what: string,
+        task: (signal: AbortSignal) => Promise<void>,
+    ) {
+        const controller = new AbortController();
+        exportController = controller;
+        exportProgress = "Starting…";
+        try {
+            await task(controller.signal);
+        } catch (e) {
+            if (controller.signal.aborted) {
+                errorStore.info("Export", `${what} export cancelled`);
+            } else {
+                errorStore.error("Export", `Failed to export ${what}: ${e}`);
             }
-            const placeholder = `__ENTITY_${entityCounter}__`;
-            entityMap.set(placeholder, name);
-            entityCounter++;
-            return placeholder;
+        } finally {
+            exportProgress = null;
+            exportController = null;
+        }
+    }
+
+    function cancelExport() {
+        exportController?.abort();
+    }
+
+    /** Compiles the document and renders it to sanitized HTML with the active stylesheet. */
+    async function renderExportHtml(signal: AbortSignal): Promise<string> {
+        exportProgress = "Compiling…";
+        clearTimeout(compileTimeout);
+        // Never export a failed compile
+        if (!(await doCompile($editor.content))) {
+            throw new Error(
+                "the document could not be compiled. Fix the errors and try again.",
+            );
+        }
+        signal.throwIfAborted();
+
+        exportProgress = "Loading stylesheet…";
+        const processor = createXsltProcessor(
+            await loadStylesheetText(activeStylesheetPath),
+        );
+        return runXsltTransform(processor, previewContent, $entityStore.entities, {
+            signal,
+            onStage: (stage) => (exportProgress = EXPORT_STAGE_LABELS[stage]),
         });
-
-        const xmlDoc = parser.parseFromString(processedXml, "application/xml");
-
-        const xmlParseError = xmlDoc.querySelector("parsererror");
-        if (xmlParseError) {
-            throw new Error(`XML parse error: ${xmlParseError.textContent}`);
-        }
-
-        // Apply XSLT transformation
-        const resultDoc = processor.transformToDocument(xmlDoc);
-
-        if (!resultDoc || !resultDoc.documentElement) {
-            throw new Error("XSLT transformation produced no output");
-        }
-
-        // Get the HTML content
-        let html = transformResultToHtml(resultDoc);
-
-        // Resolve entity placeholders to actual glyphs
-        const entities = $entityStore.entities;
-        for (const [placeholder, entityName] of entityMap) {
-            const entity = entities[entityName];
-            const glyph = entity?.char || `[${entityName}]`;
-            html = html.replaceAll(placeholder, escapeHtml(glyph));
-        }
-
-        // XML and stylesheet may be third-party: never export or print executable content
-        return sanitizeXsltHtml(html);
     }
 
     async function handleExportHtml() {
@@ -1089,31 +1069,20 @@
         });
         if (!path) return;
 
-        try {
-            // Ensure we have fresh compiled output; never export a failed compile
-            clearTimeout(compileTimeout);
-            if (!(await doCompile($editor.content))) {
-                errorStore.error(
-                    "Export",
-                    "Not exported: the document could not be compiled. Fix the errors and export again.",
-                );
-                return;
-            }
-
-            // Apply XSLT transformation
-            const htmlBody = await applyXsltTransform(previewContent);
+        await withExportProgress("HTML", async (signal) => {
+            const htmlBody = await renderExportHtml(signal);
 
             // Generate standalone HTML with embedded styles
             const fileName = $editor.filePath
                 ? $editor.filePath.split("/").pop()?.replace(/\.[^.]+$/, "")
                 : "export";
             const fullHtml = generateStandaloneHtml(htmlBody, { title: fileName });
+            signal.throwIfAborted();
 
+            exportProgress = "Writing file…";
             await exportHtml(path, fullHtml);
             errorStore.info("Export", `Exported HTML to ${path}`);
-        } catch (e) {
-            errorStore.error("Export", `Failed to export HTML: ${e}`);
-        }
+        });
     }
 
     async function handleExportPdf() {
@@ -1126,19 +1095,8 @@
             return;
         }
 
-        try {
-            // Ensure we have fresh compiled output; never print a failed compile
-            clearTimeout(compileTimeout);
-            if (!(await doCompile($editor.content))) {
-                errorStore.error(
-                    "Export",
-                    "PDF not prepared: the document could not be compiled. Fix the errors and try again.",
-                );
-                return;
-            }
-
-            // Apply XSLT transformation
-            const htmlBody = await applyXsltTransform(previewContent);
+        await withExportProgress("PDF", async (signal) => {
+            const htmlBody = await renderExportHtml(signal);
 
             // Generate standalone HTML
             const fileName = $editor.filePath
@@ -1148,17 +1106,17 @@
                 title: fileName,
                 pageBreakStyle: "print-break",
             });
+            signal.throwIfAborted();
 
             // Open print dialog (user can "Save as PDF")
+            exportProgress = "Laying out pages…";
             await printToPdf(fullHtml, { pageSize: "A4" });
 
             errorStore.info(
                 "Export",
                 "Print dialog opened - select 'Save as PDF' to export",
             );
-        } catch (e) {
-            errorStore.error("Export", `Failed to prepare PDF: ${e}`);
-        }
+        });
     }
 
     async function handleImport() {
@@ -1730,6 +1688,59 @@
                         />
                     </div>
                 </div>
+            </div>
+        </div>
+    {/if}
+
+    {#if exportProgress !== null}
+        <div class="modal modal-open">
+            <div class="modal-backdrop bg-base-100/50"></div>
+            <div
+                class="modal-box bg-transparent shadow-none shadow-transparent border-none flex flex-col items-center justify-center overflow-hidden"
+                role="alertdialog"
+                aria-labelledby="export-progress-title"
+                aria-describedby="export-progress-step"
+            >
+                <!-- SVG spinner with explicit animation -->
+                <svg viewBox="0 0 50 50" width="48" height="48" aria-hidden="true">
+                    <circle
+                        cx="25"
+                        cy="25"
+                        r="20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="4"
+                        stroke-linecap="round"
+                        stroke-dasharray="90, 150"
+                        stroke-dashoffset="0"
+                        class="text-primary"
+                    >
+                        <animateTransform
+                            attributeName="transform"
+                            type="rotate"
+                            from="0 25 25"
+                            to="360 25 25"
+                            dur="1s"
+                            repeatCount="indefinite"
+                        />
+                    </circle>
+                </svg>
+                <p
+                    id="export-progress-title"
+                    class="mt-4 font-bold text-lg text-base-content"
+                >
+                    Exporting…
+                </p>
+                <p
+                    id="export-progress-step"
+                    class="text-sm text-base-content/70"
+                    aria-live="polite"
+                >
+                    {exportProgress}
+                </p>
+                <button class="btn btn-ghost btn-sm mt-4" onclick={cancelExport}>
+                    Cancel
+                </button>
             </div>
         </div>
     {/if}

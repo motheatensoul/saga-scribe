@@ -3,7 +3,7 @@
  * Generates standalone HTML documents from XSLT-rendered content
  */
 
-import { escapeHtml } from "$lib/utils/xsltOutput";
+import { escapeHtml } from "$lib/utils/xslt";
 
 export interface HtmlExportOptions {
     title?: string;

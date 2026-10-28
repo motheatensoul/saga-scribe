@@ -1,6 +1,5 @@
 <script lang="ts">
-    import { readTextFile } from '@tauri-apps/plugin-fs';
-    import { escapeHtml, sanitizeXsltHtml, transformResultToHtml } from '$lib/utils/xsltOutput';
+    import { createXsltProcessor, loadStylesheetText, runXsltTransform } from '$lib/utils/xslt';
     import { entityStore } from '$lib/stores/entities';
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
 
@@ -23,28 +22,7 @@
 
     const yieldToMain = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-    function sliceTag(xml: string, tagName: string): string | null {
-        const lower = xml.toLowerCase();
-        const start = lower.indexOf(`<${tagName}`);
-        if (start === -1) return null;
-        const end = lower.indexOf(`</${tagName}>`, start);
-        if (end === -1) return null;
-        return xml.slice(start, end + tagName.length + 3);
-    }
-
     let loadVersion = 0;
-
-    async function loadStylesheetText(path: string): Promise<string> {
-        if (path.startsWith('/xsl/')) {
-            const response = await fetch(path);
-            if (!response.ok) {
-                throw new Error(`Failed to load stylesheet: ${response.statusText}`);
-            }
-            return response.text();
-        }
-
-        return readTextFile(path);
-    }
 
     $effect(() => {
         const currentPath = xslPath;
@@ -62,19 +40,7 @@
             try {
                 const xslText = await loadStylesheetText(currentPath);
                 if (version !== loadVersion) return;
-
-                const parser = new DOMParser();
-                const xslDoc = parser.parseFromString(xslText, 'application/xml');
-
-                const parseError = xslDoc.querySelector('parsererror');
-                if (parseError) {
-                    throw new Error(`XSL parse error: ${parseError.textContent}`);
-                }
-
-                const processor = new XSLTProcessor();
-                processor.importStylesheet(xslDoc);
-                if (version !== loadVersion) return;
-                xslProcessor = processor;
+                xslProcessor = createXsltProcessor(xslText);
             } catch (e) {
                 if (version !== loadVersion) return;
                 error = `Failed to load XSLT: ${e}`;
@@ -84,8 +50,6 @@
     });
 
     // Transform XML when content, processor, or entities change
-    let transformVersion = 0;
-
     $effect(() => {
         const processor = xslProcessor;
         const xmlContent = content;
@@ -105,104 +69,31 @@
             return;
         }
 
-        const version = ++transformVersion;
         isTransforming = true;
         renderedHtml = '';
         error = null;
 
-        // Defer transformation to allow loading spinner to render
+        // A newer run (or unmount) aborts this one at its next stage boundary
+        const controller = new AbortController();
         (async () => {
-            await yieldToMain();
-            if (version !== transformVersion) return;
-
             try {
-                // Prepare the XML content
-                let prepared = xmlContent;
-
-                // Strip DOCTYPE/entity declarations (not supported by DOMParser)
-                prepared = prepared
-                    .replace(/<!DOCTYPE[\s\S]*?\]>\s*/gi, '')
-                    .replace(/<!DOCTYPE[^>]*>\s*/gi, '');
-
-                const bodyFragment = sliceTag(prepared, 'body') ?? sliceTag(prepared, 'text');
-                const xmlFragment = bodyFragment
-                    ? `<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0">${bodyFragment}</TEI>`
-                    : prepared;
-
-                // Replace named entity references with placeholders, then resolve after XSLT
-                // Use ASCII-safe placeholders that won't be stripped by XML/XSLT processing
-                const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
-                const placeholderMap = new Map<string, string>();
-                let entityCounter = 0;
-
-                prepared = xmlFragment.replace(entityPattern, (match, name) => {
-                    // Skip standard XML entities - these must remain as entities
-                    if (['lt', 'gt', 'amp', 'quot', 'apos'].includes(name)) {
-                        return match;
-                    }
-                    const entity = entities[name];
-                    // Use format like XENT0X, XENT1X - letters+numbers only
-                    const placeholder = `XENT${entityCounter}X`;
-                    const glyph = entity?.char || `[${name}]`;
-                    placeholderMap.set(placeholder, glyph);
-                    entityCounter++;
-                    return placeholder;
+                const html = await runXsltTransform(processor, xmlContent, entities, {
+                    bodyOnly: true,
+                    signal: controller.signal,
                 });
-
-                if (version !== transformVersion) return;
-                await yieldToMain();
-
-                const parser = new DOMParser();
-                const xmlDoc = parser.parseFromString(prepared, 'application/xml');
-
-                const parseError = xmlDoc.querySelector('parsererror');
-                if (parseError) {
-                    if (version !== transformVersion) return;
-                    error = `XML parse error: ${parseError.textContent}`;
-                    renderedHtml = '';
-                    isTransforming = false;
-                    return;
-                }
-
-                if (version !== transformVersion) return;
-                await yieldToMain();
-
-                // Apply XSLT transformation
-                const resultDoc = processor.transformToDocument(xmlDoc);
-
-                if (version !== transformVersion) return;
-
-                if (!resultDoc || !resultDoc.documentElement) {
-                    error = 'XSLT transformation produced no output';
-                    renderedHtml = '';
-                    isTransforming = false;
-                    return;
-                }
-
-                // Get the HTML content
-                let html = transformResultToHtml(resultDoc);
-
-                // Resolve placeholders to actual glyphs
-                // Placeholders are formatted as XENT{number}X
-                const placeholderRegex = /XENT(\d+)X/g;
-                html = html.replace(placeholderRegex, (match) => {
-                    const glyph = placeholderMap.get(match);
-                    return glyph !== undefined ? escapeHtml(glyph) : match;
-                });
-
-                if (version !== transformVersion) return;
-                // XML and stylesheet may be third-party: never render executable content
-                renderedHtml = sanitizeXsltHtml(html);
+                renderedHtml = html;
                 error = null;
                 isTransforming = false;
             } catch (e) {
-                if (version !== transformVersion) return;
-                error = `Transform error: ${e}`;
+                if (controller.signal.aborted) return;
+                error = e instanceof Error ? e.message : `Transform error: ${e}`;
                 console.error(error);
                 renderedHtml = '';
                 isTransforming = false;
             }
         })();
+
+        return () => controller.abort();
     });
 
     // Set up delegated word click handlers

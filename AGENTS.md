@@ -118,7 +118,7 @@ The user's file is privileged. Reading it must never change it:
 ## Development Notes
 - **Toolchain:** Rust is pinned in `rust-toolchain.toml`; the crate MSRV is `rust-version` in `src-tauri/Cargo.toml`.
 - **SvelteKit 3:** configuration lives in `vite.config.ts` (`sveltekit({...})`); there is no `svelte.config.js`. The `$lib` alias is configured there.
-- **XSLT output:** always pass through `sanitizeXsltHtml()` (`src/lib/utils/xsltOutput.ts`) before rendering or exporting; the app runs under a strict CSP (`src-tauri/tauri.conf.json`).
+- **XSLT output:** always pass through `sanitizeXsltHtml()` (`src/lib/utils/xslt.ts`, which also holds the shared preview/export pipeline) before rendering or exporting; the app runs under a strict CSP (`src-tauri/tauri.conf.json`).
 - **Cargo Command Quirk:** `cd src-tauri && cargo ...` fails. Use `cd src-tauri; cargo ...`.
 - **Bun:** Always use `bun` instead of `npm`.
 
