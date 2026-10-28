@@ -177,7 +177,7 @@ impl OriginalTokens {
                 }
             }
 
-            unit_of_token.extend(std::iter::repeat(units.len()).take(q - unit_start));
+            unit_of_token.extend(std::iter::repeat_n(units.len(), q - unit_start));
             units.push(Unit {
                 segment_ids,
                 tokens: unit_start..q,
@@ -198,7 +198,7 @@ impl OriginalTokens {
         let mut unit_of_token = Vec::new();
         for (id, seg_tokens) in per_segment {
             let start = tokens.len();
-            unit_of_token.extend(std::iter::repeat(units.len()).take(seg_tokens.len()));
+            unit_of_token.extend(std::iter::repeat_n(units.len(), seg_tokens.len()));
             tokens.extend(seg_tokens);
             units.push(Unit {
                 segment_ids: vec![id],

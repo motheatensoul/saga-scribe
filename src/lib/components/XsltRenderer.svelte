@@ -1,5 +1,6 @@
 <script lang="ts">
     import { readTextFile } from '@tauri-apps/plugin-fs';
+    import { escapeHtml, sanitizeXsltHtml, transformResultToHtml } from '$lib/utils/xsltOutput';
     import { entityStore } from '$lib/stores/entities';
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
 
@@ -179,18 +180,19 @@
                 }
 
                 // Get the HTML content
-                let html = resultDoc.documentElement.outerHTML;
+                let html = transformResultToHtml(resultDoc);
 
                 // Resolve placeholders to actual glyphs
                 // Placeholders are formatted as XENT{number}X
                 const placeholderRegex = /XENT(\d+)X/g;
                 html = html.replace(placeholderRegex, (match) => {
                     const glyph = placeholderMap.get(match);
-                    return glyph ?? match;
+                    return glyph !== undefined ? escapeHtml(glyph) : match;
                 });
 
                 if (version !== transformVersion) return;
-                renderedHtml = html;
+                // XML and stylesheet may be third-party: never render executable content
+                renderedHtml = sanitizeXsltHtml(html);
                 error = null;
                 isTransforming = false;
             } catch (e) {

@@ -3,7 +3,7 @@ import {LRParser} from "@lezer/lr"
 export const parser = LRParser.deserialize({
   version: 14,
   states: "&xQQOPOOOOOO'#C^'#C^OOOO'#C_'#C_OOOO'#C`'#C`OOOO'#Ca'#CaO![OQO'#CbO!aOQO'#CdO![OQO'#CfO![OQO'#CgOOOO'#Ch'#ChO!fOSO'#CiO!kOWO'#CkO!pOWO'#CmO!uOWO'#CoO!zOWO'#CqOOOO'#Cs'#CsOOOO'#Ct'#CtOOOO'#Cu'#CuOOOO'#Cv'#CvOOOO'#Cy'#CyOOOO'#Cw'#CwQQOPOOOOOO'#Cc'#CcOOOO,58|,58|OOOO'#Ce'#CeO![OQO,59OOOOO,59Q,59QOOOO,59R,59ROOOO'#Cj'#CjO#POQO,59TOOOO'#Cl'#ClO#UOQO,59VOOOO'#Cn'#CnO#ZOQO,59XOOOO'#Cp'#CpO#`OWO,59ZOOOO'#Cr'#CrO#eOQO,59]OOOO-E6u-E6uOOOO1G.j1G.jOOOO1G.o1G.oOOOO1G.q1G.qOOOO1G.s1G.sOOOO1G.u1G.uOOOO1G.w1G.w",
-  stateData: "$O~OnPOoQOpROqSOrTOtUOvVOwWOxXOzYO}ZO!Q[O!S]O!U^O!V_O!W`O!XaO!YbO~OsfO~OuhO~O{lO~O!OnO~O!OpO~O!OrO~O!OtO~OyxO~O|yO~O!PzO~O!R{O~O!T|O~Onopqxtrvw!V}!Q!S!Uz!W!X!Y!V~",
+  stateData: "#}~OnPOoQOpROqSOrTOtUOvVOwWOxXOzYO}ZO!Q[O!S]O!U^O!V_O!W`O!XaO!YbO~OsfO~OuhO~O{lO~O!OnO~O!OpO~O!OrO~O!OtO~OyxO~O|yO~O!PzO~O!R{O~O!T|O~Onopqxtrvw!V}!Q!S!Uz!W!X!Y~",
   goto: "!mnPPoooooso!Poooo!So!Vo!Yo!]o!`oooo!cP!iTcOeQgTQjVQkWRwiRiURmYRoZRq[Rs]Ru^QeORveTdOe",
   nodeNames: "⚠ Document WordContinuationPageBreak WordContinuationLineBreak PageBreak LineBreak Head BraceContent Abbreviation BracketContent SuppliedBlock NormBlock Gap Supplied SuppliedContent Deletion DeletionContent Addition AdditionContent Note NoteContent Unclear UnclearContent Entity WordBoundary CompoundJoin Text",
   maxTerm: 56,

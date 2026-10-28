@@ -6,7 +6,7 @@ authors = ["Autumn Carcosa"]
 license = "GPL-3.0-or-later"
 repository = ""
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.90"
 
 [lib]
 name = "saga_scribe_lib"
@@ -24,6 +24,6 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 reqwest = { version = "0.12", features = ["json"] }
-zip = "7.1"
+zip = { version = "9.1", default-features = false, features = ["deflate"] }
 libxml = "0.3"
 tokio = { version = "1.49.0", features = ["sync"] }

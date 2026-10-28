@@ -51,6 +51,11 @@
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
     import { printToPdf } from "$lib/utils/pdfExport";
     import {
+        escapeHtml,
+        sanitizeXsltHtml,
+        transformResultToHtml,
+    } from "$lib/utils/xsltOutput";
+    import {
         dictionaryStore,
         inflectionStore,
         sessionLemmaStore,
@@ -763,7 +768,7 @@
     async function handleOpenProject() {
         const path = await open({
             filters: [
-                { name: "TEI Scribe Project", extensions: ["teis"] },
+                { name: "Saga Scribe Project", extensions: ["teis"] },
                 { name: "DSL Source", extensions: ["dsl", "txt"] },
             ],
         });
@@ -868,7 +873,7 @@
         let path = $editor.filePath;
         if (!path || !path.endsWith(".teis")) {
             path = await save({
-                filters: [{ name: "TEI Scribe Project", extensions: ["teis"] }],
+                filters: [{ name: "Saga Scribe Project", extensions: ["teis"] }],
                 defaultPath: path
                     ? path.replace(/\.[^.]+$/, ".teis")
                     : undefined,
@@ -1052,17 +1057,18 @@
         }
 
         // Get the HTML content
-        let html = resultDoc.documentElement.outerHTML;
+        let html = transformResultToHtml(resultDoc);
 
         // Resolve entity placeholders to actual glyphs
         const entities = $entityStore.entities;
         for (const [placeholder, entityName] of entityMap) {
             const entity = entities[entityName];
             const glyph = entity?.char || `[${entityName}]`;
-            html = html.replaceAll(placeholder, glyph);
+            html = html.replaceAll(placeholder, escapeHtml(glyph));
         }
 
-        return html;
+        // XML and stylesheet may be third-party: never export or print executable content
+        return sanitizeXsltHtml(html);
     }
 
     async function handleExportHtml() {
@@ -1084,9 +1090,15 @@
         if (!path) return;
 
         try {
-            // Ensure we have fresh compiled output
+            // Ensure we have fresh compiled output; never export a failed compile
             clearTimeout(compileTimeout);
-            await doCompile($editor.content);
+            if (!(await doCompile($editor.content))) {
+                errorStore.error(
+                    "Export",
+                    "Not exported: the document could not be compiled. Fix the errors and export again.",
+                );
+                return;
+            }
 
             // Apply XSLT transformation
             const htmlBody = await applyXsltTransform(previewContent);
@@ -1115,9 +1127,15 @@
         }
 
         try {
-            // Ensure we have fresh compiled output
+            // Ensure we have fresh compiled output; never print a failed compile
             clearTimeout(compileTimeout);
-            await doCompile($editor.content);
+            if (!(await doCompile($editor.content))) {
+                errorStore.error(
+                    "Export",
+                    "PDF not prepared: the document could not be compiled. Fix the errors and try again.",
+                );
+                return;
+            }
 
             // Apply XSLT transformation
             const htmlBody = await applyXsltTransform(previewContent);

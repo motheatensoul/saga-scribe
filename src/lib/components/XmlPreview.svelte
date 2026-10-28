@@ -3,7 +3,7 @@
     import { EditorView } from "@codemirror/view";
     import { EditorState } from "@codemirror/state";
     import { xml } from "@codemirror/lang-xml";
-    import { basicSetup } from "@codemirror/basic-setup";
+    import { basicSetup } from "codemirror";
     import { lintGutter, linter, type Diagnostic } from "@codemirror/lint";
     import { validationStore } from "$lib/stores/validation";
     import { scrollPositionStore } from "$lib/stores/scrollPosition.svelte";

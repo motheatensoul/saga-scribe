@@ -298,7 +298,7 @@ impl<'a> Lexer<'a> {
     fn consume_until_whitespace(&mut self) -> String {
         let start = self.pos;
         while self.pos < self.input.len() {
-            if self.current_char().map_or(true, |c| c.is_whitespace()) {
+            if self.current_char().is_none_or(|c| c.is_whitespace()) {
                 break;
             }
             self.advance();

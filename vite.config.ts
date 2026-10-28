@@ -1,9 +1,23 @@
+import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 
 export default defineConfig({
-	plugins: [sveltekit(), tailwindcss()],
+	plugins: [
+		sveltekit({
+			preprocess: vitePreprocess(),
+			adapter: adapter({
+				fallback: 'index.html'
+			}),
+			// Keep the project-wide `$lib/` import convention (SvelteKit 3 dropped the built-in alias)
+			alias: {
+				$lib: 'src/lib'
+			}
+		}),
+		tailwindcss()
+	],
 	resolve: {
 		dedupe: [
 			'@codemirror/state',
@@ -12,8 +26,7 @@ export default defineConfig({
 			'@codemirror/commands',
 			'@codemirror/search',
 			'@codemirror/lint',
-			'@codemirror/lang-xml',
-			'@codemirror/basic-setup'
+			'@codemirror/lang-xml'
 		]
 	}
 });

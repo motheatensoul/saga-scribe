@@ -103,12 +103,22 @@ saga-scribe/
 
 ## Testing
 Run Rust tests: `cd src-tauri; cargo test`
-66+ tests cover parser, compiler, normalizer, and dictionary.
+~200 tests cover parser, compiler, importer round-trip, normalizer, and dictionary.
 
 ## Fonts
 Uses **Junicode** (in `static/fonts/`) for MUFI characters.
 
+## Imported Mode (Round-Trip) Guarantees
+The user's file is privileged. Reading it must never change it:
+- Unedited content is emitted byte-for-byte: the importer records source spans (`src-tauri/src/importer/tei/source_map.rs`) and the patcher splices edits into the original bytes (`patching.rs`).
+- Whitespace-only or otherwise non-semantic DSL changes must produce no XML change.
+- Invalid DSL is an error, never an empty document; save/export refuse to write a failed compile.
+- Regression tests: `test_menota_file_unchanged_is_byte_identical` and friends in `src-tauri/src/importer/tests.rs`.
+
 ## Development Notes
+- **Toolchain:** Rust is pinned in `rust-toolchain.toml`; the crate MSRV is `rust-version` in `src-tauri/Cargo.toml`.
+- **SvelteKit 3:** configuration lives in `vite.config.ts` (`sveltekit({...})`); there is no `svelte.config.js`. The `$lib` alias is configured there.
+- **XSLT output:** always pass through `sanitizeXsltHtml()` (`src/lib/utils/xsltOutput.ts`) before rendering or exporting; the app runs under a strict CSP (`src-tauri/tauri.conf.json`).
 - **Cargo Command Quirk:** `cd src-tauri && cargo ...` fails. Use `cd src-tauri; cargo ...`.
 - **Bun:** Always use `bun` instead of `npm`.
 

@@ -3,18 +3,12 @@
  * Generates standalone HTML documents from XSLT-rendered content
  */
 
+import { escapeHtml } from "$lib/utils/xsltOutput";
+
 export interface HtmlExportOptions {
     title?: string;
     includeLineNumbers?: boolean;
     pageBreakStyle?: "visible" | "print-break" | "none";
-}
-
-function escapeHtml(str: string): string {
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
 }
 
 /**
