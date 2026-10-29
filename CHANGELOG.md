@@ -5,7 +5,7 @@ All notable changes to Saga-Scribe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] - Unreleased
+## [0.6.0] - 2026-10-29
 
 ### Added
 
@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Content Security Policy** enabled; XSLT output is sanitized before it is rendered, exported or printed
 - **SvelteKit 3 / Vite 8**, Tauri 2.12, zip 9 and other dependency upgrades; minimum Rust version 1.90, toolchain pinned
 - **Window title and dialogs** use the Saga Scribe name
+- **Flatpak runtime**: GNOME 51 (was 49)
+- **Third-party licences** are listed in `THIRD_PARTY_LICENSES.md` (dependency tables regenerated with `bun run licenses`)
+- **Smaller app**: an 8 MB test manuscript was being bundled into the app; it now lives in `tests/fixtures/`
 - **Line numbers after `~//` are digits only**, as after `//`: `hel~//5lo` is one word broken across lines 4 and 5 (the importer writes breaks this way); whitespace right after `~//5` no longer splits the word
 
 ### Fixed

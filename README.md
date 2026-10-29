@@ -100,7 +100,8 @@ See `docs/user-guide.md` for detailed usage instructions including:
 
 This project is licensed under [GPL-v3-or-later](LICENSE).
 
-See [LICENSES](static/fonts/LICENSES.md) for further licenses of used fonts.
+Saga-Scribe bundles fonts, data and libraries by others; see
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for their licences.
 
 ## AI Assistance
 

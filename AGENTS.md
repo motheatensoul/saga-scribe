@@ -30,6 +30,7 @@ The project follows [Semantic Versioning](https://semver.org/); while in 0.x, a 
 - **One version, four places:** `package.json`, `src-tauri/Cargo.toml` (then `cargo update -p saga-scribe` for `Cargo.lock`), `src-tauri/tauri.conf.json`, and the version line in `README.md`. Keep them identical.
 - **Bump on the first change after a release:** once `vX.Y.Z` is tagged, the next commit that isn't purely a fix bumps the minor version; a fixes-only follow-up bumps the patch. Check `git tag` / `gh release list` before starting work.
 - **Branch names follow the target version:** work towards 0.6.0 happens on `dev/0.6.0` (or `dev/0.6.0-<topic>`).
+- **Third-party licences:** after adding, removing or upgrading dependencies, run `bun run licenses` to regenerate the tables in `THIRD_PARTY_LICENSES.md`; describe new bundled fonts or data there by hand.
 - **Changelog:** record user-visible changes under the unreleased version in `CHANGELOG.md` (Keep a Changelog format) as they land.
 - **At release time:** set the release date in `CHANGELOG.md` and add a `<release>` entry to `flatpak/app.sagascribe.Sagascribe.metainfo.xml`.
 - **Project file format** (`.teis`, see `src-tauri/src/commands/file.rs`) is versioned separately; bump it whenever the archive contents change, and keep older versions loadable.

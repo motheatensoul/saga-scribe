@@ -4,8 +4,8 @@
 #
 # Prerequisites:
 #   - flatpak-builder installed
-#   - org.gnome.Platform//49 and org.gnome.Sdk//49 installed:
-#     flatpak install flathub org.gnome.Platform//49 org.gnome.Sdk//49
+#   - org.gnome.Platform//51 and org.gnome.Sdk//51 installed:
+#     flatpak install flathub org.gnome.Platform//51 org.gnome.Sdk//51
 
 set -e
 

@@ -4,6 +4,7 @@
 	"version": "0.6.0",
 	"type": "module",
 	"scripts": {
+		"licenses": "bun scripts/third-party-licenses.ts",
 		"build:grammar": "lezer-generator src/lib/parser/tei-dsl.grammar -o src/lib/parser/tei-dsl-parser.js",
 		"dev": "bun run build:grammar && vite dev",
 		"build": "bun run build:grammar && vite build",

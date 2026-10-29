@@ -69,7 +69,7 @@ fn test_matches_legacy_on_known_cases() {
 #[test]
 fn test_matches_legacy_on_menota_document() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("../tests/fixtures/HolmPerg-34-4to-MLL.xml");
     let Ok(xml) = std::fs::read_to_string(path) else { return };
     let dsl = crate::importer::tei::parse(&xml).unwrap().dsl;
     assert_equivalent(&dsl);

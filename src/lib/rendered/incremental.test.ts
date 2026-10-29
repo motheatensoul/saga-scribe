@@ -74,7 +74,7 @@ describe("renderUpdate", () => {
 
     // Opt-in (HOLMPERG=1): the real 8 MB manuscript; slow in jsdom
     // Paths relative to the project root, where vitest runs
-    const holmperg = join(process.cwd(), "static/tests/HolmPerg-34-4to-MLL.xml");
+    const holmperg = join(process.cwd(), "tests/fixtures/HolmPerg-34-4to-MLL.xml");
     it.runIf(process.env.HOLMPERG === "1" && existsSync(holmperg))(
         "matches a full parse on the HolmPerg manuscript",
         async () => {

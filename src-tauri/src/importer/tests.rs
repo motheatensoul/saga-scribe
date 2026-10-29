@@ -518,7 +518,7 @@ fn test_holmperg_first_words_have_lemma() {
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
 
     if !test_file_path.exists() {
         println!("Test file not found at {:?}, skipping", test_file_path);
@@ -678,7 +678,7 @@ fn test_menota_file_roundtrip_stability() {
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
 
     if !test_file_path.exists() {
         println!("Test file not found at {:?}, skipping", test_file_path);
@@ -726,7 +726,7 @@ fn test_load_menota_test_file() {
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
 
     if !test_file_path.exists() {
         println!("Test file not found at {:?}, skipping", test_file_path);
@@ -766,7 +766,7 @@ fn test_menota_file_imported_roundtrip_xml() {
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
 
     if !test_file_path.exists() {
         println!("Test file not found, skipping imported roundtrip test");
@@ -1081,7 +1081,7 @@ fn test_entities_and_comments_survive_untouched() {
 fn load_holmperg() -> Option<String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()?
-        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
     std::fs::read_to_string(path).ok()
 }
 
