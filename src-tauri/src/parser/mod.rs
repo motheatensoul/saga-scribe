@@ -75,7 +75,14 @@
 mod ast;
 mod compiler;
 mod lexer;
+pub mod syntax;
 mod wordtokenizer;
+
+#[cfg(test)]
+mod legacy_lexer;
+
+#[cfg(test)]
+mod differential_tests;
 
 #[cfg(test)]
 mod tests;

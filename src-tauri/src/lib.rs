@@ -87,6 +87,7 @@ pub fn run() {
             commands::parse::compile_dsl,
             commands::parse::compile_imported,
             commands::parse::set_imported_document,
+            commands::parse::check_dsl,
             commands::pdf::pdf_export_supported,
             commands::pdf::export_pdf,
             commands::pdf::take_print_document,

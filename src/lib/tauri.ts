@@ -639,3 +639,15 @@ export async function printDocumentReady(): Promise<void> {
 export async function printDocumentFailed(message: string): Promise<void> {
   return invoke("print_document_failed", { message });
 }
+
+/** A DSL syntax error; offsets are UTF-16 positions in the source, as CodeMirror uses. */
+export interface DslDiagnostic {
+  from: number;
+  to: number;
+  message: string;
+}
+
+/** Reports every syntax error in DSL source (the parser recovers and keeps going). */
+export async function checkDsl(input: string): Promise<DslDiagnostic[]> {
+  return invoke("check_dsl", { input });
+}

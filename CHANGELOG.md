@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Direct PDF export** (Linux, Windows): choose where to save, and the PDF is written without the print dialog; the document is laid out in a hidden window so the editor stays responsive. macOS keeps the print dialog ("Save as PDF")
 - **Bundled Junicode in PDFs**, so MUFI characters print even where the font isn't installed
+- **Syntax errors in the editor**: every DSL syntax error is underlined where it occurs, not just the first; compile errors name the line and column
 - **Export progress**: HTML and PDF export run behind a progress overlay showing the current step, with a Cancel button
 - **Incremental previews**: Rendered Text re-parses only the pages an edit touches; the XML view applies only the changed range
 - **Security audit for JS dependencies** in CI, also run on dependency PRs
@@ -20,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Imported files are never modified by reading them**: unedited content is written back byte-for-byte, and edits only replace the bytes of what was edited
 - **Project file format 1.5**: `segments.json` always holds the full manifest (with MENOTA flag and source spans); 1.4 projects still open
 - **Non-MENOTA imports** keep their own encoding style (plain `<w>` or plain text) instead of gaining MENOTA markup on edited words
+- **DSL parser**: rebuilt on a hierarchical syntax tree with source positions and error recovery (internal foundation for the round-trip work); output is unchanged
+- **Syntax errors inside `.head{}`, `.supplied{}` and `.norm{}`** are reported, instead of compiling to an XML comment
 - **Validation** runs after a short pause in typing instead of on every compile, and parsed schemas are cached
 - **Only the visible preview tab updates**; hidden tabs catch up when shown
 - **Content Security Policy** enabled; XSLT output is sanitized before it is rendered, exported or printed

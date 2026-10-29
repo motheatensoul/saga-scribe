@@ -221,3 +221,65 @@ pub async fn compile_imported(
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
 }
+
+/// A DSL syntax error, positioned for the editor.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct DslDiagnostic {
+    /// Start offset in UTF-16 code units (the editor's positions)
+    pub from: usize,
+    /// End offset in UTF-16 code units, at most the end of the starting line
+    pub to: usize,
+    pub message: String,
+}
+
+/// Reports every syntax error in DSL source, for the editor's linter.
+#[tauri::command(async)]
+pub async fn check_dsl(input: String) -> Vec<DslDiagnostic> {
+    dsl_diagnostics(&input)
+}
+
+fn dsl_diagnostics(input: &str) -> Vec<DslDiagnostic> {
+    let utf16 = |byte: usize| input[..byte].encode_utf16().count();
+    crate::parser::syntax::parse(input)
+        .diagnostics
+        .into_iter()
+        .map(|d| {
+            // An unclosed bracket's span runs to the end of the document;
+            // underlining the rest of its line is enough to point at it.
+            let line_end = input[d.span.start..]
+                .find('\n')
+                .map_or(input.len(), |i| d.span.start + i);
+            let end = d.span.end.min(line_end).max(d.span.start + 1).min(input.len());
+            DslDiagnostic {
+                from: utf16(d.span.start),
+                to: utf16(end),
+                message: d.message,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dsl_diagnostics_use_utf16_offsets_and_stay_on_one_line() {
+        // "𝔞" is outside the BMP: 4 bytes, 2 UTF-16 units
+        let input = "𝔞 -{open\nnext line";
+        let diagnostics = dsl_diagnostics(input);
+        assert_eq!(
+            diagnostics,
+            vec![DslDiagnostic {
+                from: 3,
+                to: 9,
+                message: "Unclosed bracket, expected '}'".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_dsl_diagnostics_empty_for_valid_input() {
+        assert!(dsl_diagnostics(".head{//1 a :et:} -{x}-").is_empty());
+    }
+}
