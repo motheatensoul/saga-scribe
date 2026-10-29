@@ -606,3 +606,36 @@ export async function createEmptyMetadata(): Promise<string> {
 
 // Re-export Metadata type for convenience
 export type { Metadata };
+
+// Direct PDF export (Linux, Windows): the backend lays the document out in a
+// hidden window and writes the PDF to `path`. See src-tauri/src/commands/pdf.rs.
+
+/** Error message `exportPdf` rejects with when cancelled. */
+export const PDF_EXPORT_CANCELLED = "PDF export cancelled";
+
+export async function pdfExportSupported(): Promise<boolean> {
+  return invoke("pdf_export_supported");
+}
+
+export async function exportPdf(html: string, path: string): Promise<void> {
+  return invoke("export_pdf", { html, path });
+}
+
+export async function cancelPdfExport(): Promise<void> {
+  return invoke("cancel_pdf_export");
+}
+
+/** Used by the hidden print window only. */
+export async function takePrintDocument(): Promise<string> {
+  return invoke("take_print_document");
+}
+
+/** Used by the hidden print window only. */
+export async function printDocumentReady(): Promise<void> {
+  return invoke("print_document_ready");
+}
+
+/** Used by the hidden print window only. */
+export async function printDocumentFailed(message: string): Promise<void> {
+  return invoke("print_document_failed", { message });
+}

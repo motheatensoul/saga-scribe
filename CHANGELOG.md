@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Direct PDF export** (Linux, Windows): choose where to save, and the PDF is written without the print dialog; the document is laid out in a hidden window so the editor stays responsive. macOS keeps the print dialog ("Save as PDF")
+- **Bundled Junicode in PDFs**, so MUFI characters print even where the font isn't installed
 - **Export progress**: HTML and PDF export run behind a progress overlay showing the current step, with a Cancel button
 - **Incremental previews**: Rendered Text re-parses only the pages an edit touches; the XML view applies only the changed range
 - **Security audit for JS dependencies** in CI, also run on dependency PRs

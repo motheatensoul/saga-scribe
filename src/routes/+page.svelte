@@ -39,6 +39,9 @@
         openProject,
         exportTei,
         exportHtml,
+        exportPdf,
+        cancelPdfExport,
+        pdfExportSupported,
         openFile,
         importFile,
         exportInflections,
@@ -48,7 +51,7 @@
     } from "$lib/tauri";
     import type { InflectedForm } from "$lib/tauri";
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
-    import { printToPdf } from "$lib/utils/pdfExport";
+    import { printToPdf, withPrintStyles } from "$lib/utils/pdfExport";
     import {
         type XsltStage,
         createXsltProcessor,
@@ -1104,6 +1107,20 @@
             return;
         }
 
+        // Where the backend writes PDFs itself, ask where to save first;
+        // otherwise the system print dialog offers "Save as PDF".
+        const direct = await pdfExportSupported().catch(() => false);
+        let path: string | null = null;
+        if (direct) {
+            path = await save({
+                filters: [{ name: "PDF", extensions: ["pdf"] }],
+                defaultPath: $editor.filePath
+                    ? $editor.filePath.replace(/\.[^.]+$/, ".pdf")
+                    : undefined,
+            });
+            if (!path) return;
+        }
+
         await withExportProgress("PDF", async (signal) => {
             const htmlBody = await renderExportHtml(signal);
 
@@ -1117,14 +1134,26 @@
             });
             signal.throwIfAborted();
 
-            // Open print dialog (user can "Save as PDF")
-            exportProgress = "Laying out pages…";
-            await printToPdf(fullHtml, { pageSize: "A4" });
-
-            errorStore.info(
-                "Export",
-                "Print dialog opened - select 'Save as PDF' to export",
-            );
+            if (path) {
+                // Laid out and printed in a hidden window; this one stays responsive
+                exportProgress = "Writing PDF…";
+                const stop = () => void cancelPdfExport();
+                signal.addEventListener("abort", stop);
+                try {
+                    await exportPdf(withPrintStyles(fullHtml, "A4"), path);
+                } finally {
+                    signal.removeEventListener("abort", stop);
+                }
+                signal.throwIfAborted();
+                errorStore.info("Export", `Exported PDF to ${path}`);
+            } else {
+                exportProgress = "Laying out pages…";
+                await printToPdf(fullHtml, { pageSize: "A4" });
+                errorStore.info(
+                    "Export",
+                    "Print dialog opened - select 'Save as PDF' to export",
+                );
+            }
         });
     }
 

@@ -7,6 +7,7 @@
 //!
 //! - **[`file`]**: Project file operations (open, save, export)
 //! - **[`parse`]**: DSL compilation (`compile_dsl`, `compile_imported`)
+//! - **[`pdf`]**: Direct PDF export via a hidden print window (`export_pdf`)
 //! - **[`import`]**: TEI-XML import (`import_file`)
 //! - **[`validate`]**: XML validation against RelaxNG/XSD schemas
 //! - **[`template`]**: Template management for TEI headers
@@ -42,6 +43,7 @@ pub mod file;
 pub mod import;
 pub mod metadata;
 pub mod parse;
+pub mod pdf;
 pub mod settings;
 pub mod stylesheet;
 pub mod template;

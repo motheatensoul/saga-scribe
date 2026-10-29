@@ -85,7 +85,7 @@
             <ul tabindex="0" class="dropdown-content z-1 menu p-2 shadow bg-base-100 text-base-content rounded-box w-52">
                 <li><button onclick={onexportxml}>TEI-XML</button></li>
                 <li><button onclick={onexporthtml}>HTML</button></li>
-                <li><button onclick={onexportpdf}>PDF (Print)</button></li>
+                <li><button onclick={onexportpdf}>PDF</button></li>
                 <li class="border-t border-base-300 mt-1 pt-1"><button onclick={onexportdict}>Dictionary JSON</button></li>
             </ul>
         </div>
