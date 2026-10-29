@@ -2,6 +2,12 @@ app-id: app.sagascribe.Sagascribe
 runtime: org.gnome.Platform
 runtime-version: '51'
 sdk: org.gnome.Sdk
+# The app is compiled inside the SDK, so it links the runtime's own libraries
+# (WebKitGTK, libxml2, …) and gets their security updates with the runtime.
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  # libclang, for the libxml crate's bindings (bindgen)
+  - org.freedesktop.Sdk.Extension.llvm22
 command: saga-scribe
 
 finish-args:
@@ -26,49 +32,39 @@ finish-args:
 modules:
   - name: saga-scribe
     buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin
+      prepend-ld-library-path: /usr/lib/sdk/llvm22/lib
+      env:
+        CARGO_HOME: /run/build/saga-scribe/cargo
+        LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
+      # Cargo downloads crates (fine for our builds; Flathub would need
+      # vendored sources generated with flatpak-cargo-generator)
+      build-args:
+        - --share=network
     build-commands:
-      # Install the main binary (renamed so wrapper takes precedence)
-      - install -Dm755 saga-scribe ${FLATPAK_DEST}/bin/saga-scribe.bin
-      # Install wrapper script that sets APPIMAGE env var for Tauri resource resolution
-      - install -Dm755 saga-scribe-wrapper.sh ${FLATPAK_DEST}/bin/saga-scribe
-      # Install bundled resources next to the binary
-      - mkdir -p ${FLATPAK_DEST}/bin
-      - cp -r entities ${FLATPAK_DEST}/bin/
-      - cp -r normalizer ${FLATPAK_DEST}/bin/
-      - cp -r dictionary ${FLATPAK_DEST}/bin/
-      - cp -r schemas ${FLATPAK_DEST}/bin/
-      # Install desktop file
-      - install -Dm644 app.sagascribe.Sagascribe.desktop ${FLATPAK_DEST}/share/applications/app.sagascribe.Sagascribe.desktop
-      # Install AppStream metainfo
-      - install -Dm644 app.sagascribe.Sagascribe.metainfo.xml ${FLATPAK_DEST}/share/metainfo/app.sagascribe.Sagascribe.metainfo.xml
-      # Install icons
-      - install -Dm644 icon-512.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/app.sagascribe.Sagascribe.png
-      - install -Dm644 icon-256.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/app.sagascribe.Sagascribe.png
-      - install -Dm644 icon-128.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/app.sagascribe.Sagascribe.png
+      # The frontend is built beforehand with `bun run build` (no Bun in the SDK)
+      - test -f build/index.html || { echo "Run 'bun run build' first"; exit 1; }
+      # tauri/custom-protocol embeds the frontend, as `tauri build` does
+      - cargo build --release --locked --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
+      # Binary, renamed so the wrapper (which points Tauri at the resources) runs first
+      - install -Dm755 src-tauri/target/release/saga-scribe ${FLATPAK_DEST}/bin/saga-scribe.bin
+      - install -Dm755 flatpak/saga-scribe-wrapper.sh ${FLATPAK_DEST}/bin/saga-scribe
+      # Bundled resources next to the binary
+      - for dir in entities normalizer dictionary schemas; do cp -r static/$dir ${FLATPAK_DEST}/bin/; done
+      - install -Dm644 flatpak/app.sagascribe.Sagascribe.desktop ${FLATPAK_DEST}/share/applications/app.sagascribe.Sagascribe.desktop
+      - install -Dm644 flatpak/app.sagascribe.Sagascribe.metainfo.xml ${FLATPAK_DEST}/share/metainfo/app.sagascribe.Sagascribe.metainfo.xml
+      - install -Dm644 src-tauri/icons/icon.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/app.sagascribe.Sagascribe.png
+      - install -Dm644 src-tauri/icons/128x128@2x.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/app.sagascribe.Sagascribe.png
+      - install -Dm644 src-tauri/icons/128x128.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/app.sagascribe.Sagascribe.png
     sources:
-      - type: file
-        path: saga-scribe
-      - type: file
-        path: saga-scribe-wrapper.sh
       - type: dir
-        path: entities
-        dest: entities
-      - type: dir
-        path: normalizer
-        dest: normalizer
-      - type: dir
-        path: dictionary
-        dest: dictionary
-      - type: dir
-        path: schemas
-        dest: schemas
-      - type: file
-        path: app.sagascribe.Sagascribe.desktop
-      - type: file
-        path: app.sagascribe.Sagascribe.metainfo.xml
-      - type: file
-        path: icon-512.png
-      - type: file
-        path: icon-256.png
-      - type: file
-        path: icon-128.png
+        path: ..
+        skip:
+          - .git
+          - .svelte-kit
+          - .flatpak-builder
+          - node_modules
+          - src-tauri/target
+          - flatpak-build
+          - flatpak-repo

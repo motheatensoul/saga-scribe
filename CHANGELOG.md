@@ -57,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A dangling or doubled `~`** (`upp~ haf`, `upp~~haf`) no longer compiles to stray spaces inside a word
 - **Abbreviations in MENOTA output**: entities inside `.abbr[…]` were written as literal text (`k:bar:` instead of `k&bar;`), and reading such a file back lost the expansion
 - **PDF margins**: page margins were ignored, so text ran to the edge of the page
+- **Flatpak couldn't start**: it packaged a binary built on Ubuntu, linked against `libxml2.so.2`, which the GNOME runtime doesn't have (it ships libxml2 2.14+). The Flatpak is now compiled inside the GNOME SDK against the runtime's own libraries, which also get the runtime's security updates
 - **Export menu** stopped responding after cancelling a file dialog
 - **Save and export dialogs** add the file extension (`.teis`, `.xml`, `.html`, `.pdf`, `.json`) when a name is typed without one
 - **Security**: XSS via XSLT output, network access during XML parsing, vulnerable `zip`, Svelte, Vite and PostCSS versions

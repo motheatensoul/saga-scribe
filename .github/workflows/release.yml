@@ -112,17 +112,8 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
 
-      # Upload Linux binary as artifact for Flatpak build
-      - name: Upload Linux binary for Flatpak
-        if: matrix.platform == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-binary
-          path: src-tauri/target/release/saga-scribe
-          retention-days: 1
-
   build-flatpak:
-    needs: [create-release, build-release]
+    needs: create-release
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
@@ -131,42 +122,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Linux binary
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-binary
-          path: flatpak-build
+      # The app itself is compiled inside the GNOME SDK (see the manifest), so
+      # it links the runtime's libraries; only the frontend is built here
+      - name: Install unzip (for setup-bun)
+        run: command -v unzip || dnf install -y unzip
 
-      - name: Prepare Flatpak build directory
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build frontend
         run: |
-          # Make binary executable
-          chmod +x flatpak-build/saga-scribe
-
-          # Copy resource directories
-          cp -r static/entities flatpak-build/
-          cp -r static/normalizer flatpak-build/
-          cp -r static/dictionary flatpak-build/
-          cp -r static/schemas flatpak-build/
-
-          # Copy Flatpak metadata files
-          cp flatpak/app.sagascribe.Sagascribe.desktop flatpak-build/
-          cp flatpak/app.sagascribe.Sagascribe.metainfo.xml flatpak-build/
-          cp flatpak/saga-scribe-wrapper.sh flatpak-build/
-
-          # Copy icons
-          cp src-tauri/icons/icon.png flatpak-build/icon-512.png
-          cp src-tauri/icons/128x128@2x.png flatpak-build/icon-256.png
-          cp src-tauri/icons/128x128.png flatpak-build/icon-128.png
-
-          # Copy and use the CI-specific manifest
-          cp flatpak/app.sagascribe.Sagascribe.ci.yml flatpak-build/app.sagascribe.Sagascribe.yml
-
-          ls -la flatpak-build/
+          bun install --frozen-lockfile
+          bun run build
 
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          manifest-path: flatpak-build/app.sagascribe.Sagascribe.yml
+          manifest-path: flatpak/app.sagascribe.Sagascribe.yml
           bundle: saga-scribe.flatpak
           cache-key: flatpak-builder-${{ github.sha }}
 
