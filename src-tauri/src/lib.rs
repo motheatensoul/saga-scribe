@@ -10,6 +10,7 @@ mod settings;
 mod stylesheet;
 mod template;
 mod validator;
+mod xml;
 
 use commands::dictionary::OnpState;
 use std::sync::Mutex;
@@ -21,6 +22,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(OnpState(Mutex::new(None)))
+        .manage(commands::parse::ImportedSession::default())
+        .manage(commands::pdf::PdfExportState::default())
         .setup(|app| {
             // Spawn validation actor
             let validation_sender = ValidationActor::spawn();
@@ -84,6 +87,14 @@ pub fn run() {
             commands::settings::set_window_theme,
             commands::parse::compile_dsl,
             commands::parse::compile_imported,
+            commands::parse::set_imported_document,
+            commands::parse::check_dsl,
+            commands::pdf::pdf_export_supported,
+            commands::pdf::export_pdf,
+            commands::pdf::take_print_document,
+            commands::pdf::print_document_ready,
+            commands::pdf::print_document_failed,
+            commands::pdf::cancel_pdf_export,
             commands::entities::load_entities,
             commands::entities::get_entity,
             commands::entities::list_entity_names,

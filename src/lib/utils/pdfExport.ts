@@ -1,11 +1,75 @@
 /**
  * PDF Export Utility
- * Uses browser's print-to-PDF functionality via a hidden iframe
+ *
+ * Where supported (Linux, Windows) the backend writes the PDF directly from a
+ * hidden window (see src-tauri/src/commands/pdf.rs). Elsewhere this falls back
+ * to the system print dialog via a hidden iframe.
  */
 
 export interface PdfExportOptions {
     title?: string;
     pageSize?: "A4" | "Letter";
+}
+
+/**
+ * The app's bundled Junicode, so MUFI characters print even where the font
+ * isn't installed. Only resolves in documents served from the app's origin
+ * (the print window, or an iframe in the app).
+ */
+const APP_FONT_FACES = `
+    <style>
+        @font-face {
+            font-family: 'Junicode';
+            src: url('/fonts/Junicode.woff2') format('woff2');
+            font-weight: 300 700;
+            font-style: normal;
+        }
+        @font-face {
+            font-family: 'Junicode';
+            src: url('/fonts/JunicodeVF-Italic.woff2') format('woff2');
+            font-weight: 300 700;
+            font-style: italic;
+        }
+    </style>
+`;
+
+/**
+ * Adds page size, margins, page numbers, print-only rules and the app fonts to
+ * a standalone HTML document. Direct PDF export paginates with Vivliostyle,
+ * which implements these CSS Paged Media rules (see src/routes/print).
+ */
+export function withPrintStyles(htmlContent: string, pageSize: "A4" | "Letter" = "A4"): string {
+    const printStyles = `
+        <style>
+            @page {
+                size: ${pageSize};
+                margin: 2.5cm 2cm;
+                @bottom-center {
+                    content: counter(page);
+                    font-family: 'Junicode', Georgia, serif;
+                    font-size: 10pt;
+                    color: #666;
+                }
+            }
+            @media print {
+                body {
+                    margin: 0;
+                    padding: 0;
+                    max-width: none;
+                    /* At least two lines of a paragraph on either side of a page break */
+                    orphans: 2;
+                    widows: 2;
+                }
+                h1, h2, h3, h4 {
+                    break-after: avoid;
+                }
+                .pagebreak {
+                    break-before: page;
+                }
+            }
+        </style>
+    `;
+    return htmlContent.replace("</head>", `${APP_FONT_FACES}${printStyles}</head>`);
 }
 
 /**
@@ -33,28 +97,7 @@ export async function printToPdf(
             return;
         }
 
-        // Add print-specific styles to the HTML
-        const pageSize = options.pageSize || "A4";
-        const printStyles = `
-            <style>
-                @page {
-                    size: ${pageSize};
-                    margin: 2cm;
-                }
-                @media print {
-                    body {
-                        margin: 0;
-                        padding: 0;
-                        max-width: none;
-                    }
-                    .pagebreak {
-                        page-break-before: always;
-                    }
-                }
-            </style>
-        `;
-
-        const printHtml = htmlContent.replace("</head>", `${printStyles}</head>`);
+        const printHtml = withPrintStyles(htmlContent, options.pageSize || "A4");
 
         // Write content to iframe
         iframeDoc.open();

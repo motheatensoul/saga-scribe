@@ -3,18 +3,12 @@
  * Generates standalone HTML documents from XSLT-rendered content
  */
 
+import { escapeHtml } from "$lib/utils/xslt";
+
 export interface HtmlExportOptions {
     title?: string;
     includeLineNumbers?: boolean;
     pageBreakStyle?: "visible" | "print-break" | "none";
-}
-
-function escapeHtml(str: string): string {
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
 }
 
 /**
@@ -71,6 +65,15 @@ export function generateStandaloneHtml(
             font-family: monospace;
             text-align: right;
             user-select: none;
+        }
+
+        .word-break-mark {
+            color: #888;
+        }
+
+        .paragraph-mark {
+            color: #aaa;
+            margin-right: 0.25rem;
         }
 
         .linebreak {

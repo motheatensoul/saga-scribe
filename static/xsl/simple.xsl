@@ -39,10 +39,25 @@
         </div>
     </xsl:template>
 
+    <!-- Whether the transcription is line by line: then line breaks (<lb/>)
+         decide the layout, and paragraphs, which often start mid-line, run inline -->
+    <xsl:variable name="lineBased" select="boolean(//*[local-name()='body']//*[local-name()='lb'])"/>
+
     <xsl:template match="tei:p | p">
-        <p class="mb-2">
-            <xsl:apply-templates/>
-        </p>
+        <xsl:choose>
+            <xsl:when test="$lineBased and ancestor::*[local-name()='body']">
+                <!-- A pilcrow marks where each paragraph starts -->
+                <span class="paragraph">
+                    <span class="paragraph-mark" aria-hidden="true">¶</span>
+                    <xsl:apply-templates/>
+                </span>
+            </xsl:when>
+            <xsl:otherwise>
+                <p class="mb-2">
+                    <xsl:apply-templates/>
+                </p>
+            </xsl:otherwise>
+        </xsl:choose>
     </xsl:template>
 
     <xsl:template match="tei:head | head">
@@ -51,7 +66,11 @@
         </h2>
     </xsl:template>
 
-    <!-- Line breaks -->
+    <!-- Line breaks, also inside words (mid-word breaks, "~//" in the DSL) -->
+    <xsl:template match="tei:lb | lb" mode="word-content">
+        <xsl:apply-templates select="."/>
+    </xsl:template>
+
     <xsl:template match="tei:lb | lb">
         <br/>
         <xsl:if test="@n">
@@ -73,41 +92,82 @@
     <!-- Word elements with MENOTA multi-level structure -->
     <xsl:template match="tei:w | w">
         <!-- Get diplomatic text for data attribute - use string() to get all descendant text -->
-        <xsl:variable name="diplText" select="string(.//me:dipl | .//*[local-name()='dipl'])"/>
-        <xsl:variable name="facsText" select="string(.//me:facs | .//*[local-name()='facs'])"/>
-        <xsl:variable name="normText" select="string(.//me:norm | .//*[local-name()='norm'])"/>
+        <xsl:variable name="facs" select="(.//me:facs | .//*[local-name()='facs'])[1]"/>
+        <xsl:variable name="dipl" select="(.//me:dipl | .//*[local-name()='dipl'])[1]"/>
+        <xsl:variable name="norm" select="(.//me:norm | .//*[local-name()='norm'])[1]"/>
+        <xsl:variable name="facsText" select="string($facs)"/>
+        <xsl:variable name="diplText" select="string($dipl)"/>
+        <xsl:variable name="normText" select="string($norm)"/>
 
-        <span class="word"
-              data-word-index="0"
-              data-diplomatic="{normalize-space($diplText)}"
-              data-facsimile="{normalize-space($facsText)}">
+        <!-- The level shown: facsimile, else diplomatic, else normalized, else the word itself -->
+        <xsl:variable name="level" select="
+            $facs[normalize-space($facsText)]
+            | $dipl[not(normalize-space($facsText)) and normalize-space($diplText)]
+            | $norm[not(normalize-space($facsText)) and not(normalize-space($diplText)) and normalize-space($normText)]
+            | self::*[not(normalize-space($facsText)) and not(normalize-space($diplText)) and not(normalize-space($normText))]"/>
+        <xsl:variable name="breaks" select="$level/*[local-name()='lb']"/>
+        <xsl:variable name="title">
             <xsl:if test="@lemma">
-                <xsl:attribute name="title">
-                    <xsl:value-of select="@lemma"/>
-                    <xsl:if test="@me:msa">
-                        <xsl:text> (</xsl:text>
-                        <xsl:value-of select="@me:msa"/>
-                        <xsl:text>)</xsl:text>
-                    </xsl:if>
-                </xsl:attribute>
+                <xsl:value-of select="@lemma"/>
+                <xsl:if test="@me:msa">
+                    <xsl:text> (</xsl:text>
+                    <xsl:value-of select="@me:msa"/>
+                    <xsl:text>)</xsl:text>
+                </xsl:if>
             </xsl:if>
-            <!-- Use apply-templates to preserve <c> element structure for styling -->
-            <xsl:choose>
-                <xsl:when test="normalize-space($facsText)">
-                    <xsl:apply-templates select="(.//me:facs | .//*[local-name()='facs'])[1]/node()" mode="word-content"/>
-                </xsl:when>
-                <xsl:when test="normalize-space($diplText)">
-                    <xsl:apply-templates select="(.//me:dipl | .//*[local-name()='dipl'])[1]/node()" mode="word-content"/>
-                </xsl:when>
-                <xsl:when test="normalize-space($normText)">
-                    <xsl:apply-templates select="(.//me:norm | .//*[local-name()='norm'])[1]/node()" mode="word-content"/>
-                </xsl:when>
-                <xsl:otherwise>
-                    <xsl:value-of select="."/>
-                </xsl:otherwise>
-            </xsl:choose>
-        </span>
+        </xsl:variable>
+
+        <!-- A word broken across lines is shown as one box per line, each line
+             ending in a hyphen; the parts after a break are marked as continuations -->
+        <xsl:call-template name="word-part">
+            <xsl:with-param name="nodes" select="$level/node()[not(self::*[local-name()='lb'])][count(preceding-sibling::*[local-name()='lb']) = 0]"/>
+            <xsl:with-param name="diplText" select="$diplText"/>
+            <xsl:with-param name="facsText" select="$facsText"/>
+            <xsl:with-param name="title" select="$title"/>
+            <xsl:with-param name="broken" select="count($breaks) &gt; 0"/>
+        </xsl:call-template>
+        <xsl:for-each select="$breaks">
+            <xsl:variable name="index" select="position()"/>
+            <xsl:apply-templates select="."/>
+            <xsl:call-template name="word-part">
+                <xsl:with-param name="nodes" select="$level/node()[not(self::*[local-name()='lb'])][count(preceding-sibling::*[local-name()='lb']) = $index]"/>
+                <xsl:with-param name="diplText" select="$diplText"/>
+                <xsl:with-param name="facsText" select="$facsText"/>
+                <xsl:with-param name="title" select="$title"/>
+                <xsl:with-param name="broken" select="$index &lt; count($breaks)"/>
+                <xsl:with-param name="continuation" select="true()"/>
+            </xsl:call-template>
+        </xsl:for-each>
         <xsl:text> </xsl:text>
+    </xsl:template>
+
+    <!-- One box of a word: the whole word, or its part on one line -->
+    <xsl:template name="word-part">
+        <xsl:param name="nodes"/>
+        <xsl:param name="diplText"/>
+        <xsl:param name="facsText"/>
+        <xsl:param name="title"/>
+        <xsl:param name="broken" select="false()"/>
+        <xsl:param name="continuation" select="false()"/>
+        <!-- An empty part (e.g. after a break at the very end) gets no box -->
+        <xsl:if test="not($continuation) or normalize-space(string($nodes)) or $nodes/self::*">
+            <span class="word"
+                  data-word-index="0"
+                  data-diplomatic="{normalize-space($diplText)}"
+                  data-facsimile="{normalize-space($facsText)}">
+                <xsl:if test="$continuation">
+                    <xsl:attribute name="data-word-continuation">true</xsl:attribute>
+                </xsl:if>
+                <xsl:if test="string($title)">
+                    <xsl:attribute name="title"><xsl:value-of select="$title"/></xsl:attribute>
+                </xsl:if>
+                <!-- Apply templates to preserve <c> element structure for styling -->
+                <xsl:apply-templates select="$nodes" mode="word-content"/>
+            </span>
+            <xsl:if test="$broken">
+                <span class="word-break-mark" aria-hidden="true">-</span>
+            </xsl:if>
+        </xsl:if>
     </xsl:template>
 
     <!-- Mode for extracting word content including from nested elements like <c> -->

@@ -180,10 +180,8 @@ impl RelaxNgSchema {
     }
 
     pub fn validate(&self, xml_content: &str, schema_name: &str) -> Result<ValidationResult, String> {
-        // Parse XML using libxml crate
-        let parser = libxml::parser::Parser::default();
-        let doc = parser.parse_string(xml_content)
-            .map_err(|e| format!("Failed to parse XML: {}", e))?;
+        // Parse XML, with its entities declared and no network access
+        let doc = crate::xml::parse(xml_content)?;
         
         let doc_ptr = doc.doc_ptr();
 

@@ -1,15 +1,19 @@
 <script lang="ts">
-    import { readTextFile } from '@tauri-apps/plugin-fs';
+    import { createXsltProcessor, loadStylesheetText, runXsltTransform } from '$lib/utils/xslt';
     import { entityStore } from '$lib/stores/entities';
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
+    import { importedStore } from '$lib/stores/imported.svelte';
 
     let {
         content = '',
         xslPath = '/xsl/simple.xsl',
+        active = true,
         onwordclick,
     }: {
         content?: string;
         xslPath?: string;
+        /** Hidden views skip updates and catch up when shown again */
+        active?: boolean;
         onwordclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) => void;
     } = $props();
 
@@ -19,31 +23,12 @@
     let isTransforming = $state(false);
     let containerEl: HTMLDivElement;
     let enhanceVersion = 0;
+    /** Inputs of the current rendering; an unchanged tab switch doesn't re-run the stylesheet */
+    let renderedFrom: { processor: XSLTProcessor; content: string; entities: unknown } | null = null;
 
     const yieldToMain = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-    function sliceTag(xml: string, tagName: string): string | null {
-        const lower = xml.toLowerCase();
-        const start = lower.indexOf(`<${tagName}`);
-        if (start === -1) return null;
-        const end = lower.indexOf(`</${tagName}>`, start);
-        if (end === -1) return null;
-        return xml.slice(start, end + tagName.length + 3);
-    }
-
     let loadVersion = 0;
-
-    async function loadStylesheetText(path: string): Promise<string> {
-        if (path.startsWith('/xsl/')) {
-            const response = await fetch(path);
-            if (!response.ok) {
-                throw new Error(`Failed to load stylesheet: ${response.statusText}`);
-            }
-            return response.text();
-        }
-
-        return readTextFile(path);
-    }
 
     $effect(() => {
         const currentPath = xslPath;
@@ -61,19 +46,7 @@
             try {
                 const xslText = await loadStylesheetText(currentPath);
                 if (version !== loadVersion) return;
-
-                const parser = new DOMParser();
-                const xslDoc = parser.parseFromString(xslText, 'application/xml');
-
-                const parseError = xslDoc.querySelector('parsererror');
-                if (parseError) {
-                    throw new Error(`XSL parse error: ${parseError.textContent}`);
-                }
-
-                const processor = new XSLTProcessor();
-                processor.importStylesheet(xslDoc);
-                if (version !== loadVersion) return;
-                xslProcessor = processor;
+                xslProcessor = createXsltProcessor(xslText);
             } catch (e) {
                 if (version !== loadVersion) return;
                 error = `Failed to load XSLT: ${e}`;
@@ -83,8 +56,6 @@
     });
 
     // Transform XML when content, processor, or entities change
-    let transformVersion = 0;
-
     $effect(() => {
         const processor = xslProcessor;
         const xmlContent = content;
@@ -94,6 +65,7 @@
 
         if (!processor || !xmlContent.trim()) {
             renderedHtml = '';
+            renderedFrom = null;
             isTransforming = false;
             return;
         }
@@ -104,103 +76,43 @@
             return;
         }
 
-        const version = ++transformVersion;
+        // XSLT is a whole-document program, so it can't be re-run for just the
+        // edited part. Instead it only runs while visible, and only when its inputs changed.
+        if (!active) return;
+        if (
+            renderedFrom?.processor === processor &&
+            renderedFrom.content === xmlContent &&
+            renderedFrom.entities === entities
+        ) {
+            return;
+        }
+
+        // The previous rendering stays visible until the new one is ready
         isTransforming = true;
-        renderedHtml = '';
         error = null;
 
-        // Defer transformation to allow loading spinner to render
+        // A newer run (or unmount) aborts this one at its next stage boundary
+        const controller = new AbortController();
         (async () => {
-            await yieldToMain();
-            if (version !== transformVersion) return;
-
             try {
-                // Prepare the XML content
-                let prepared = xmlContent;
-
-                // Strip DOCTYPE/entity declarations (not supported by DOMParser)
-                prepared = prepared
-                    .replace(/<!DOCTYPE[\s\S]*?\]>\s*/gi, '')
-                    .replace(/<!DOCTYPE[^>]*>\s*/gi, '');
-
-                const bodyFragment = sliceTag(prepared, 'body') ?? sliceTag(prepared, 'text');
-                const xmlFragment = bodyFragment
-                    ? `<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0">${bodyFragment}</TEI>`
-                    : prepared;
-
-                // Replace named entity references with placeholders, then resolve after XSLT
-                // Use ASCII-safe placeholders that won't be stripped by XML/XSLT processing
-                const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
-                const placeholderMap = new Map<string, string>();
-                let entityCounter = 0;
-
-                prepared = xmlFragment.replace(entityPattern, (match, name) => {
-                    // Skip standard XML entities - these must remain as entities
-                    if (['lt', 'gt', 'amp', 'quot', 'apos'].includes(name)) {
-                        return match;
-                    }
-                    const entity = entities[name];
-                    // Use format like XENT0X, XENT1X - letters+numbers only
-                    const placeholder = `XENT${entityCounter}X`;
-                    const glyph = entity?.char || `[${name}]`;
-                    placeholderMap.set(placeholder, glyph);
-                    entityCounter++;
-                    return placeholder;
+                const html = await runXsltTransform(processor, xmlContent, entities, {
+                    bodyOnly: true,
+                    signal: controller.signal,
                 });
-
-                if (version !== transformVersion) return;
-                await yieldToMain();
-
-                const parser = new DOMParser();
-                const xmlDoc = parser.parseFromString(prepared, 'application/xml');
-
-                const parseError = xmlDoc.querySelector('parsererror');
-                if (parseError) {
-                    if (version !== transformVersion) return;
-                    error = `XML parse error: ${parseError.textContent}`;
-                    renderedHtml = '';
-                    isTransforming = false;
-                    return;
-                }
-
-                if (version !== transformVersion) return;
-                await yieldToMain();
-
-                // Apply XSLT transformation
-                const resultDoc = processor.transformToDocument(xmlDoc);
-
-                if (version !== transformVersion) return;
-
-                if (!resultDoc || !resultDoc.documentElement) {
-                    error = 'XSLT transformation produced no output';
-                    renderedHtml = '';
-                    isTransforming = false;
-                    return;
-                }
-
-                // Get the HTML content
-                let html = resultDoc.documentElement.outerHTML;
-
-                // Resolve placeholders to actual glyphs
-                // Placeholders are formatted as XENT{number}X
-                const placeholderRegex = /XENT(\d+)X/g;
-                html = html.replace(placeholderRegex, (match) => {
-                    const glyph = placeholderMap.get(match);
-                    return glyph ?? match;
-                });
-
-                if (version !== transformVersion) return;
                 renderedHtml = html;
+                renderedFrom = { processor, content: xmlContent, entities };
                 error = null;
                 isTransforming = false;
             } catch (e) {
-                if (version !== transformVersion) return;
-                error = `Transform error: ${e}`;
+                if (controller.signal.aborted) return;
+                error = e instanceof Error ? e.message : `Transform error: ${e}`;
                 console.error(error);
                 renderedHtml = '';
                 isTransforming = false;
             }
         })();
+
+        return () => controller.abort();
     });
 
     // Set up delegated word click handlers
@@ -232,18 +144,25 @@
             containerEl.querySelectorAll<HTMLElement>('[data-word-index]')
         );
         const lemmaMap = $lemmaMappings.mappings;
+        const editedWords = importedStore.editedWords;
         const inflectionCache = new Map<string, boolean>();
         const YIELD_EVERY = 500;
 
         void (async () => {
+            // A word broken across lines has a box per line; the later ones
+            // (continuations) belong to the same word
+            let wordIndex = -1;
             for (let index = 0; index < wordElements.length; index++) {
                 if (currentVersion !== enhanceVersion) return;
                 const element = wordElements[index];
-                const wordIndex = index;
+                if (element.dataset.wordContinuation === undefined || wordIndex < 0) {
+                    wordIndex++;
+                }
                 element.dataset.wordIndex = `${wordIndex}`;
                 const diplomatic = element.dataset.diplomatic || element.textContent || '';
 
-                element.classList.remove('is-confirmed', 'has-suggestion');
+                element.classList.remove('is-confirmed', 'has-suggestion', 'is-edited');
+                element.classList.toggle('is-edited', editedWords.has(wordIndex));
 
                 if (wordIndex in lemmaMap) {
                     element.classList.add('is-confirmed');
@@ -276,7 +195,7 @@
             <span class="loading loading-spinner loading-md"></span>
             <span class="ml-2">Loading stylesheet...</span>
         </div>
-    {:else if isTransforming}
+    {:else if isTransforming && !renderedHtml}
         <div class="flex items-center justify-center h-32">
             <!-- SVG spinner for reliable animation during heavy processing -->
             <svg viewBox="0 0 50 50" width="32" height="32" class="text-primary">
@@ -350,6 +269,25 @@
         border-color: var(--color-warning);
         background-color: color-mix(in oklch, var(--color-warning) 15%, transparent);
         opacity: 1;
+    }
+
+    /* Edited since import: lemma and normalized form are the original's */
+    .xslt-rendered :global(.word.is-edited) {
+        text-decoration: underline wavy var(--color-warning);
+        text-underline-offset: 0.25em;
+    }
+
+    /* Hyphen at the end of a line that breaks a word */
+    .xslt-rendered :global(.word-break-mark) {
+        opacity: 0.5;
+        user-select: none;
+    }
+
+    /* Start of a paragraph; paragraphs run inline, as lines decide the layout */
+    .xslt-rendered :global(.paragraph-mark) {
+        opacity: 0.35;
+        margin-right: 0.25rem;
+        user-select: none;
     }
 
     /* Character elements (<c>) - ensure Junicode font for PUA characters */

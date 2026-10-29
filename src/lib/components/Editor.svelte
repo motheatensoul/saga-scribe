@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, type Command, type KeyBinding } from '@codemirror/view';
-    import { EditorState } from '@codemirror/state';
+    import { EditorState, type ChangeSet } from '@codemirror/state';
     import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands';
     import { search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from '@codemirror/search';
     import { foldGutter, foldKeymap } from '@codemirror/language';
@@ -11,7 +11,14 @@
     import { lintGutter } from "@codemirror/lint";
     import { daisyExtensions } from '$lib/editor/theme';
 
-    let { onchange }: { onchange?: (content: string) => void } = $props();
+    let {
+        onchange,
+        onchanges,
+    }: {
+        onchange?: (content: string) => void;
+        /** Every edit's exact changes, before `onchange` */
+        onchanges?: (changes: ChangeSet) => void;
+    } = $props();
 
     let container: HTMLDivElement;
     let view: EditorView;
@@ -44,6 +51,7 @@
                 daisyExtensions,
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
+                        onchanges?.(update.changes);
                         const content = update.state.doc.toString();
                         editor.setContent(content);
                         onchange?.(content);

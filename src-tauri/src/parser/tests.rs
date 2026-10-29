@@ -1150,3 +1150,121 @@ fn test_compiler_menota_character_annotation_out_of_bounds() {
     // Should contain <c type="initial">H</c> - tag must be closed!
     assert!(result.contains(r#"<c type="initial">H</c>"#));
 }
+
+fn word_wrapping_compiler(multi_level: bool, auto_line_numbers: bool) -> Compiler<'static> {
+    Compiler::new().with_config(CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers,
+        multi_level,
+        wrap_pages: false,
+    })
+}
+
+#[test]
+fn test_lexer_word_continuation_number_is_digits_only() {
+    // The importer writes in-word breaks without a space: "to~//5þings"
+    let doc = Lexer::new("hel~//5lo").parse().unwrap();
+    assert_eq!(doc.nodes.len(), 4);
+    assert!(matches!(&doc.nodes[2], Node::LineBreak(Some(n)) if n == "5"));
+    assert!(matches!(&doc.nodes[3], Node::Text(t) if t == "lo"));
+}
+
+#[test]
+fn test_compile_word_continuation_single_level() {
+    for dsl in ["one hel~//5lo two", "one hel~//5 lo two"] {
+        let xml = word_wrapping_compiler(false, false).compile(dsl).unwrap();
+        assert!(xml.contains("<w>hel<lb n=\"5\"/>lo</w>"), "{dsl}: {xml}");
+        assert_eq!(xml.matches("<w>").count(), 3, "{dsl}: {xml}");
+    }
+}
+
+#[test]
+fn test_compile_word_continuation_multi_level() {
+    let xml = word_wrapping_compiler(true, false)
+        .compile("one hel~//5lo two")
+        .unwrap();
+    // MENOTA: the break sits inside facs/dipl, and after the normalized form
+    assert!(xml.contains("<me:facs>hel<lb n=\"5\"/>lo</me:facs>"), "{xml}");
+    assert!(xml.contains("<me:dipl>hel<lb n=\"5\"/>lo</me:dipl>"), "{xml}");
+    assert!(xml.contains("<me:norm>hello<lb n=\"5\"/></me:norm>"), "{xml}");
+    assert_eq!(xml.matches("<w>").count(), 3, "{xml}");
+}
+
+#[test]
+fn test_compile_word_continuation_auto_numbers() {
+    let xml = word_wrapping_compiler(false, true)
+        .compile("// one hel~//lo // two")
+        .unwrap();
+    assert!(xml.contains("<w>hel<lb n=\"2\"/>lo</w>"), "{xml}");
+    assert!(xml.contains("<lb n=\"3\"/>"), "{xml}");
+}
+
+#[test]
+fn test_lexer_paragraph_break_only_standalone() {
+    let doc = Lexer::new(".p a .p\nb word.p .prolog .p.").parse().unwrap();
+    let breaks = doc.nodes.iter().filter(|n| matches!(n, Node::ParagraphBreak)).count();
+    assert_eq!(breaks, 2, "{:?}", doc.nodes);
+    let text: String = doc
+        .nodes
+        .iter()
+        .filter_map(|n| match n {
+            Node::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(text.contains("word.p .prolog .p."), "{text}");
+}
+
+#[test]
+fn test_compile_paragraphs_without_page_wrapping() {
+    let xml = word_wrapping_compiler(false, false).compile(".p a b .p c").unwrap();
+    assert_eq!(xml.matches("<p>").count(), 2, "{xml}");
+    assert_eq!(xml.matches("</p>").count(), 2, "{xml}");
+    assert!(xml.trim_end().ends_with("</p>"), "{xml}");
+    let first = xml.find("<w>c</w>").unwrap();
+    assert!(xml[..first].contains("</p>\n<p>"), "c starts the second paragraph: {xml}");
+}
+
+#[test]
+fn test_compile_paragraphs_with_page_wrapping() {
+    let mut compiler = Compiler::new().with_config(CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: false,
+        wrap_pages: true,
+    });
+    // `.p` right after a page break uses the paragraph the page opened
+    let xml = compiler.compile("///1r .p a .p b ///1v c").unwrap();
+    assert_eq!(xml.matches("<p>").count(), 3, "{xml}");
+    assert_eq!(xml.matches("</p>").count(), 3, "{xml}");
+    assert!(!xml.contains("<p>\n</p>"), "no empty paragraph: {xml}");
+}
+
+#[test]
+fn test_lone_punctuation_entity_is_punctuation() {
+    let mut compiler = word_wrapping_compiler(false, false);
+    let xml = compiler.compile("þa :middot: þo :middot:Q:middot: þa:middot:").unwrap();
+    assert!(xml.contains("<pc>&middot;</pc>"), "{xml}");
+    // Glued to letters, it is part of the word
+    assert!(xml.contains("<w>&middot;Q&middot;</w>"), "{xml}");
+    assert!(xml.contains("<w>þa&middot;</w>"), "{xml}");
+    // A lone entity that is a letter or abbreviation sign is still a word
+    let xml = compiler.compile(":etslash: :inodot:").unwrap();
+    assert_eq!(xml.matches("<w>").count(), 2, "{xml}");
+    assert!(!xml.contains("<pc>"), "{xml}");
+}
+
+#[test]
+fn test_tokens_know_their_source_ranges() {
+    let dsl = "//4 maþr .abbr[k:bar:]{konungr}, hel~//5 lo :middot: .p upp~haf";
+    let nodes = Lexer::new(dsl).parse_spanned().unwrap();
+    let tokens = WordTokenizer::new().tokenize_spanned(nodes);
+    let texts: Vec<&str> = tokens.iter().map(|(_, span)| &dsl[span.clone()]).collect();
+    assert_eq!(
+        texts,
+        ["//4", "maþr", ".abbr[k:bar:]{konungr}", ",", "hel~//5 lo", ":middot:", ".p", "upp~haf"]
+    );
+    // Same tokens as the plain pipeline
+    let plain = WordTokenizer::new().tokenize(Lexer::new(dsl).parse().unwrap().nodes);
+    assert_eq!(tokens.into_iter().map(|(n, _)| n).collect::<Vec<_>>(), plain);
+}

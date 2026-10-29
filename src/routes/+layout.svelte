@@ -5,7 +5,7 @@
 </script>
 
 <svelte:head>
-	<title>TEI Scribe</title>
+	<title>Saga Scribe</title>
 </svelte:head>
 
 {@render children()}

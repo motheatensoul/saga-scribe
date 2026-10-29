@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pdf-export",
+  "description": "Hidden window used to lay out and print PDF exports; it only needs the app's own export commands",
+  "windows": [
+    "pdf-export"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

@@ -99,7 +99,7 @@ pub struct Compiler<'a> {
     line_number: u32,
     /// Running word index counter (reset per compilation)
     word_index: u32,
-    /// Tracks whether we're inside a page `<p>` wrapper (for wrap_pages mode)
+    /// Whether a `<p>` is open: opened by a page break (wrap_pages mode) or by `.p`
     in_page_paragraph: bool,
 }
 
@@ -144,6 +144,11 @@ impl<'a> Compiler<'a> {
         self
     }
 
+    /// The active compiler configuration.
+    pub fn config(&self) -> &CompilerConfig {
+        &self.config
+    }
+
     /// Compiles DSL input to TEI-XML.
     ///
     /// This is the main entry point. The compilation pipeline:
@@ -171,12 +176,30 @@ impl<'a> Compiler<'a> {
         self.in_page_paragraph = false;
 
         let mut output = String::new();
+        // Where the open paragraph's content starts, to spot an empty one
+        let mut paragraph_start = 0;
         for node in &nodes {
-            output.push_str(&self.node_to_xml(node));
+            match node {
+                Node::ParagraphBreak => {
+                    if !self.in_page_paragraph {
+                        output.push_str("<p>\n");
+                        self.in_page_paragraph = true;
+                    } else if !output[paragraph_start..].trim().is_empty() {
+                        output.push_str("</p>\n<p>\n");
+                    }
+                    // else: a paragraph just opened (e.g. by a page break) is used as is
+                    paragraph_start = output.len();
+                }
+                Node::PageBreak(_) => {
+                    output.push_str(&self.node_to_xml(node));
+                    paragraph_start = output.len();
+                }
+                _ => output.push_str(&self.node_to_xml(node)),
+            }
         }
 
-        // Close any open page paragraph at the end
-        if self.config.wrap_pages && self.in_page_paragraph {
+        // Close the paragraph still open at the end
+        if self.in_page_paragraph {
             output.push_str("</p>\n");
         }
 
@@ -186,6 +209,9 @@ impl<'a> Compiler<'a> {
     fn node_to_xml(&mut self, node: &Node) -> String {
         match node {
             Node::Text(text) => self.escape_xml(text),
+            // Paragraphs are opened and closed by `compile`; inside fragments
+            // (block content, inserted words) a break has no meaning
+            Node::ParagraphBreak => String::new(),
             Node::LineBreak(n) => {
                 self.line_number += 1;
                 match n {
@@ -214,11 +240,9 @@ impl<'a> Compiler<'a> {
                 result
             }
             Node::Abbreviation { abbr, expansion } => {
-                format!(
-                    "<choice><abbr>{}</abbr><expan>{}</expan></choice>",
-                    self.escape_xml(abbr),
-                    self.escape_xml(expansion)
-                )
+                let abbr = self.nodes_to_xml(&inline_nodes(abbr));
+                let expansion = self.nodes_to_xml(&inline_nodes(expansion));
+                format!("<choice><abbr>{}</abbr><expan>{}</expan></choice>", abbr, expansion)
             }
             Node::Gap { quantity, supplied } => {
                 let gap_xml = match quantity {
@@ -277,9 +301,13 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_word_single(&mut self, children: &[Node]) -> String {
+        let children = self.number_word_breaks(children);
         let mut content = String::new();
-        for child in children {
-            content.push_str(&self.node_to_xml(child));
+        for child in &children {
+            match self.word_break_tag(child) {
+                Some(tag) => content.push_str(&tag),
+                None => content.push_str(&self.node_to_xml(child)),
+            }
         }
         if content.is_empty() {
             String::new()
@@ -306,6 +334,7 @@ impl<'a> Compiler<'a> {
     ///
     /// Also injects character-level `<c>` tags from paleographic annotations.
     fn compile_word_multi_level(&mut self, children: &[Node]) -> String {
+        let children = &self.number_word_breaks(children);
         let facs = self.nodes_to_facs(children);
         let dipl = self.nodes_to_diplomatic(children);
 
@@ -315,7 +344,7 @@ impl<'a> Compiler<'a> {
 
         // Check if we have a user-provided normalized form (by index)
         let norm = if let Some(stored_norm) = self.get_stored_normalized_by_index(current_index) {
-            self.escape_xml(&stored_norm)
+            self.escape_xml(&stored_norm) + &self.word_breaks_xml(children)
         } else {
             // Fall back to auto-generated normalization
             self.nodes_to_normalized(children)
@@ -430,7 +459,7 @@ impl<'a> Compiler<'a> {
             .collect();
         
         // Sort to close inner-most first (reverse of start)
-        unclosed.sort_by(|a, b| b.0.cmp(&a.0));
+        unclosed.sort_by_key(|a| std::cmp::Reverse(a.0));
 
         for _ in unclosed {
             result.push_str("</c>");
@@ -697,7 +726,9 @@ impl<'a> Compiler<'a> {
         match node {
             Node::Text(text) => self.escape_xml(text),
             Node::Entity(name) => format!("&{};", name),
-            Node::Abbreviation { abbr, .. } => format!("<abbr>{}</abbr>", self.escape_xml(abbr)),
+            Node::Abbreviation { abbr, .. } => {
+                format!("<abbr>{}</abbr>", self.nodes_to_facs(&inline_nodes(abbr)))
+            }
             Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(text)),
             Node::Gap { quantity, .. } => {
                 // Facsimile shows gap only, not supplied
@@ -712,7 +743,7 @@ impl<'a> Compiler<'a> {
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(text)),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in facsimile
-            Node::LineBreak(_) | Node::PageBreak(_) => String::new(), // Handled outside word
+            Node::LineBreak(_) | Node::PageBreak(_) => self.word_break_tag(node).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -757,7 +788,9 @@ impl<'a> Compiler<'a> {
                 // Final fallback to entity reference
                 format!("&{};", name)
             }
-            Node::Abbreviation { expansion, .. } => format!("<expan>{}</expan>", self.escape_xml(expansion)),
+            Node::Abbreviation { expansion, .. } => {
+                format!("<expan>{}</expan>", self.nodes_to_diplomatic(&inline_nodes(expansion)))
+            }
             Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(text)),
             // Clippy is cranky about this being two nested matches, its suggested fix does not work though.
             Node::Gap { supplied, .. } => {
@@ -774,7 +807,7 @@ impl<'a> Compiler<'a> {
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(text)),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in diplomatic
-            Node::LineBreak(_) | Node::PageBreak(_) => String::new(),
+            Node::LineBreak(_) | Node::PageBreak(_) => self.word_break_tag(node).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -791,7 +824,45 @@ impl<'a> Compiler<'a> {
         for node in nodes {
             output.push_str(&self.node_to_normalized(node));
         }
+        // Breaks inside a word go after the normalized form, as in MENOTA
+        output.push_str(&self.word_breaks_xml(nodes));
         output
+    }
+
+    /// Gives unnumbered line breaks inside a word their automatic number, and
+    /// advances the line counter past every line break, as `node_to_xml` does.
+    fn number_word_breaks(&mut self, children: &[Node]) -> Vec<Node> {
+        children
+            .iter()
+            .map(|child| match child {
+                Node::LineBreak(n) => {
+                    self.line_number += 1;
+                    match n {
+                        None if self.config.auto_line_numbers => {
+                            Node::LineBreak(Some(self.line_number.to_string()))
+                        }
+                        _ => child.clone(),
+                    }
+                }
+                _ => child.clone(),
+            })
+            .collect()
+    }
+
+    /// The tag for a line or page break inside a word: no trailing newline (it
+    /// would become part of the word's text) and no paragraph wrapping.
+    fn word_break_tag(&self, node: &Node) -> Option<String> {
+        match node {
+            Node::LineBreak(Some(n)) => Some(format!("<lb n=\"{}\"/>", self.escape_xml(n))),
+            Node::LineBreak(None) => Some("<lb/>".to_string()),
+            Node::PageBreak(n) => Some(format!("<pb n=\"{}\"/>", self.escape_xml(n))),
+            _ => None,
+        }
+    }
+
+    /// All breaks among a word's children, in order.
+    fn word_breaks_xml(&self, children: &[Node]) -> String {
+        children.iter().filter_map(|child| self.word_break_tag(child)).collect()
     }
 
     // Telling clippy to shut it
@@ -825,8 +896,7 @@ impl<'a> Compiler<'a> {
                 format!("&{};", name)
             }
             Node::Abbreviation { expansion, .. } => {
-                let normalized = self.normalize_text(expansion);
-                format!("<expan>{}</expan>", self.escape_xml(&normalized))
+                format!("<expan>{}</expan>", self.nodes_to_normalized(&inline_nodes(expansion)))
             }
             Node::Unclear(text) => {
                 let normalized = self.normalize_text(text);
@@ -860,6 +930,7 @@ impl<'a> Compiler<'a> {
             }
             Node::Head(_) => String::new(),
             Node::CompoundJoin => String::new(),
+            // Appended after the word by `nodes_to_normalized`
             Node::LineBreak(_) | Node::PageBreak(_) => String::new(),
             _ => String::new(),
         }
@@ -884,10 +955,15 @@ impl<'a> Compiler<'a> {
     /// Compile a DSL fragment for a word element.
     /// Used by patching module to recompile modified words.
     /// The attributes parameter provides lemma, me:msa, etc. from the original word.
+    ///
+    /// `kept_norm` is the word's curated normalized form (XML content without
+    /// breaks); when given, it is kept instead of being regenerated, and the
+    /// edited word's breaks are appended to it.
     pub fn compile_word_from_dsl(
         &mut self,
         dsl: &str,
         attributes: &std::collections::HashMap<String, String>,
+        kept_norm: Option<&str>,
     ) -> String {
         // Parse the DSL fragment
         let mut lexer = Lexer::new(dsl);
@@ -900,30 +976,49 @@ impl<'a> Compiler<'a> {
         let tokenizer = WordTokenizer::new();
         let nodes = tokenizer.tokenize(doc.nodes);
 
-        // Find the first Word node (there should only be one for a word fragment)
-        for node in &nodes {
-            if let Node::Word(children) = node {
-                // Generate the three levels
-                let facs = self.nodes_to_facs(children);
-                let dipl = self.nodes_to_diplomatic(children);
-                let norm = self.nodes_to_normalized(children);
+        // A single <w> may span several DSL words (e.g. "þo at"); each level
+        // joins them with a space, mirroring how the importer reads them.
+        let words: Vec<&Vec<Node>> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                Node::Word(children) => Some(children),
+                _ => None,
+            })
+            .collect();
 
-                // Format attributes from provided map
-                let mut attr_str = String::new();
-                // Sort keys for consistent output
-                let mut keys: Vec<_> = attributes.keys().collect();
-                keys.sort();
-                for key in keys {
-                    if let Some(value) = attributes.get(key) {
-                        attr_str.push_str(&format!(" {}=\"{}\"", key, self.escape_xml(value)));
-                    }
+        if !words.is_empty() {
+            // Format attributes from provided map
+            let mut attr_str = String::new();
+            // Sort keys for consistent output
+            let mut keys: Vec<_> = attributes.keys().collect();
+            keys.sort();
+            for key in keys {
+                if let Some(value) = attributes.get(key) {
+                    attr_str.push_str(&format!(" {}=\"{}\"", key, self.escape_xml(value)));
                 }
-
-                return format!(
-                    "<w{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</w>\n",
-                    attr_str, facs, dipl, norm
-                );
             }
+
+            if !self.config.multi_level {
+                let content: Vec<String> = words.iter().map(|w| self.nodes_to_xml(w)).collect();
+                return format!("<w{}>{}</w>\n", attr_str, content.join(" "));
+            }
+
+            // Generate the three levels
+            let join = |level: Vec<String>| level.join(" ");
+            let facs = join(words.iter().map(|w| self.nodes_to_facs(w)).collect());
+            let dipl = join(words.iter().map(|w| self.nodes_to_diplomatic(w)).collect());
+            let norm = match kept_norm {
+                Some(norm) => {
+                    let breaks: String = words.iter().map(|w| self.word_breaks_xml(w)).collect();
+                    format!("{}{}", norm, breaks)
+                }
+                None => join(words.iter().map(|w| self.nodes_to_normalized(w)).collect()),
+            };
+
+            return format!(
+                "<w{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</w>\n",
+                attr_str, facs, dipl, norm
+            );
         }
 
         // Fallback: if no Word node found, compile as plain text
@@ -947,6 +1042,10 @@ impl<'a> Compiler<'a> {
         // Find the first Punctuation node
         for node in &nodes {
             if let Node::Punctuation(children) = node {
+                if !self.config.multi_level {
+                    return format!("<pc>{}</pc>\n", self.nodes_to_xml(children));
+                }
+
                 // Generate the three levels for punctuation
                 let facs = self.nodes_to_facs(children);
                 let dipl = self.nodes_to_diplomatic(children);
@@ -1045,6 +1144,15 @@ impl<'a> Compiler<'a> {
         let mut output = String::new();
         for node in &nodes {
             match node {
+                Node::Word(children) if !self.config.multi_level => {
+                    let content = self.nodes_to_xml(children);
+                    if !content.is_empty() {
+                        output.push_str(&format!("<w>{}</w>\n", content));
+                    }
+                }
+                Node::Punctuation(children) if !self.config.multi_level => {
+                    output.push_str(&format!("<pc>{}</pc>\n", self.nodes_to_xml(children)));
+                }
                 Node::Word(children) => {
                     let facs = self.nodes_to_facs(children);
                     let dipl = self.nodes_to_diplomatic(children);
@@ -1085,6 +1193,33 @@ impl<'a> Compiler<'a> {
 
         output
     }
+
+    /// Compiles a DSL fragment without word wrapping, for documents whose text
+    /// is not wrapped in `<w>` elements.
+    pub fn compile_inline_from_dsl(&mut self, dsl: &str) -> String {
+        match Lexer::new(dsl).parse() {
+            Ok(doc) => self.nodes_to_xml(&doc.nodes),
+            Err(_) => format!("<!-- parse error: {} -->", self.escape_xml(dsl)),
+        }
+    }
+
+    /// Compiles child nodes in single-level form, without tracking word indices.
+    fn nodes_to_xml(&mut self, nodes: &[Node]) -> String {
+        let mut output = String::new();
+        for node in nodes {
+            output.push_str(&self.node_to_xml(node));
+        }
+        output
+    }
+}
+
+/// The DSL inside a construct (`.abbr[k:bar:]`) as nodes, so its entities are
+/// compiled like anywhere else; unparseable content stays text.
+fn inline_nodes(dsl: &str) -> Vec<Node> {
+    Lexer::new(dsl)
+        .parse()
+        .map(|doc| doc.nodes)
+        .unwrap_or_else(|_| vec![Node::Text(dsl.to_string())])
 }
 
 impl Default for Compiler<'_> {

@@ -87,6 +87,12 @@ export type Segment =
       xml: string;
     }
   | {
+      /** A paragraph's start tag, shown as `.p` in the DSL */
+      type: "paragraph";
+      id: number;
+      xml: string;
+    }
+  | {
       type: "word";
       id: number;
       original_xml: string;
@@ -124,6 +130,10 @@ export type Segment =
 export interface ImportedDocument {
   segments: Segment[];
   is_menota: boolean;
+  /** Byte ranges of segments in the original body, indexed by segment id */
+  spans?: ([number, number] | null)[];
+  /** DSL rules version the document was imported with (absent: 0) */
+  dsl_rules?: number;
 }
 
 export interface ImportResult {
@@ -210,22 +220,65 @@ export interface CompileImportedOptions {
   customMappings?: Record<string, string>;
 }
 
+/**
+ * Loads the imported document into the backend (or clears it with `null`).
+ * Sent once per document, so compiles only need to send the edited DSL.
+ */
+export async function setImportedDocument(
+  document: {
+    segmentsJson: string;
+    originalBodyXml: string;
+    preamble: string;
+    postamble: string;
+  } | null,
+): Promise<void> {
+  return invoke("set_imported_document", {
+    segmentsJson: document?.segmentsJson ?? null,
+    originalBodyXml: document?.originalBodyXml ?? null,
+    preamble: document?.preamble ?? null,
+    postamble: document?.postamble ?? null,
+  });
+}
+
+/** An editor change: `from_a..to_a` of the previous DSL became `from_b..to_b` (UTF-16 offsets). */
+export interface TextChange {
+  from_a: number;
+  to_a: number;
+  from_b: number;
+  to_b: number;
+}
+
+/** The editor's changes since the compile of revision `baseRevision`. */
+export interface CompileGuidance {
+  baseRevision: number;
+  changes: TextChange[];
+}
+
+/** Result of {@link compileImported}. */
+export interface ImportedCompileResult {
+  xml: string;
+  /** Identifies this compile's DSL, for {@link CompileGuidance} */
+  revision: number;
+  /**
+   * Words (by number) edited in the DSL whose lemma, analysis and normalized
+   * form were kept from the original and should be reviewed
+   */
+  editedWords: number[];
+}
+
+/** Compiles edited DSL against the document loaded with {@link setImportedDocument}. */
 export async function compileImported(
   editedDsl: string,
-  segmentsJson: string,
-  preamble: string,
-  postamble: string,
   options?: CompileImportedOptions,
-): Promise<string> {
+  guidance?: CompileGuidance,
+): Promise<ImportedCompileResult> {
   return invoke("compile_imported", {
     editedDsl,
-    segmentsJson,
-    preamble,
-    postamble,
     entitiesJson: options?.entitiesJson ?? null,
     normalizerJson: options?.normalizerJson ?? null,
     entityMappingsJson: options?.entityMappingsJson ?? null,
     customMappings: options?.customMappings ?? null,
+    guidance: guidance ?? null,
   });
 }
 
@@ -589,3 +642,48 @@ export async function createEmptyMetadata(): Promise<string> {
 
 // Re-export Metadata type for convenience
 export type { Metadata };
+
+// Direct PDF export (Linux, Windows): the backend lays the document out in a
+// hidden window and writes the PDF to `path`. See src-tauri/src/commands/pdf.rs.
+
+/** Error message `exportPdf` rejects with when cancelled. */
+export const PDF_EXPORT_CANCELLED = "PDF export cancelled";
+
+export async function pdfExportSupported(): Promise<boolean> {
+  return invoke("pdf_export_supported");
+}
+
+export async function exportPdf(html: string, path: string): Promise<void> {
+  return invoke("export_pdf", { html, path });
+}
+
+export async function cancelPdfExport(): Promise<void> {
+  return invoke("cancel_pdf_export");
+}
+
+/** Used by the hidden print window only. */
+export async function takePrintDocument(): Promise<string> {
+  return invoke("take_print_document");
+}
+
+/** Used by the hidden print window only. */
+export async function printDocumentReady(): Promise<void> {
+  return invoke("print_document_ready");
+}
+
+/** Used by the hidden print window only. */
+export async function printDocumentFailed(message: string): Promise<void> {
+  return invoke("print_document_failed", { message });
+}
+
+/** A DSL syntax error; offsets are UTF-16 positions in the source, as CodeMirror uses. */
+export interface DslDiagnostic {
+  from: number;
+  to: number;
+  message: string;
+}
+
+/** Reports every syntax error in DSL source (the parser recovers and keeps going). */
+export async function checkDsl(input: string): Promise<DslDiagnostic[]> {
+  return invoke("check_dsl", { input });
+}

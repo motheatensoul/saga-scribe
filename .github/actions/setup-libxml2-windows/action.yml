@@ -1,0 +1,57 @@
+name: Setup libxml2 (Windows)
+description: >
+  Builds libxml2 with vcpkg (static, MD runtime) and points the libxml crate's
+  build script, the MSVC linker and bindgen at it. Built packages are cached,
+  so only the first run on a new runner image compiles libxml2.
+
+runs:
+  using: composite
+  steps:
+    - name: Cache vcpkg packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/vcpkg-cache
+        # Runner image updates can change the compiler, which vcpkg includes in its package hashes
+        key: vcpkg-libxml2-x64-windows-static-md-${{ env.ImageVersion }}
+        restore-keys: vcpkg-libxml2-x64-windows-static-md-
+
+    - name: Install libxml2
+      shell: pwsh
+      env:
+        VCPKG_DEFAULT_BINARY_CACHE: ${{ runner.temp }}/vcpkg-cache
+      run: |
+        New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+        vcpkg integrate install
+        vcpkg install libxml2:x64-windows-static-md
+        echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
+        $vcpkgInstalled = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
+        echo "LIBXML2_DIR=$vcpkgInstalled" >> $env:GITHUB_ENV
+        # Set linker search paths for MSVC
+        echo "LIB=$vcpkgInstalled\lib;$env:LIB" >> $env:GITHUB_ENV
+        echo "INCLUDE=$vcpkgInstalled\include;$vcpkgInstalled\include\libxml2;$env:INCLUDE" >> $env:GITHUB_ENV
+        # Also set for pkg-config style discovery
+        echo "LIBXML2_INCLUDE_DIR=$vcpkgInstalled\include\libxml2" >> $env:GITHUB_ENV
+        echo "LIBXML2_LIB_DIR=$vcpkgInstalled\lib" >> $env:GITHUB_ENV
+        # Create xml2.lib alias if libxml2.lib exists (some crates expect this name)
+        $libxml2Lib = "$vcpkgInstalled\lib\libxml2.lib"
+        $xml2Lib = "$vcpkgInstalled\lib\xml2.lib"
+        if ((Test-Path $libxml2Lib) -and -not (Test-Path $xml2Lib)) {
+          Copy-Item $libxml2Lib $xml2Lib
+          Write-Host "Created xml2.lib alias"
+        }
+        # Find Windows SDK and MSVC paths for bindgen/clang
+        $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+        $msvcPath = Get-ChildItem "$vsPath\VC\Tools\MSVC" | Sort-Object Name -Descending | Select-Object -First 1
+        $msvcInclude = "$($msvcPath.FullName)\include"
+        # Find Windows SDK
+        $sdkVersion = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object Name -Descending | Select-Object -First 1
+        $sdkInclude = "C:\Program Files (x86)\Windows Kits\10\Include\$($sdkVersion.Name)\ucrt"
+        # Set bindgen clang args to find system headers
+        $clangArgs = "-I`"$msvcInclude`" -I`"$sdkInclude`" -I`"$vcpkgInstalled\include`" -I`"$vcpkgInstalled\include\libxml2`""
+        echo "BINDGEN_EXTRA_CLANG_ARGS=$clangArgs" >> $env:GITHUB_ENV
+        Write-Host "MSVC include: $msvcInclude"
+        Write-Host "SDK include: $sdkInclude"
+        Write-Host "Clang args: $clangArgs"
+        # List what was installed for debugging
+        Write-Host "Installed libraries:"
+        Get-ChildItem "$vcpkgInstalled\lib\*.lib" | ForEach-Object { Write-Host $_.Name }

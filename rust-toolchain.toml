@@ -1,0 +1,5 @@
+# Pinned so new clippy lints in a stable release can't break `bun run check:all` or CI.
+# Bump deliberately; the crate's minimum supported version is `rust-version` in src-tauri/Cargo.toml.
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt"]

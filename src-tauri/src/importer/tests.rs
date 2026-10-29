@@ -1,9 +1,11 @@
 use super::tei::parse;
 use crate::importer::tei::helpers;
-use crate::importer::tei::patching::{apply_patches_and_reconstruct, compute_patches};
+use crate::importer::tei::patching::{
+    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body, Guidance,
+    PatchOperation, Patcher, RenderedBody, TextChange,
+};
 use crate::importer::tei::segments::Segment;
 use crate::parser::{Compiler, CompilerConfig, Lexer};
-use libxml::parser::Parser;
 use libxml::tree::NodeType;
 
 // ============================================================================
@@ -116,7 +118,7 @@ fn test_import_del_add() {
 fn test_import_complex() {
     let xml = "<TEI><text><body><p>Line 1<lb/>Line 2</p></body></text></TEI>";
     let result = parse(xml).unwrap();
-    assert_eq!(result.dsl, "Line 1\n// Line 2");
+    assert_eq!(result.dsl, ".p Line 1\n// Line 2");
 }
 
 #[test]
@@ -515,7 +517,7 @@ fn test_holmperg_first_words_have_lemma() {
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
 
     if !test_file_path.exists() {
         println!("Test file not found at {:?}, skipping", test_file_path);
@@ -596,10 +598,8 @@ fn test_import_am_ex_markers() {
 }
 
 fn normalize_xml(xml: &str) -> String {
-    let parser = Parser::default();
-    let doc = parser
-        .parse_string(xml)
-        .expect("Should parse XML for normalization");
+    // Entities declared as the importer does, so they survive on both sides
+    let doc = crate::xml::parse(xml).expect("Should parse XML for normalization");
     let root = doc.get_root_element().expect("Should have root element");
     serialize_node_sorted(&root)
 }
@@ -675,7 +675,7 @@ fn test_menota_file_roundtrip_stability() {
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
 
     if !test_file_path.exists() {
         println!("Test file not found at {:?}, skipping", test_file_path);
@@ -692,7 +692,7 @@ fn test_menota_file_roundtrip_stability() {
         .expect("Imported document manifest should exist");
 
     // Roundtrip using the imported patching path
-    let patches = compute_patches(&imported_doc.segments, &import_result.dsl);
+    let patches = compute_patches(&imported_doc.segments, imported_doc.dsl_rules, &import_result.dsl).unwrap();
     let mut compiler = Compiler::new().with_config(CompilerConfig {
         word_wrap: true,
         auto_line_numbers: false,
@@ -723,7 +723,7 @@ fn test_load_menota_test_file() {
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
 
     if !test_file_path.exists() {
         println!("Test file not found at {:?}, skipping", test_file_path);
@@ -763,7 +763,7 @@ fn test_menota_file_imported_roundtrip_xml() {
     let test_file_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
-        .join("static/tests/HolmPerg-34-4to-MLL.xml");
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
 
     if !test_file_path.exists() {
         println!("Test file not found, skipping imported roundtrip test");
@@ -786,7 +786,7 @@ fn test_menota_file_imported_roundtrip_xml() {
         .parse()
         .expect("Imported DSL should parse without errors");
 
-    let patches = compute_patches(&imported_doc.segments, &import_result.dsl);
+    let patches = compute_patches(&imported_doc.segments, imported_doc.dsl_rules, &import_result.dsl).unwrap();
     let mut compiler = Compiler::new().with_config(CompilerConfig {
         word_wrap: true,
         auto_line_numbers: false,
@@ -972,3 +972,584 @@ fn test_roundtrip_space_before_tag() {
     assert_eq!(dsl2, "word +{added}+", "Cycle 1 should preserve space before tag");
 }
 
+
+// ============================================================================
+// SOURCE-PRESERVING ROUND-TRIP TESTS
+// The user's file is privileged: reading must never change it, and edits must
+// only touch the bytes of what was edited.
+// ============================================================================
+
+const MENOTA_SAMPLE: &str = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
+<p><lb n="3"/><w me:msa="xNC" lemma="maðr"><choice><me:facs>maþr</me:facs><me:dipl>maþr</me:dipl><me:norm>maðr</me:norm></choice></w> <w lemma="ganga"><choice><me:facs>geck</me:facs><me:dipl>gekk</me:dipl><me:norm>gekk</me:norm></choice></w><pc><choice><me:facs>.</me:facs><me:dipl>.</me:dipl><me:norm>.</me:norm></choice></pc></p>
+<p><w><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w></p>
+</body></text></TEI>"#;
+
+/// Imports `xml`, applies `edit` to the DSL, and compiles back the way
+/// `compile_imported` does. Returns (original body, new body).
+fn imported_roundtrip(xml: &str, edit: impl Fn(&str) -> String) -> Result<(String, String), String> {
+    imported_render(xml, edit).map(|(original, rendered)| (original, rendered.xml))
+}
+
+/// Like [`imported_roundtrip`], with the full render result.
+fn imported_render(
+    xml: &str,
+    edit: impl Fn(&str) -> String,
+) -> Result<(String, RenderedBody), String> {
+    let import = parse(xml)?;
+    let doc = import.imported_document.expect("manifest");
+    let original_body = import.original_body_xml.expect("body");
+    let patches = compute_patches(&doc.segments, doc.dsl_rules, &edit(&import.dsl))?;
+    let mut compiler = Compiler::new().with_config(compiler_config_for(&doc));
+    let body = render_body(&doc, Some(&original_body), &patches, &mut compiler)?;
+    Ok((original_body, body))
+}
+
+#[test]
+fn test_unchanged_import_is_byte_identical() {
+    let (original, body) = imported_roundtrip(MENOTA_SAMPLE, |d| d.to_string()).unwrap();
+    assert_eq!(original, body);
+}
+
+#[test]
+fn test_whitespace_only_edit_is_byte_identical() {
+    let (original, body) =
+        imported_roundtrip(MENOTA_SAMPLE, |d| format!("\n\n{}\n\n", d.replace(' ', "   "))).unwrap();
+    assert_eq!(original, body);
+}
+
+#[test]
+fn test_dsl_parse_error_is_an_error_not_a_wipe() {
+    let result = imported_roundtrip(MENOTA_SAMPLE, |d| format!("{} -{{broken", d));
+    assert!(result.is_err(), "unparseable DSL must not produce output");
+}
+
+#[test]
+fn test_edit_touches_only_the_edited_word() {
+    let (original, body) = imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("geck", "gekk")).unwrap();
+    // Untouched word keeps its exact original bytes, including attribute order.
+    assert!(body.contains(r#"<w me:msa="xNC" lemma="maðr"><choice><me:facs>maþr</me:facs>"#));
+    // Edited word keeps its lemma.
+    assert!(body.contains(r#"lemma="ganga""#));
+    assert!(body.contains("<me:facs>gekk</me:facs>"));
+    assert!(!body.contains("geck"));
+    // Everything outside the edited <w> is unchanged.
+    let start = original.find(r#"<w lemma="ganga">"#).unwrap();
+    assert_eq!(&body[..start], &original[..start]);
+    assert!(body.ends_with(&original[original.find("<pc>").unwrap()..]));
+}
+
+#[test]
+fn test_line_break_edit_is_applied() {
+    let (_, body) = imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("//3", "//4")).unwrap();
+    assert!(body.contains(r#"<lb n="4"/>"#), "{}", body);
+    assert!(!body.contains(r#"<lb n="3"/>"#));
+}
+
+#[test]
+fn test_insert_at_paragraph_end_stays_in_paragraph() {
+    let (_, body) = imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("geck.", "geck. hann")).unwrap();
+    let first_p_end = body.find("</p>").unwrap();
+    let inserted = body.find("<me:facs>hann</me:facs>").expect("inserted word");
+    assert!(inserted < first_p_end, "insert must land in the first paragraph:\n{}", body);
+}
+
+#[test]
+fn test_non_menota_insert_is_single_level() {
+    let xml = "<TEI><text><body><p><w>alpha</w> <w>beta</w></p></body></text></TEI>";
+    let (_, body) = imported_roundtrip(xml, |d| format!("{} gamma", d)).unwrap();
+    assert!(body.contains("<w>gamma</w>"), "{}", body);
+    assert!(!body.contains("me:facs"));
+}
+
+#[test]
+fn test_plain_text_edit_stays_plain_text() {
+    let xml = "<TEI><text><body><p>Hello brave world</p></body></text></TEI>";
+    let (original, body) = imported_roundtrip(xml, |d| d.replace("brave", "bold")).unwrap();
+    assert_eq!(body, original.replace("brave", "bold"));
+}
+
+#[test]
+fn test_entities_and_comments_survive_untouched() {
+    let xml = "<TEI><text><body><!-- keep me --><p>a &amp; b<lb n='1' />c</p></body></text></TEI>";
+    let (original, body) = imported_roundtrip(xml, |d| d.replace('c', "cc")).unwrap();
+    assert_eq!(body, original.replace(">c<", ">cc<"));
+}
+
+fn load_holmperg() -> Option<String> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()?
+        .join("tests/fixtures/HolmPerg-34-4to-MLL.xml");
+    std::fs::read_to_string(path).ok()
+}
+
+#[test]
+fn test_menota_file_unchanged_is_byte_identical() {
+    let Some(xml) = load_holmperg() else { return };
+    let import = parse(&xml).unwrap();
+    assert!(
+        import.imported_document.as_ref().unwrap().spans.is_some(),
+        "source spans should align for the reference MENOTA file"
+    );
+    let (original, body) = imported_roundtrip(&xml, |d| d.to_string()).unwrap();
+    assert!(original == body, "unchanged import must reproduce the body byte-for-byte");
+}
+
+#[test]
+fn test_menota_file_distant_edits_preserve_everything_else() {
+    let Some(xml) = load_holmperg() else { return };
+    let import = parse(&xml).unwrap();
+    let doc = import.imported_document.unwrap();
+    // First plain word outside any block construct (a word inside `.head{...}`
+    // is part of one opaque segment and would regenerate the whole head).
+    let mut depth = 0i32;
+    let mut first = None;
+    for token in import.dsl.split_whitespace() {
+        if depth == 0 && token.len() > 3 && token.chars().all(char::is_alphabetic) {
+            first = Some(token.to_string());
+            break;
+        }
+        depth += token.matches('{').count() as i32 - token.matches('}').count() as i32;
+    }
+    let first = first.unwrap();
+    let edited = format!(
+        "{} extra",
+        import.dsl.replacen(&format!(" {} ", first), " XXX ", 1)
+    );
+
+    // Exactly two changes: the edited token's segment and the appended word.
+    let patches = compute_patches(&doc.segments, doc.dsl_rules, &edited).unwrap();
+    let changes: Vec<_> = patches
+        .iter()
+        .filter(|p| !matches!(p, PatchOperation::Keep { .. }))
+        .collect();
+    assert_eq!(changes.len(), 2, "unexpected changes: {:?}", changes);
+
+    let (original, body) = imported_roundtrip(&xml, |_| edited.clone()).unwrap();
+    assert_eq!(
+        original.matches("lemma=").count(),
+        body.matches("lemma=").count(),
+        "no lemma attributes may be lost"
+    );
+    assert!(body.contains("<me:facs>XXX</me:facs>"));
+    assert!(body.contains("<me:facs>extra</me:facs>"));
+}
+
+#[test]
+fn test_multi_word_w_edit_stays_one_word() {
+    let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="þó at"><choice><me:facs>þo at</me:facs><me:dipl>þo at</me:dipl><me:norm>þó at</me:norm></choice></w> <w><choice><me:facs>x</me:facs><me:dipl>x</me:dipl><me:norm>x</me:norm></choice></w></p></body></text></TEI>"#;
+    // One <w> written as two words reads as one DSL word: "þo~at"
+    let (_, body) = imported_roundtrip(xml, |d| d.replace("þo~at", "þa~at")).unwrap();
+    assert!(body.contains("<me:facs>þa at</me:facs>"), "{}", body);
+    assert_eq!(body.matches("<w").count(), 2, "{}", body);
+    assert!(body.contains(r#"lemma="þó at""#));
+}
+
+// ============================================================================
+// PARAGRAPH BREAKS (.p)
+// ============================================================================
+
+#[test]
+fn test_paragraph_split_inserts_tags_in_place() {
+    // DSL: ".p \n//3 maþr geck. .p ok"
+    let (original, body) =
+        imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("maþr geck", "maþr .p geck")).unwrap();
+    let expected = original.replacen("</w> <w lemma", "</w></p>\n<p> <w lemma", 1);
+    assert_eq!(body, expected);
+}
+
+#[test]
+fn test_paragraph_merge_removes_tags_keeps_separator() {
+    let (original, body) =
+        imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("geck. .p ok", "geck. ok")).unwrap();
+    let expected = original.replacen("</p>\n<p><w>", "\n<w>", 1);
+    assert_eq!(body, expected);
+}
+
+#[test]
+fn test_paragraph_whitespace_around_marker_changes_nothing() {
+    let (original, body) =
+        imported_roundtrip(MENOTA_SAMPLE, |d| d.replace(" .p ok", "\n\n  .p\n   ok")).unwrap();
+    assert_eq!(original, body);
+}
+
+#[test]
+fn test_paragraph_merge_of_plain_text_keeps_words_apart() {
+    let xml = "<TEI><text><body><p>one two</p><p>three</p></body></text></TEI>";
+    let (_, body) = imported_roundtrip(xml, |d| d.replace(" .p three", " three")).unwrap();
+    assert_eq!(body, "<body><p>one two\nthree</p></body>");
+}
+
+#[test]
+fn test_paragraph_split_inside_inline_element_is_an_error() {
+    let xml = "<TEI><text><body><p>a <hi>b c</hi> d</p></body></text></TEI>";
+    let result = imported_roundtrip(xml, |d| d.replace("b c", "b .p c"));
+    let error = result.expect_err("a split inside <hi> would break the XML");
+    assert!(error.contains("inside <hi>"), "{error}");
+}
+
+#[test]
+fn test_removing_first_paragraph_break_is_an_error() {
+    let result = imported_roundtrip(MENOTA_SAMPLE, |d| d.replacen(".p", "", 1));
+    let error = result.expect_err("the first paragraph has no paragraph to merge into");
+    assert!(error.contains("first paragraph"), "{error}");
+}
+
+#[test]
+fn test_menota_file_paragraph_edits_reimport_as_edited() {
+    let Some(xml) = load_holmperg() else { return };
+    let import = parse(&xml).unwrap();
+    let dsl = &import.dsl;
+
+    // Merge the 3rd paragraph into the 2nd, and split one later on
+    let third = dsl.match_indices(" .p ").nth(2).unwrap().0;
+    let edited = format!("{}{}", &dsl[..third], &dsl[third + 3..]);
+    // Split after the first sentence end (". " closes an <s>) that allows it;
+    // mid-sentence splits are refused, as <s> can't be split
+    let mut result = None;
+    for (at, _) in edited.match_indices(". ").skip(5).take(50) {
+        let mut candidate = edited.clone();
+        candidate.insert_str(at + 1, " .p");
+        if let Ok(rendered) = imported_roundtrip(&xml, |_| candidate.clone()) {
+            result = Some((candidate, rendered));
+            break;
+        }
+    }
+    let (edited, (_, body)) = result.expect("a sentence boundary that can be split");
+    let start = xml.find("<body").unwrap();
+    let end = xml.find("</body>").unwrap() + "</body>".len();
+    let rewritten = format!("{}{}{}", &xml[..start], body, &xml[end..]);
+
+    // The new file reads back as exactly the edited DSL (modulo whitespace)
+    let reread = parse(&rewritten).unwrap().dsl;
+    let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert_eq!(words(&reread), words(&edited));
+    // Nothing but paragraph tags (and whitespace) changed
+    let without_paragraphs =
+        |s: &str| s.replace("</p>", "").replace("<p>", "").split_whitespace().collect::<String>();
+    assert_eq!(without_paragraphs(&rewritten), without_paragraphs(&xml));
+    assert_ne!(rewritten, xml);
+}
+
+// ============================================================================
+// EDITED WORDS KEEP THEIR CURATED DATA
+// ============================================================================
+
+#[test]
+fn test_edited_word_keeps_lemma_msa_and_norm() {
+    // DSL: ".p \n//3 maþr geck. .p ok"; "maþr" has lemma maðr and norm maðr
+    let (_, rendered) = imported_render(MENOTA_SAMPLE, |d| d.replace("maþr", "maþꝛ")).unwrap();
+    let xml = &rendered.xml;
+    let start = xml.find("<w").unwrap();
+    let word = &xml[start..start + xml[start..].find("</w>").unwrap()];
+    assert!(word.contains(r#"lemma="maðr""#), "{word}");
+    assert!(word.contains(r#"me:msa="xNC""#), "{word}");
+    assert!(word.contains("<me:norm>maðr</me:norm>"), "curated norm kept: {word}");
+    assert!(word.contains("<me:facs>maþꝛ</me:facs>"), "facs follows the edit: {word}");
+    assert_eq!(rendered.edited_word_indices(), vec![0]);
+}
+
+#[test]
+fn test_edited_word_numbers_follow_document_order() {
+    let (_, rendered) = imported_render(MENOTA_SAMPLE, |d| d.replace("geck", "gekk").replace("ok", "oc")).unwrap();
+    assert_eq!(rendered.edited_word_indices(), vec![1, 2]);
+}
+
+#[test]
+fn test_unedited_and_inserted_words_are_not_flagged() {
+    let (_, rendered) = imported_render(MENOTA_SAMPLE, |d| d.replace("geck.", "geck nyr.")).unwrap();
+    assert!(rendered.edited_word_indices().is_empty(), "{:?}", rendered.edited_words);
+}
+
+#[test]
+fn test_edited_word_with_break_moves_break_in_norm() {
+    let xml = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="frostuþing"><choice><me:facs>fro<lb n="5"/>sto</me:facs><me:dipl>fro<lb n="5"/>sto</me:dipl><me:norm>Frostu<lb n="5"/></me:norm></choice></w></p></body></text></TEI>"#;
+    let (_, rendered) = imported_render(xml, |d| d.replace("fro~//5sto", "frost~//5o")).unwrap();
+    let out = &rendered.xml;
+    assert!(out.contains("<me:facs>frost<lb n=\"5\"/>o</me:facs>"), "{out}");
+    assert!(out.contains("<me:norm>Frostu<lb n=\"5\"/></me:norm>"), "{out}");
+    assert_eq!(out.matches("<lb").count(), 3, "one break per level: {out}");
+}
+
+// ============================================================================
+// ONE READING: the XML and the DSL generated from it agree token for token
+// ============================================================================
+
+#[test]
+fn test_menota_file_xml_and_dsl_read_as_the_same_tokens() {
+    let Some(xml) = load_holmperg() else { return };
+    let import = parse(&xml).unwrap();
+    let segments = import.imported_document.unwrap().segments;
+
+    // Every element the XML reader found (word, punctuation, break,
+    // paragraph) is exactly one token of the DSL reading, in order
+    let from_xml: Vec<String> = segments
+        .iter()
+        .filter_map(crate::importer::tei::patching::segment_dsl_token)
+        .collect();
+    let from_dsl = crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap();
+    assert_eq!(from_xml.len(), from_dsl.len());
+    let first_difference = from_xml.iter().zip(&from_dsl).position(|(a, b)| a != b);
+    assert_eq!(first_difference, None, "{:?}", first_difference.map(|i| (&from_xml[i], &from_dsl[i])));
+}
+
+#[test]
+fn test_multi_word_w_reads_as_one_dsl_word() {
+    let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w><choice><me:facs>þo at</me:facs><me:dipl>þo at</me:dipl><me:norm>þó at</me:norm></choice></w></p></body></text></TEI>"#;
+    assert_eq!(parse(xml).unwrap().dsl, ".p þo~at");
+}
+
+#[test]
+fn test_entity_punctuation_is_set_off_by_spaces() {
+    let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w><choice><me:facs>þa</me:facs><me:dipl>þa</me:dipl><me:norm>þá</me:norm></choice></w><pc><choice><me:facs>&middot;</me:facs><me:dipl>&middot;</me:dipl><me:norm>,</me:norm></choice></pc><w><choice><me:facs>þo</me:facs><me:dipl>þo</me:dipl><me:norm>þó</me:norm></choice></w></p></body></text></TEI>"#;
+    assert_eq!(parse(xml).unwrap().dsl, ".p þa :middot: þo");
+}
+
+#[test]
+fn test_join_written_words() {
+    use crate::importer::tei::extraction::join_written_words;
+    assert_eq!(join_written_words("þo at"), "þo~at");
+    assert_eq!(join_written_words(" frosto þings  logum "), "frosto~þings~logum");
+    // Whitespace inside constructs is content, not a word boundary
+    assert_eq!(join_written_words(".abbr[a b]{c d} e"), ".abbr[a b]{c d}~e");
+    assert_eq!(join_written_words("a^{two words}"), "a^{two words}");
+    // A continued break already joins
+    assert_eq!(join_written_words("to~//5 þings logum"), "to~//5þings~logum");
+}
+
+#[test]
+fn test_menota_file_whitespace_only_dsl_changes_nothing() {
+    let Some(xml) = load_holmperg() else { return };
+    let (original, body) =
+        imported_roundtrip(&xml, |d| d.replace('\n', " \n\n  ").replace(" .p ", "\n.p\n")).unwrap();
+    assert!(original == body, "a whitespace-only DSL change altered the XML");
+}
+
+#[test]
+fn test_dsl_compiled_and_reimported_reads_the_same() {
+    // The other direction: DSL → XML (MENOTA and plain word-wrapped) → DSL
+    let dsl = ".p //1 Maþr het :thorn:orir þo~at .abbr[k:bar:]{konungr} :middot: \
+               fro~//2sto þings , ok -{x}- +{y}+ .p //3 þa :middot: geck .";
+    for multi_level in [true, false] {
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level, wrap_pages: false };
+        let xml = Compiler::new().with_config(config).compile(dsl).unwrap();
+        let ns = r#"xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0""#;
+        let reread = parse(&format!("<TEI {ns}><text><body>{xml}</body></text></TEI>")).unwrap().dsl;
+        let tokens = crate::importer::tei::patching::dsl_tokens;
+        assert_eq!(
+            tokens(&reread).unwrap(),
+            tokens(dsl).unwrap(),
+            "multi_level={multi_level}\nXML: {xml}\nDSL: {reread}"
+        );
+    }
+}
+
+#[test]
+fn test_documents_imported_before_rule_changes_keep_their_dsl() {
+    let Some(xml) = load_holmperg() else { return };
+    let import = parse(&xml).unwrap();
+    let mut doc = import.imported_document.unwrap();
+
+    // A manifest saved before rules were versioned reads as rules 0
+    let mut json: serde_json::Value = serde_json::to_value(&doc).unwrap();
+    json.as_object_mut().unwrap().remove("dsl_rules");
+    let old = crate::importer::tei::segments::ImportedDocument::from_json(&json.to_string()).unwrap();
+    assert_eq!(old.dsl_rules, 0);
+
+    // Its stored DSL glues entity punctuation to words ("þa:middot:"); one
+    // unrelated edit must still be one change, not one per middle dot
+    doc.dsl_rules = 0;
+    let stored = crate::importer::tei::extraction::segments_to_dsl(&doc.segments, 0);
+    assert!(!stored.contains(" :middot: "));
+    let edited = stored.replacen(" logum ", " logvm ", 1);
+    let patches = compute_patches(&doc.segments, 0, &edited).unwrap();
+    let changes = patches.iter().filter(|p| !matches!(p, PatchOperation::Keep { .. })).count();
+    assert_eq!(changes, 1);
+}
+
+// ============================================================================
+// WORD IDENTITY ACROSS EDITS (editor-guided)
+// ============================================================================
+
+/// The single change from `old` to `new` (common prefix and suffix), in
+/// UTF-16 units, as CodeMirror would report a one-place edit.
+fn change_between(old: &str, new: &str) -> TextChange {
+    let (a, b): (Vec<u16>, Vec<u16>) = (old.encode_utf16().collect(), new.encode_utf16().collect());
+    let prefix = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let max_suffix = a.len().min(b.len()) - prefix;
+    let suffix = a.iter().rev().zip(b.iter().rev()).take(max_suffix).take_while(|(x, y)| x == y).count();
+    TextChange { from_a: prefix, to_a: a.len() - suffix, from_b: prefix, to_b: b.len() - suffix }
+}
+
+/// An imported document being edited the way the app does it: one Patcher,
+/// each compile guided by the change since the previous one.
+struct Session {
+    doc: crate::importer::tei::segments::ImportedDocument,
+    body: String,
+    patcher: Patcher,
+    dsl: String,
+}
+
+impl Session {
+    fn open(xml: &str) -> Self {
+        let import = parse(xml).unwrap();
+        let doc = import.imported_document.unwrap();
+        let patcher = Patcher::new(&doc.segments, doc.dsl_rules);
+        let mut session = Session { doc, body: import.original_body_xml.unwrap(), patcher, dsl: import.dsl.clone() };
+        session.compile(&import.dsl, false).unwrap();
+        session
+    }
+
+    /// Compiles `dsl`, guided by the change from the previous DSL unless `blind`.
+    fn compile(&mut self, dsl: &str, blind: bool) -> Result<String, String> {
+        let change = change_between(&self.dsl, dsl);
+        self.compile_with(dsl, change, blind)
+    }
+
+    /// Compiles `dsl`, reached from the previous DSL by `change`.
+    fn compile_with(&mut self, dsl: &str, change: TextChange, blind: bool) -> Result<String, String> {
+        let guidance = Guidance { base_revision: self.patcher.revision(), changes: vec![change] };
+        let (patches, state) = self.patcher.compute(dsl, (!blind).then_some(&guidance))?;
+        let mut compiler = Compiler::new().with_config(compiler_config_for(&self.doc));
+        let body = render_body(&self.doc, Some(&self.body), &patches, &mut compiler)?;
+        self.patcher.commit(state);
+        self.dsl = dsl.to_string();
+        Ok(body.xml)
+    }
+}
+
+const TWO_OKS: &str = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="ok" me:msa="xCC"><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w> <w lemma="ok" me:msa="xAV"><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w> <w lemma="maðr"><choice><me:facs>maþr</me:facs><me:dipl>maþr</me:dipl><me:norm>maðr</me:norm></choice></w></p></body></text></TEI>"#;
+
+#[test]
+fn test_deleting_one_of_two_identical_words_deletes_that_one() {
+    // DSL ".p ok ok maþr": select and delete the first "ok " (a conjunction, xCC)
+    let delete_first = TextChange { from_a: 3, to_a: 6, from_b: 3, to_b: 3 };
+    let mut session = Session::open(TWO_OKS);
+    let xml = session.compile_with(".p ok maþr", delete_first, false).unwrap();
+    assert!(xml.contains(r#"me:msa="xAV""#) && !xml.contains(r#"me:msa="xCC""#), "{xml}");
+
+    // Comparing whole documents can't tell which "ok" went, and keeps the first
+    let mut blind = Session::open(TWO_OKS);
+    let xml = blind.compile(".p ok maþr", true).unwrap();
+    assert!(xml.contains(r#"me:msa="xCC""#), "{xml}");
+}
+
+#[test]
+fn test_editing_one_identical_word_and_deleting_the_other() {
+    // Change the second "ok" to "ek" and delete the first, in two edits
+    let mut session = Session::open(TWO_OKS);
+    session.compile(".p ok ek maþr", false).unwrap();
+    let delete_first = TextChange { from_a: 3, to_a: 6, from_b: 3, to_b: 3 };
+    let xml = session.compile_with(".p ek maþr", delete_first, false).unwrap();
+    assert!(!xml.contains(r#"me:msa="xCC""#), "the conjunction was deleted: {xml}");
+    assert!(xml.contains(r#"me:msa="xAV""#), "the adverb was edited: {xml}");
+    assert!(xml.contains("<me:facs>ek</me:facs>"), "{xml}");
+}
+
+#[test]
+fn test_out_of_step_guidance_falls_back_to_comparison() {
+    let session = Session::open(TWO_OKS);
+    let guidance = Guidance { base_revision: 999, changes: vec![TextChange { from_a: 0, to_a: 9999, from_b: 0, to_b: 0 }] };
+    let (patches, _) = session.patcher.compute(".p ok ok maður", Some(&guidance)).unwrap();
+    let changed = patches.iter().filter(|p| !matches!(p, PatchOperation::Keep { .. })).count();
+    assert_eq!(changed, 1);
+}
+
+#[test]
+fn test_menota_file_guided_edits_reimport_as_edited() {
+    let Some(xml) = load_holmperg() else { return };
+    let mut session = Session::open(&xml);
+    let start = xml.find("<body").unwrap();
+    let end = xml.find("</body>").unwrap() + "</body>".len();
+
+    // Deterministic pseudo-random word edits: delete, duplicate, change
+    let mut state: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut next = |n: usize| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 33) as usize % n
+    };
+    let mut dsl = session.dsl.clone();
+    for round in 0..8 {
+        let words: Vec<(usize, &str)> = dsl
+            .match_indices(|c: char| c.is_whitespace())
+            .map(|(i, _)| i + 1)
+            .filter_map(|i| {
+                let word = dsl[i..].split_whitespace().next()?;
+                (word.chars().all(char::is_alphabetic) && dsl[i..].starts_with(word)).then_some((i, word))
+            })
+            .collect();
+        let (at, word) = words[next(words.len())];
+        let edited = match round % 3 {
+            0 => format!("{}{}", &dsl[..at], &dsl[at + word.len()..]),
+            1 => format!("{}{} {}", &dsl[..at], word, &dsl[at..]),
+            _ => format!("{}{}x{}", &dsl[..at], word, &dsl[at + word.len()..]),
+        };
+        let body = session.compile(&edited, false).unwrap();
+        let rewritten = format!("{}{}{}", &xml[..start], body, &xml[end..]);
+        let reread = parse(&rewritten).unwrap().dsl;
+        let tokens = crate::importer::tei::patching::dsl_tokens;
+        assert_eq!(tokens(&reread).unwrap(), tokens(&edited).unwrap(), "round {round}");
+        dsl = edited;
+    }
+}
+
+#[test]
+fn test_guided_character_edits_always_reimport_as_edited() {
+    const PIECES: &[&str] = &["a", "þ", " ", ".", ",", "ok", ":middot:", "\n", "~", ".p "];
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = |n: usize| {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as usize % n
+    };
+    let mut session = Session::open(TWO_OKS);
+    let (mut compiled, mut failed) = (0, 0);
+    for _ in 0..400 {
+        let dsl = session.dsl.clone();
+        let chars: Vec<usize> = dsl.char_indices().map(|(i, _)| i).chain([dsl.len()]).collect();
+        let at = chars[next(chars.len())];
+        let edited = if next(2) == 0 && at < dsl.len() {
+            // Delete one character
+            let len = dsl[at..].chars().next().unwrap().len_utf8();
+            format!("{}{}", &dsl[..at], &dsl[at + len..])
+        } else {
+            format!("{}{}{}", &dsl[..at], PIECES[next(PIECES.len())], &dsl[at..])
+        };
+        match session.compile(&edited, false) {
+            Ok(body) => {
+                compiled += 1;
+                let reread = parse(&format!(r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text>{body}</text></TEI>"#))
+                    .unwrap()
+                    .dsl;
+                let tokens = crate::importer::tei::patching::dsl_tokens;
+                let (got, want) = (tokens(&reread).unwrap(), tokens(&edited).unwrap());
+                if got != want {
+                    let i = got.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(got.len().min(want.len()));
+                    panic!(
+                        "after editing to {edited:?}, token {i}: got {:?}, want {:?}",
+                        &got[i.saturating_sub(2)..(i + 3).min(got.len())],
+                        &want[i.saturating_sub(2)..(i + 3).min(want.len())],
+                    );
+                }
+            }
+            // Invalid DSL, or a paragraph edit that can't be placed: nothing changes
+            Err(_) => {
+                failed += 1;
+                assert_eq!(session.dsl, dsl);
+            }
+        }
+    }
+    assert!(compiled > 300, "{compiled} compiled, {failed} rejected");
+}
+#[test]
+fn test_word_space_between_entities_survives_import() {
+    // One <w> whose written words meet at entities: `&et; &thorn;a`
+    for dsl in ["a:thorn:~:middot:", ":et:~:thorn:a"] {
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+        let xml = Compiler::new().with_config(config).compile(dsl).unwrap();
+        let back = parse(&format!(r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body>{xml}</body></text></TEI>"#)).unwrap().dsl;
+        assert_eq!(back, dsl, "{xml}");
+    }
+}

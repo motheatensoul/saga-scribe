@@ -2,7 +2,7 @@
 
 A desktop application for scholarly manuscript transcription, producing TEI-XML with MENOTA (Medieval Nordic Text Archive) extensions.
 
-**Version:** 0.5.0 (beta)
+**Version:** 0.6.0 (beta)
 
 ## Features
 
@@ -32,6 +32,7 @@ A desktop application for scholarly manuscript transcription, producing TEI-XML 
 | `//`                     | `<lb/>` or `<lb n="auto"/>`                                  | Line break (auto-numbered if enabled) |
 | `//n`                    | `<lb n="n"/>`                                                | Line break with explicit number       |
 | `///n`                   | `<pb n="n"/>`                                                | Page break (n = page number)          |
+| `.p`                     | `</p><p>`                                                    | New paragraph (on its own, between spaces) |
 | `.abbr[abbr]{expansion}` | `<choice><abbr>abbr</abbr><expan>expansion</expan></choice>` | Abbreviation                          |
 | `[...]` or `[...n]`      | `<gap reason="illegible" quantity="n" unit="chars"/>`        | Gap/lacuna                            |
 | `[...<text>]`            | `<gap/><supplied>text</supplied>`                            | Gap with supplied reading             |
@@ -41,9 +42,10 @@ A desktop application for scholarly manuscript transcription, producing TEI-XML 
 | `+{text}+`               | `<add>text</add>`                                            | Addition                              |
 | `^{text}`                | `<note>text</note>`                                          | Note/annotation                       |
 | `?{text}?`               | `<unclear>text</unclear>`                                    | Unclear reading                       |
-| `:name:`                 | `&name;`                                                     | Entity reference (XML entity)         |
+| `:name:`                 | `&name;`                                                     | Entity reference (XML entity); a punctuation entity alone between spaces is `<pc>` |
+| `upp~haf`                | `<w>upp haf</w>`                                             | One word written as two                |
 | `\|`                     | (word boundary)                                              | Explicit word boundary                |
-| `~//`                    | (continuation + lb)                                          | Word continues across line break      |
+| `~//n`                   | (continuation + lb)                                          | Word continues across line break (`hel~//5lo`) |
 | `~///n`                  | (continuation + pb)                                          | Word continues across page break      |
 
 ## Installation
@@ -98,7 +100,8 @@ See `docs/user-guide.md` for detailed usage instructions including:
 
 This project is licensed under [GPL-v3-or-later](LICENSE).
 
-See [LICENSES](static/fonts/LICENSES.md) for further licenses of used fonts.
+Saga-Scribe bundles fonts, data and libraries by others; see
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for their licences.
 
 ## AI Assistance
 

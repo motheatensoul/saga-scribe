@@ -42,9 +42,11 @@
 //! - Entity references → `:entityname:`
 
 use crate::importer::tei::helpers;
-use crate::importer::tei::segments::Segment;
+use crate::importer::tei::segments::{Segment, SourceSpans};
+use crate::importer::tei::source_map::SourceCursor;
 use libxml::tree::{Node, NodeType};
 use std::collections::HashMap;
+use std::ops::Range;
 
 /// Extracts segments from TEI-XML DOM nodes.
 ///
@@ -53,11 +55,70 @@ use std::collections::HashMap;
 pub struct Extractor {
     /// Next segment ID to assign
     next_id: usize,
+    /// Cursor over the original body source, when span tracking is enabled.
+    /// Dropped (set to `None`) as soon as the source and DOM disagree.
+    cursor: Option<SourceCursor>,
+    /// Byte spans of editable segments in the original body source, by segment ID.
+    spans: HashMap<usize, Range<usize>>,
 }
 
 impl Extractor {
     pub fn new() -> Self {
-        Self { next_id: 0 }
+        Self {
+            next_id: 0,
+            cursor: None,
+            spans: HashMap::new(),
+        }
+    }
+
+    /// Creates an extractor that also records where each editable segment lives
+    /// in `body_source`, the exact original text of the `<body>` element.
+    pub fn with_source(body_source: &str) -> Self {
+        Self {
+            cursor: Some(SourceCursor::new(body_source)),
+            ..Self::new()
+        }
+    }
+
+    /// Returns the recorded source spans, or `None` if tracking was not enabled
+    /// or the source could not be aligned with the DOM.
+    pub fn take_spans(&mut self) -> Option<SourceSpans> {
+        self.cursor.as_ref()?;
+        let mut spans = vec![None; self.next_id];
+        for (id, range) in self.spans.drain() {
+            spans[id] = Some((range.start, range.end));
+        }
+        Some(spans)
+    }
+
+    /// Runs a cursor operation; on failure, abandons span tracking entirely.
+    fn track<T>(&mut self, op: impl FnOnce(&mut SourceCursor) -> Option<T>) -> Option<T> {
+        let cursor = self.cursor.as_mut()?;
+        let result = op(cursor);
+        if result.is_none() {
+            log::warn!("Source span tracking lost alignment; edits will fall back to reconstruction");
+            self.cursor = None;
+            self.spans.clear();
+        }
+        result
+    }
+
+    /// Consumes the whole element in the source and returns its span.
+    fn track_element(&mut self, node: &Node) -> Option<Range<usize>> {
+        let qname = helpers::qualified_name(node);
+        self.track(|c| c.element(&qname))
+    }
+
+    fn push_spanned(
+        &mut self,
+        segments: &mut Vec<Segment>,
+        segment: Segment,
+        span: Option<Range<usize>>,
+    ) {
+        if let Some(span) = span {
+            self.spans.insert(segment.id(), span);
+        }
+        segments.push(segment);
     }
 
     fn next_id(&mut self) -> usize {
@@ -92,47 +153,63 @@ impl Extractor {
                 let local_name = helpers::local_name(node);
                 match local_name.as_str() {
                     "w" => {
-                        segments.push(self.extract_word(node));
+                        let span = self.track_element(node);
+                        let segment = self.extract_word(node);
+                        self.push_spanned(segments, segment, span);
                     }
                     "pc" => {
-                        segments.push(self.extract_punctuation(node));
+                        let span = self.track_element(node);
+                        let segment = self.extract_punctuation(node);
+                        self.push_spanned(segments, segment, span);
                     }
                     "lb" => {
-                        segments.push(Segment::LineBreak {
+                        let span = self.track_element(node);
+                        let segment = Segment::LineBreak {
                             id: self.next_id(),
                             attributes: self.extract_attributes(node),
-                        });
+                        };
+                        self.push_spanned(segments, segment, span);
                     }
                     "pb" => {
-                        segments.push(Segment::PageBreak {
+                        let span = self.track_element(node);
+                        let segment = Segment::PageBreak {
                             id: self.next_id(),
                             attributes: self.extract_attributes(node),
-                        });
+                        };
+                        self.push_spanned(segments, segment, span);
                     }
                     "handShift" => {
-                        segments.push(Segment::HandShift {
+                        let span = self.track_element(node);
+                        let segment = Segment::HandShift {
                             id: self.next_id(),
                             attributes: self.extract_attributes(node),
-                        });
+                        };
+                        self.push_spanned(segments, segment, span);
                     }
                     "choice" => {
-                        segments.push(self.extract_choice(node));
+                        let span = self.track_element(node);
+                        let segment = self.extract_choice(node);
+                        self.push_spanned(segments, segment, span);
                     }
                     "head" => {
                         let mut content = String::new();
                         let mut dummy = false;
                         Self::node_to_dsl(node, &mut content, &mut dummy);
                         let trimmed = content.trim();
+                        let span = self.track_element(node);
                         if !trimmed.is_empty() {
                             let dsl = format!(".head{{{}}}", trimmed);
-                            segments.push(self.extract_inline_element(node, &dsl));
+                            let segment = self.extract_inline_element(node, &dsl);
+                            self.push_spanned(segments, segment, span);
                         }
                     }
                     // Handle TEI elements that should be converted to DSL notation
                     // even when they appear outside of <w> tags
                     "gap" => {
                         let dsl = Self::gap_dsl(node, None);
-                        segments.push(self.extract_inline_element(node, &dsl));
+                        let span = self.track_element(node);
+                        let segment = self.extract_inline_element(node, &dsl);
+                        self.push_spanned(segments, segment, span);
                     }
                     "supplied" => {
                         let mut content = String::new();
@@ -142,7 +219,9 @@ impl Extractor {
                             let trimmed = content.trim();
                             if !trimmed.is_empty() {
                                 let dsl = format!(".supplied{{{}}}", trimmed);
-                                segments.push(self.extract_inline_element(node, &dsl));
+                                let span = self.track_element(node);
+                                let segment = self.extract_inline_element(node, &dsl);
+                                self.push_spanned(segments, segment, span);
                             } else {
                                 self.emit_structural(node, segments);
                             }
@@ -151,7 +230,9 @@ impl Extractor {
                             let trimmed = content.trim();
                             if !trimmed.is_empty() {
                                 let dsl = format!("<{}>", trimmed);
-                                segments.push(self.extract_inline_element(node, &dsl));
+                                let span = self.track_element(node);
+                                let segment = self.extract_inline_element(node, &dsl);
+                                self.push_spanned(segments, segment, span);
                             } else {
                                 self.emit_structural(node, segments);
                             }
@@ -164,7 +245,9 @@ impl Extractor {
                         let trimmed = content.trim();
                         if !trimmed.is_empty() {
                             let dsl = format!("-{{{}}}-", trimmed);
-                            segments.push(self.extract_inline_element(node, &dsl));
+                            let span = self.track_element(node);
+                                let segment = self.extract_inline_element(node, &dsl);
+                                self.push_spanned(segments, segment, span);
                         } else {
                             self.emit_structural(node, segments);
                         }
@@ -176,7 +259,9 @@ impl Extractor {
                         let trimmed = content.trim();
                         if !trimmed.is_empty() {
                             let dsl = format!("+{{{}}}+", trimmed);
-                            segments.push(self.extract_inline_element(node, &dsl));
+                            let span = self.track_element(node);
+                                let segment = self.extract_inline_element(node, &dsl);
+                                self.push_spanned(segments, segment, span);
                         } else {
                             self.emit_structural(node, segments);
                         }
@@ -188,7 +273,9 @@ impl Extractor {
                         let trimmed = content.trim();
                         if !trimmed.is_empty() {
                             let dsl = format!("?{{{}}}?", trimmed);
-                            segments.push(self.extract_inline_element(node, &dsl));
+                            let span = self.track_element(node);
+                                let segment = self.extract_inline_element(node, &dsl);
+                                self.push_spanned(segments, segment, span);
                         } else {
                             self.emit_structural(node, segments);
                         }
@@ -199,9 +286,11 @@ impl Extractor {
                         let mut dummy = false;
                         Self::node_to_dsl(node, &mut note_content, &mut dummy);
                         let trimmed = note_content.trim();
+                        let span = self.track_element(node);
                         if !trimmed.is_empty() {
                             let dsl = format!("^{{{}}}", trimmed);
-                            segments.push(self.extract_inline_element(node, &dsl));
+                            let segment = self.extract_inline_element(node, &dsl);
+                            self.push_spanned(segments, segment, span);
                         }
                     }
                     "am" => {
@@ -213,33 +302,22 @@ impl Extractor {
                             let mut dummy = false;
                             Self::node_to_dsl(node, &mut content, &mut dummy);
                             let trimmed = content.trim();
+                            let span = self.track_element(node);
                             if !trimmed.is_empty() {
-                                segments.push(self.extract_inline_element(node, trimmed));
+                                let segment = self.extract_inline_element(node, trimmed);
+                                self.push_spanned(segments, segment, span);
                             }
                         }
                     }
                     _ => {
                         // Structural element
-                        segments.push(Segment::Structural {
-                            id: self.next_id(),
-                            xml: self.open_tag(node),
-                        });
-
-                        let mut child = node.get_first_child();
-                        while let Some(c) = child {
-                            self.process_node(&c, segments);
-                            child = c.get_next_sibling();
-                        }
-
-                        segments.push(Segment::Structural {
-                            id: self.next_id(),
-                            xml: format!("</{}>", helpers::qualified_name(node)),
-                        });
+                        self.emit_structural(node, segments);
                     }
                 }
             }
             Some(NodeType::TextNode) => {
                 let content = node.get_content();
+                let offsets = self.track(|c| c.text(&content));
                 if content.trim().is_empty() {
                     // Pure whitespace
                     segments.push(Segment::Whitespace {
@@ -251,18 +329,13 @@ impl Extractor {
                     // This handles cases like "word1  word2\n\nword3\tword4"
                     let mut current_word = String::new();
                     let mut current_ws = String::new();
+                    let mut word_start = 0;
 
-                    for c in content.chars() {
+                    for (i, c) in content.chars().enumerate() {
                         if c.is_whitespace() {
                             if !current_word.is_empty() {
-                                segments.push(Segment::Word {
-                                    id: self.next_id(),
-                                    original_xml: helpers::escape_xml_text(&current_word),
-                                    attributes: HashMap::new(),
-                                    dsl_content: current_word.clone(),
-                                    has_inline_lb: false,
-                                });
-                                current_word.clear();
+                                let span = offsets.as_ref().map(|o| o[word_start]..o[i]);
+                                self.push_text_word(segments, std::mem::take(&mut current_word), span);
                             }
                             current_ws.push(c);
                         } else {
@@ -273,18 +346,16 @@ impl Extractor {
                                 });
                                 current_ws.clear();
                             }
+                            if current_word.is_empty() {
+                                word_start = i;
+                            }
                             current_word.push(c);
                         }
                     }
 
                     if !current_word.is_empty() {
-                        segments.push(Segment::Word {
-                            id: self.next_id(),
-                            original_xml: helpers::escape_xml_text(&current_word),
-                            attributes: HashMap::new(),
-                            dsl_content: current_word,
-                            has_inline_lb: false,
-                        });
+                        let span = offsets.as_ref().map(|o| o[word_start]..o[o.len() - 1]);
+                        self.push_text_word(segments, current_word, span);
                     }
 
                     if !current_ws.is_empty() {
@@ -296,13 +367,44 @@ impl Extractor {
                 }
             }
             Some(NodeType::CommentNode) => {
+                self.track(|c| c.comment());
                 segments.push(Segment::Structural {
                     id: self.next_id(),
                     xml: format!("<!--{}-->", node.get_content()),
                 });
             }
-            _ => {}
+            Some(NodeType::CDataSectionNode) => {
+                self.track(|c| c.cdata());
+            }
+            Some(NodeType::PiNode) => {
+                self.track(|c| c.processing_instruction());
+            }
+            Some(NodeType::EntityRefNode) => {
+                let name = node.get_name();
+                self.track(|c| c.entity_ref(&name));
+            }
+            _ => {
+                // Unknown node kind: we cannot know what it consumed in the source.
+                self.track(|_| None::<()>);
+            }
         }
+    }
+
+    /// Pushes a word that came from a bare text node (not a `<w>` element).
+    fn push_text_word(
+        &mut self,
+        segments: &mut Vec<Segment>,
+        word: String,
+        span: Option<Range<usize>>,
+    ) {
+        let segment = Segment::Word {
+            id: self.next_id(),
+            original_xml: helpers::escape_xml_text(&word),
+            attributes: HashMap::new(),
+            dsl_content: word,
+            has_inline_lb: false,
+        };
+        self.push_spanned(segments, segment, span);
     }
 
     fn open_tag(&self, node: &Node) -> String {
@@ -320,10 +422,17 @@ impl Extractor {
     }
 
     fn emit_structural(&mut self, node: &Node, segments: &mut Vec<Segment>) {
-        segments.push(Segment::Structural {
-            id: self.next_id(),
-            xml: self.open_tag(node),
-        });
+        let qname = helpers::qualified_name(node);
+        // Tags carry spans, so `.p` edits can split and merge paragraphs
+        let open_span = self.track(|c| c.open_tag(&qname));
+        let id = self.next_id();
+        let xml = self.open_tag(node);
+        let open = if helpers::local_name(node) == "p" {
+            Segment::Paragraph { id, xml }
+        } else {
+            Segment::Structural { id, xml }
+        };
+        self.push_spanned(segments, open, open_span);
 
         let mut child = node.get_first_child();
         while let Some(c) = child {
@@ -331,10 +440,12 @@ impl Extractor {
             child = c.get_next_sibling();
         }
 
-        segments.push(Segment::Structural {
+        let close_span = self.track(|c| c.close_tag(&qname));
+        let close = Segment::Structural {
             id: self.next_id(),
-            xml: format!("</{}>", helpers::qualified_name(node)),
-        });
+            xml: format!("</{}>", qname),
+        };
+        self.push_spanned(segments, close, close_span);
     }
 
     fn has_element_children(node: &Node) -> bool {
@@ -442,7 +553,7 @@ impl Extractor {
             id: self.next_id(),
             original_xml,
             attributes,
-            dsl_content,
+            dsl_content: join_written_words(&dsl_content),
             has_inline_lb,
         }
     }
@@ -648,8 +759,11 @@ impl Extractor {
     ) -> Option<(String, String)> {
         let facs_node = Self::find_descendant(node, "facs")?;
         let dipl_node = Self::find_descendant(node, "dipl")?;
-        let has_am = Self::find_descendant(&facs_node, "am").is_some();
-        let has_ex = Self::find_descendant(&dipl_node, "ex").is_some();
+        // MENOTA's <me:am>/<me:ex>, or the <abbr>/<expan> Saga-Scribe writes
+        let has_am = Self::find_descendant(&facs_node, "am").is_some()
+            || Self::find_descendant(&facs_node, "abbr").is_some();
+        let has_ex = Self::find_descendant(&dipl_node, "ex").is_some()
+            || Self::find_descendant(&dipl_node, "expan").is_some();
 
         if !has_am && !has_ex {
             return None;
@@ -713,7 +827,17 @@ impl Extractor {
                     let content = c.get_content();
                     let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
                     if normalized.is_empty() {
-                        // Ignore pure whitespace
+                        // Pure whitespace is indentation, except between an
+                        // entity and more text (`&et; &thorn;a`): a word space
+                        let after_entity = c
+                            .get_prev_sibling()
+                            .is_some_and(|p| p.get_type() == Some(NodeType::EntityRefNode));
+                        let before_text = next_child.as_ref().is_some_and(|n| {
+                            matches!(n.get_type(), Some(NodeType::EntityRefNode | NodeType::TextNode))
+                        });
+                        if after_entity && before_text && !output.ends_with(' ') {
+                            output.push(' ');
+                        }
                     } else {
                         let has_leading = content
                             .chars()
@@ -1105,6 +1229,47 @@ pub fn extract_segments(body_node: &Node) -> Vec<Segment> {
     extractor.extract_segments(body_node)
 }
 
+/// Joins the written words of one `<w>` with `~` (compound join), so the DSL
+/// reads them as one word, as the XML does: `þo at` → `þo~at`. Whitespace
+/// inside constructs (`.abbr[…]{…}`, `^{…}`, `<…>`) is left alone, and
+/// whitespace after a continued break (`to~//5 þings`) is dropped.
+pub fn join_written_words(dsl: &str) -> String {
+    let mut out = String::with_capacity(dsl.len());
+    let mut depth = 0usize;
+    let mut chars = dsl.trim().chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '[' | '{' | '<' => depth += 1,
+            ']' | '}' | '>' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 && c.is_whitespace() {
+            while chars.next_if(|c| c.is_whitespace()).is_some() {}
+            let after_break = out.trim_end_matches(|c: char| c.is_ascii_digit()).ends_with("~//");
+            if !after_break && !out.ends_with('~') {
+                out.push('~');
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Whether a punctuation segment's DSL is made only of punctuation entities
+/// (`:middot:`), which the DSL marks by setting them off with spaces.
+fn is_entity_punctuation(dsl: &str) -> bool {
+    let dsl = dsl.trim();
+    dsl.len() > 2
+        && dsl.starts_with(':')
+        && dsl.ends_with(':')
+        && dsl[1..dsl.len() - 1].split("::").all(|name| {
+            !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && crate::entities::is_punctuation_entity(name)
+        })
+}
+
 /// Converts a segment list back to DSL text representation.
 ///
 /// This is used for:
@@ -1114,11 +1279,15 @@ pub fn extract_segments(body_node: &Node) -> Vec<Segment> {
 /// # Formatting Rules
 ///
 /// - Words are separated by spaces (from Whitespace segments)
-/// - Punctuation immediately follows words (no space)
+/// - Punctuation immediately follows words (no space), except entity
+///   punctuation (`:middot:`), which is set off by spaces
+/// - Paragraph starts: `.p`, set off by spaces
 /// - Line breaks: newline + `//n` + space
 /// - Page breaks: newline + `///n`
 /// - Structural elements are skipped (not represented in DSL)
-pub fn segments_to_dsl(segments: &[Segment]) -> String {
+///
+/// `dsl_rules` is the document's [`DSL_RULES`](super::segments::DSL_RULES) version.
+pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
     let mut dsl = String::new();
     let mut last_was_linebreak = false;
     let mut pending_space = false;  // Track if we should add a space before next word
@@ -1133,6 +1302,17 @@ pub fn segments_to_dsl(segments: &[Segment]) -> String {
                 dsl.push_str(dsl_content);
                 last_was_linebreak = false;
                 pending_space = false;
+            }
+            Segment::Punctuation { dsl_content, .. }
+                if dsl_rules >= 1 && is_entity_punctuation(dsl_content) =>
+            {
+                // Set off by spaces: glued to a word it would be part of the word
+                if !dsl.is_empty() && !dsl.ends_with(char::is_whitespace) {
+                    dsl.push(' ');
+                }
+                dsl.push_str(dsl_content);
+                last_was_linebreak = false;
+                pending_space = true;
             }
             Segment::Punctuation { dsl_content, .. } => {
                 // Punctuation typically follows immediately after word (no space)
@@ -1165,6 +1345,15 @@ pub fn segments_to_dsl(segments: &[Segment]) -> String {
             }
             Segment::HandShift { .. } => {
                 // HandShift is preserved structurally, not shown in DSL
+            }
+            Segment::Paragraph { .. } => {
+                // Standalone token: always set off by spaces
+                if !dsl.is_empty() && !dsl.ends_with(char::is_whitespace) {
+                    dsl.push(' ');
+                }
+                dsl.push_str(".p ");
+                last_was_linebreak = false;
+                pending_space = false;
             }
             Segment::Structural { .. } => {
                 // Skip structural elements in DSL output

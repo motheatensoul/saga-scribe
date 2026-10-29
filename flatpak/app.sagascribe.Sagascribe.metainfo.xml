@@ -67,6 +67,20 @@
   </keywords>
 
   <releases>
+    <release version="0.6.0" date="2026-10-29">
+      <description>
+        <p>Safer round-trip editing of imported files, paragraphs, and typeset PDFs.</p>
+        <ul>
+          <li>Imported files are written back byte for byte; only what you edit changes</li>
+          <li>Editing an imported word keeps its lemma, analysis and normalized form, and marks it for review</li>
+          <li>Paragraphs can be split and joined with .p</li>
+          <li>Mid-word line breaks (~//) are kept in the XML and shown in the preview</li>
+          <li>PDF export with page margins and page numbers, saved straight to a file</li>
+          <li>Faster previews: only the edited part of the text is re-rendered</li>
+          <li>Syntax errors are underlined where they occur</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-01-28">
       <description>
         <p>Current development release with full feature set.</p>

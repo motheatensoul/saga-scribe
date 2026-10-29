@@ -1,6 +1,7 @@
 import { linter, type Diagnostic } from "@codemirror/lint";
 import { entityStore } from "$lib/stores/entities";
 import { get } from "svelte/store";
+import { checkDsl } from "$lib/tauri";
 
 // Debounce timer
 let linterTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -9,7 +10,8 @@ const DEBOUNCE_MS = 500;
 /**
  * DSL-specific linter for the editor.
  *
- * This linter only checks for DSL syntax errors like unknown entities.
+ * Reports DSL syntax errors (from the backend parser, which keeps going after
+ * an error so every one is shown) and unknown entities.
  * Schema validation (RelaxNG/XSD) is handled separately after compilation
  * and displayed in the XML Preview pane where line numbers are accurate.
  */
@@ -20,13 +22,22 @@ export const teiLinter = linter(async (view) => {
     }
 
     return new Promise<Diagnostic[]>((resolve) => {
-        linterTimeout = setTimeout(() => {
+        linterTimeout = setTimeout(async () => {
             const content = view.state.doc.toString();
             const diagnostics: Diagnostic[] = [];
 
             if (!content.trim()) {
                 resolve([]);
                 return;
+            }
+
+            // Syntax errors, at the construct that failed
+            try {
+                for (const d of await checkDsl(content)) {
+                    diagnostics.push({ from: d.from, to: d.to, severity: "error", message: d.message });
+                }
+            } catch (e) {
+                console.warn("DSL syntax check failed:", e);
             }
 
             // Entity Validation

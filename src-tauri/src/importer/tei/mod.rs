@@ -13,7 +13,8 @@
 //!                            ↓
 //!                     (preserved for export)
 //!                            ↓
-//! Edited DSL → [compute_patches] → Patches → [apply_patches] → TEI-XML
+//! Edited DSL → [compute_patches] → Patches → [render_body] → TEI-XML
+//!                                        (spliced into the original bytes)
 //! ```
 //!
 //! ## Key Components
@@ -44,6 +45,7 @@ pub mod helpers;
 pub mod segments;
 pub mod extraction;
 pub mod patching;
+pub mod source_map;
 mod importer;
 
 // Re-export everything from the main importer for backward compatibility

@@ -22,8 +22,7 @@ use crate::metadata::{
 };
 use crate::importer::tei::extraction::Extractor;
 use crate::importer::tei::helpers;
-use crate::importer::tei::segments::ImportedDocument;
-use libxml::parser::Parser;
+use crate::importer::tei::segments::{ImportedDocument, Segment, SourceSpans, DSL_RULES};
 use libxml::tree::{Document, Node, NodeType};
 
 /// Result of parsing a TEI-XML file.
@@ -71,12 +70,7 @@ pub struct ImportResult {
 /// - No root element found
 /// - No `<body>` element found
 pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
-    let parser = Parser::default();
-
-    // Attempt to parse
-    let doc = parser
-        .parse_string(xml_content)
-        .map_err(|e| format!("Failed to parse XML: {}", e))?;
+    let doc = parse_document(xml_content)?;
 
     let root = doc
         .get_root_element()
@@ -102,17 +96,21 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
             ),
         };
 
-    // Extract segments using the new segment-based extractor
-    let mut extractor = Extractor::new();
+    // Extract segments, recording where each editable segment sits in the
+    // original body text so unedited content can be emitted byte-for-byte.
+    let mut extractor = Extractor::with_source(&original_body_xml);
     let segments = extractor.extract_segments(&body);
+    let spans = extractor.take_spans();
 
     // Generate DSL from segments (this is the new, segment-aware path)
-    let dsl = crate::importer::tei::extraction::segments_to_dsl(&segments);
+    let dsl = crate::importer::tei::extraction::segments_to_dsl(&segments, DSL_RULES);
 
     // Create the imported document manifest
     let imported_document = ImportedDocument {
         segments,
         is_menota,
+        spans,
+        dsl_rules: DSL_RULES,
     };
 
     // Trim output to avoid massive trailing/leading whitespace
@@ -127,6 +125,46 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
         original_postamble: Some(original_postamble),
         is_imported_mode: true,
     })
+}
+
+/// Parses XML without network access, with its entities declared (see [`crate::xml`]).
+fn parse_document(xml_content: &str) -> Result<Document, String> {
+    crate::xml::parse(xml_content)
+}
+
+/// Recomputes source spans for a manifest that was saved without them.
+///
+/// Re-extracts the original document and only returns spans if the fresh
+/// extraction produces exactly the stored segments, so spans can never be
+/// attached to the wrong segment.
+pub fn recompute_spans(
+    preamble: &str,
+    original_body_xml: &str,
+    postamble: &str,
+    segments: &[Segment],
+) -> Option<SourceSpans> {
+    let xml = format!("{}{}{}", preamble, original_body_xml, postamble);
+    let doc = parse_document(&xml).ok()?;
+    let body = find_body(&doc.get_root_element()?)?;
+    let mut extractor = Extractor::with_source(original_body_xml);
+    let fresh = extractor.extract_segments(&body);
+    let spans = extractor.take_spans()?;
+
+    let same = fresh.len() == segments.len()
+        && fresh
+            .iter()
+            .zip(segments)
+            .all(|(a, b)| a.id() == b.id() && segment_dsl(a) == segment_dsl(b));
+    same.then_some(spans)
+}
+
+fn segment_dsl(segment: &Segment) -> Option<&str> {
+    match segment {
+        Segment::Word { dsl_content, .. } | Segment::Punctuation { dsl_content, .. } => {
+            Some(dsl_content)
+        }
+        _ => None,
+    }
 }
 
 /// Split original XML into preamble/body/postamble sections using string search.
@@ -149,14 +187,14 @@ fn has_menota_structure(body: &Node) -> bool {
     // Look for any <w> element with me:facs child
     fn check_node(node: &Node) -> bool {
         if node.get_type() == Some(NodeType::ElementNode) {
-            let name = node.get_name();
+            let name = helpers::local_name(node);
             if name == "w" {
                 // Check for me:facs child
                 let mut child = node.get_first_child();
                 while let Some(c) = child {
                     if c.get_type() == Some(NodeType::ElementNode) {
-                        let child_name = c.get_name();
-                        if child_name == "me:facs" || child_name.ends_with(":facs") {
+                        let child_name = helpers::local_name(&c);
+                        if child_name == "facs" {
                             return true;
                         }
                         // Also check for <choice> containing me:facs
@@ -164,8 +202,8 @@ fn has_menota_structure(body: &Node) -> bool {
                             let mut gc = c.get_first_child();
                             while let Some(g) = gc {
                                 if g.get_type() == Some(NodeType::ElementNode) {
-                                    let gc_name = g.get_name();
-                                    if gc_name == "me:facs" || gc_name.ends_with(":facs") {
+                                    let gc_name = helpers::local_name(&g);
+                                    if gc_name == "facs" {
                                         return true;
                                     }
                                 }
@@ -595,6 +633,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_entity_without_doctype_survives_import() {
+        // As exported by Saga-Scribe before 0.6.0: no DOCTYPE
+        let xml = "<TEI xmlns:me=\"http://www.menota.org/ns/1.0\"><text><body><p><w><choice><me:facs>&thorn;a</me:facs><me:dipl>þa</me:dipl><me:norm>þá</me:norm></choice></w></p></body></text></TEI>";
+        assert_eq!(parse(xml).unwrap().dsl, ".p :thorn:a");
+    }
+
+    #[test]
     fn test_extract_metadata_from_tei() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <TEI xmlns="http://www.tei-c.org/ns/1.0">
@@ -635,7 +680,7 @@ mod tests {
 </TEI>"#;
 
         let result = parse(xml).unwrap();
-        assert_eq!(result.dsl.trim(), "Test content");
+        assert_eq!(result.dsl.trim(), ".p Test content");
 
         let metadata = result.metadata.unwrap();
         assert_eq!(metadata.title_stmt.title, Some("Njáls saga".to_string()));
@@ -680,7 +725,7 @@ mod tests {
 </TEI>"#;
 
         let result = parse(xml).unwrap();
-        assert_eq!(result.dsl.trim(), "Just body content");
+        assert_eq!(result.dsl.trim(), ".p Just body content");
         assert!(result.metadata.is_none());
     }
 

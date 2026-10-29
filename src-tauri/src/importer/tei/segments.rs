@@ -8,7 +8,8 @@
 //!
 //! The segment approach divides a TEI document into discrete units:
 //! - **Editable segments**: Words, punctuation, line/page breaks (can be modified)
-//! - **Structural segments**: Div, p, s elements (preserved verbatim)
+//! - **Paragraph segments**: `<p>` start tags, editable as `.p` in the DSL
+//! - **Structural segments**: Other elements' tags (div, s, …), preserved verbatim
 //! - **Whitespace segments**: Formatting between elements (preserved)
 //!
 //! Each segment has a unique ID, allowing the patching system to track which
@@ -29,6 +30,15 @@ pub enum Segment {
     Structural {
         id: usize,
         xml: String, // Exact XML fragment: "<div type=\"chapter\" n=\"1\">"
+    },
+
+    /// The start tag of a paragraph (`<p>`), shown as `.p` in the DSL so
+    /// paragraphs can be split and merged. Its end tag is a `Structural`
+    /// segment. Projects imported before 0.6.0 store `<p>` as `Structural`.
+    #[serde(rename = "paragraph")]
+    Paragraph {
+        id: usize,
+        xml: String, // Exact start tag: "<p rend=\"indent\">"
     },
 
     /// A word element with editable content
@@ -79,6 +89,7 @@ impl Segment {
     pub fn id(&self) -> usize {
         match self {
             Segment::Structural { id, .. } => *id,
+            Segment::Paragraph { id, .. } => *id,
             Segment::Word { id, .. } => *id,
             Segment::Punctuation { id, .. } => *id,
             Segment::LineBreak { id, .. } => *id,
@@ -89,16 +100,64 @@ impl Segment {
     }
 }
 
+/// Byte ranges of segments within the original `<body>` source, indexed by segment ID.
+///
+/// Editable segments (words, punctuation, breaks) and the tags of structural
+/// elements carry a span. The whole
+/// map is absent when the source could not be aligned with the parsed DOM.
+pub type SourceSpans = Vec<Option<(usize, usize)>>;
+
 /// Complete manifest for an imported TEI document.
 ///
 /// This structure preserves all information needed for round-trip fidelity:
 /// the segment list tracks structural and content elements, while `is_menota`
 /// indicates whether the document uses MENOTA multi-level transcription.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedDocument {
     /// Ordered list of document segments (structural, words, breaks, etc.)
     pub segments: Vec<Segment>,
     /// Whether the document has MENOTA three-level structure (me:facs/dipl/norm)
     pub is_menota: bool,
+    /// Source spans for splicing edits into the original bytes (absent in
+    /// projects saved before spans existed; recomputed on demand).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spans: Option<SourceSpans>,
+    /// The DSL rules the document's DSL was generated with ([`DSL_RULES`]);
+    /// 0 for documents imported before rules were versioned.
+    #[serde(default)]
+    pub dsl_rules: u32,
+}
+
+/// Version of the rules for writing imported XML as DSL. Documents keep the
+/// rules they were imported with, so their stored DSL still matches.
+///
+/// - 0: before 0.6.0
+/// - 1: entity punctuation (`:middot:`) is set off by spaces
+pub const DSL_RULES: u32 = 1;
+
+impl ImportedDocument {
+    /// Parses a manifest as stored in segments.json.
+    ///
+    /// Since project format 1.5 this is the full manifest. Versions up to 1.4
+    /// wrote a bare segment array, which lost `is_menota`; MENOTA structure is
+    /// then re-detected from the segments themselves.
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        if let Ok(doc) = serde_json::from_str::<ImportedDocument>(json) {
+            return Ok(doc);
+        }
+        let segments: Vec<Segment> = serde_json::from_str(json)
+            .map_err(|e| format!("Failed to parse segments.json: {}", e))?;
+        let is_menota = segments.iter().any(|seg| match seg {
+            Segment::Word { original_xml, .. } | Segment::Punctuation { original_xml, .. } => {
+                original_xml.contains(":facs")
+            }
+            _ => false,
+        });
+        Ok(ImportedDocument {
+            segments,
+            is_menota,
+            spans: None,
+            dsl_rules: 0,
+        })
+    }
 }

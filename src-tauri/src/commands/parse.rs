@@ -1,10 +1,12 @@
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
-use crate::importer::tei::patching::{apply_patches_and_reconstruct, compute_patches};
-use crate::importer::tei::segments::{ImportedDocument, Segment};
+use crate::importer::tei::patching::{compiler_config_for, render_body, Guidance, Patcher};
+use crate::importer::tei::segments::ImportedDocument;
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tauri::State;
 
 /// Compile DSL input to TEI-XML.
 ///
@@ -98,35 +100,81 @@ pub async fn compile_dsl(
     .map_err(|e| format!("Compilation task failed: {}", e))?
 }
 
-/// Compile an imported document using the patching system for round-trip fidelity.
+/// The imported document being edited, held in the backend.
 ///
-/// This command takes edited DSL, the original segment manifest, and original body XML,
-/// computes the differences, and reconstructs the XML with minimal changes.
-#[allow(clippy::too_many_arguments)]
-#[tauri::command(async, rename_all = "camelCase")]
-pub async fn compile_imported(
-    edited_dsl: String,
-    segments_json: String,
+/// The segment manifest of a large manuscript is tens of megabytes of JSON.
+/// Keeping it here means it crosses IPC once (via [`set_imported_document`])
+/// instead of with every compile.
+#[derive(Default, Clone)]
+pub struct ImportedSession(Arc<Mutex<Option<ImportedSource>>>);
+
+/// Everything needed to compile edited DSL back into the original file.
+pub struct ImportedSource {
+    document: ImportedDocument,
+    original_body_xml: String,
     preamble: String,
     postamble: String,
+    /// Which word is which across edits; built on the first compile
+    patcher: Option<Patcher>,
+}
+
+/// Sets (or, with no manifest, clears) the imported document used by [`compile_imported`].
+#[tauri::command(async, rename_all = "camelCase")]
+pub async fn set_imported_document(
+    session: State<'_, ImportedSession>,
+    segments_json: Option<String>,
+    original_body_xml: Option<String>,
+    preamble: Option<String>,
+    postamble: Option<String>,
+) -> Result<(), String> {
+    let source = match segments_json {
+        Some(json) => Some(
+            tauri::async_runtime::spawn_blocking(move || {
+                ImportedDocument::from_json(&json).map(|document| ImportedSource {
+                    document,
+                    original_body_xml: original_body_xml.unwrap_or_default(),
+                    preamble: preamble.unwrap_or_default(),
+                    postamble: postamble.unwrap_or_default(),
+                    patcher: None,
+                })
+            })
+            .await
+            .map_err(|e| format!("Loading imported document failed: {}", e))??,
+        ),
+        None => None,
+    };
+    *session.0.lock().map_err(|_| "Imported document state is poisoned")? = source;
+    Ok(())
+}
+
+/// Compile an imported document using the patching system for round-trip fidelity.
+///
+/// Takes the edited DSL, computes the differences against the imported
+/// document held in [`ImportedSession`], and splices them into the original
+/// XML. Unedited content is emitted byte-for-byte.
+///
+/// # Errors
+///
+/// Returns an error if no imported document is loaded or the edited DSL does
+/// not parse; callers must keep the previous output rather than writing anything.
+#[tauri::command(async, rename_all = "camelCase")]
+pub async fn compile_imported(
+    session: State<'_, ImportedSession>,
+    edited_dsl: String,
     entities_json: Option<String>,
     normalizer_json: Option<String>,
     entity_mappings_json: Option<String>,
     custom_mappings: Option<HashMap<String, String>>,
-) -> Result<String, String> {
+    guidance: Option<Guidance>,
+) -> Result<ImportedCompile, String> {
+    let session = session.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Deserialize the imported document (accept either full manifest or raw segments list)
-        let imported_doc: ImportedDocument = match serde_json::from_str(&segments_json) {
-            Ok(doc) => doc,
-            Err(_) => {
-                let segments: Vec<Segment> = serde_json::from_str(&segments_json)
-                    .map_err(|e| format!("Failed to parse segments: {}", e))?;
-                ImportedDocument {
-                    segments,
-                    is_menota: false,
-                }
-            }
-        };
+        let mut guard = session
+            .0
+            .lock()
+            .map_err(|_| "Imported document state is poisoned")?;
+        let source = guard.as_mut().ok_or("No imported document is loaded")?;
+
         // Load entities if provided
         let mut registry = EntityRegistry::new();
         if let Some(json) = entities_json {
@@ -149,13 +197,8 @@ pub async fn compile_imported(
             }
         }
 
-        // Configure compiler for multi-level output
-        let config = CompilerConfig {
-            word_wrap: true,
-            auto_line_numbers: false,
-            multi_level: true,
-            wrap_pages: false,
-        };
+        // Match the document's own encoding style
+        let config = compiler_config_for(&source.document);
 
         let mut compiler = Compiler::new()
             .with_entities(&registry)
@@ -165,15 +208,110 @@ pub async fn compile_imported(
             compiler = compiler.with_dictionary(dict);
         }
 
-        // Compute patches between original segments and edited DSL
-        let patches = compute_patches(&imported_doc.segments, &edited_dsl);
+        // Compute patches between original segments and edited DSL, using the
+        // editor's changes to keep track of which word is which
+        let patcher = source.patcher.get_or_insert_with(|| {
+            Patcher::new(&source.document.segments, source.document.dsl_rules)
+        });
+        let (patches, state) = patcher.compute(&edited_dsl, guidance.as_ref())?;
 
-        // Apply patches and reconstruct the body XML
-        let body = apply_patches_and_reconstruct(&imported_doc.segments, &patches, &mut compiler);
+        // Apply patches to the original body XML
+        let body = render_body(
+            &source.document,
+            Some(&source.original_body_xml),
+            &patches,
+            &mut compiler,
+        )?;
+
+        // Only a successful compile becomes the basis for the next one
+        let patcher = source.patcher.get_or_insert_with(|| {
+            Patcher::new(&source.document.segments, source.document.dsl_rules)
+        });
+        patcher.commit(state);
 
         // Combine with preamble (everything before body) and postamble (everything after)
-        Ok(format!("{}{}{}", preamble, body, postamble))
+        Ok(ImportedCompile {
+            revision: patcher.revision(),
+            edited_words: body.edited_word_indices(),
+            xml: format!("{}{}{}", source.preamble, body.xml, source.postamble),
+        })
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
+}
+
+/// The result of [`compile_imported`].
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedCompile {
+    /// The full document
+    pub xml: String,
+    /// Identifies this compile's DSL; send it back as [`Guidance::base_revision`]
+    /// with the editor's changes since
+    pub revision: u64,
+    /// Words (by number, in document order) edited in the DSL whose lemma, msa
+    /// and normalized form were kept from the original and should be reviewed
+    pub edited_words: Vec<u32>,
+}
+
+/// A DSL syntax error, positioned for the editor.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct DslDiagnostic {
+    /// Start offset in UTF-16 code units (the editor's positions)
+    pub from: usize,
+    /// End offset in UTF-16 code units, at most the end of the starting line
+    pub to: usize,
+    pub message: String,
+}
+
+/// Reports every syntax error in DSL source, for the editor's linter.
+#[tauri::command(async)]
+pub async fn check_dsl(input: String) -> Vec<DslDiagnostic> {
+    dsl_diagnostics(&input)
+}
+
+fn dsl_diagnostics(input: &str) -> Vec<DslDiagnostic> {
+    let utf16 = |byte: usize| input[..byte].encode_utf16().count();
+    crate::parser::syntax::parse(input)
+        .diagnostics
+        .into_iter()
+        .map(|d| {
+            // An unclosed bracket's span runs to the end of the document;
+            // underlining the rest of its line is enough to point at it.
+            let line_end = input[d.span.start..]
+                .find('\n')
+                .map_or(input.len(), |i| d.span.start + i);
+            let end = d.span.end.min(line_end).max(d.span.start + 1).min(input.len());
+            DslDiagnostic {
+                from: utf16(d.span.start),
+                to: utf16(end),
+                message: d.message,
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dsl_diagnostics_use_utf16_offsets_and_stay_on_one_line() {
+        // "𝔞" is outside the BMP: 4 bytes, 2 UTF-16 units
+        let input = "𝔞 -{open\nnext line";
+        let diagnostics = dsl_diagnostics(input);
+        assert_eq!(
+            diagnostics,
+            vec![DslDiagnostic {
+                from: 3,
+                to: 9,
+                message: "Unclosed bracket, expected '}'".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_dsl_diagnostics_empty_for_valid_input() {
+        assert!(dsl_diagnostics(".head{//1 a :et:} -{x}-").is_empty());
+    }
 }

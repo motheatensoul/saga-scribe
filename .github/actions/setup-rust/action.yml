@@ -1,0 +1,39 @@
+name: Setup Rust
+description: >
+  Installs the toolchain pinned in rust-toolchain.toml (so CI and local builds
+  agree) and restores/saves the Cargo build cache for src-tauri.
+
+inputs:
+  targets:
+    description: Extra compilation targets (comma-separated)
+    required: false
+    default: ''
+  components:
+    description: Extra toolchain components (comma-separated)
+    required: false
+    default: ''
+  cache-key:
+    description: Distinguishes caches of matrix jobs that share a job id
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Read pinned toolchain
+      id: toolchain
+      shell: bash
+      run: echo "channel=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+    - name: Install Rust ${{ steps.toolchain.outputs.channel }}
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ steps.toolchain.outputs.channel }}
+        targets: ${{ inputs.targets }}
+        components: ${{ inputs.components }}
+
+    - name: Cache Cargo build
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri -> target
+        key: ${{ inputs.cache-key }}

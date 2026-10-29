@@ -5,19 +5,40 @@ on:
     # Run weekly on Sundays at 00:00 UTC
     - cron: '0 0 * * 0'
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'bun.lock'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
 
 jobs:
-  audit:
+  audit-rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install --locked cargo-audit
 
       - name: Run security audit
         working-directory: src-tauri
         run: cargo audit
+
+  audit-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Low-severity advisories in build tooling (no fix released yet) are reported but don't fail
+      - name: Run security audit
+        run: bun audit --audit-level=moderate

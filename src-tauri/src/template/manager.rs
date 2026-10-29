@@ -133,8 +133,11 @@ impl TemplateManager {
             name: "Menota".to_string(),
             description: "Menota handbook compatible structure for medieval Nordic texts"
                 .to_string(),
-            header: r#"<?xml version="1.0" encoding="UTF-8"?>
-<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0">
+            // MENOTA text uses entities (`&thorn;`), which must be declared
+            header: format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n{}\n{}",
+                crate::entities::MENOTA_DOCTYPE,
+                r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0">
   <teiHeader>
     <fileDesc>
       <titleStmt>
@@ -163,7 +166,7 @@ impl TemplateManager {
   </teiHeader>
   <text>
     <body>"#
-                .to_string(),
+            ),
             footer: r#"    </body>
   </text>
 </TEI>"#
@@ -175,5 +178,36 @@ impl TemplateManager {
             validation_schema_id: Some("menota-p5".to_string()),
             annotation_schema_id: Some("menota".to_string()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::{Compiler, CompilerConfig};
+    use libxml::parser::{Parser, ParserOptions};
+
+    /// Parses `xml` strictly (no error recovery, no network).
+    fn is_well_formed(xml: &str) -> bool {
+        let options = ParserOptions { recover: false, no_net: true, no_error: true, no_warning: true, ..Default::default() };
+        Parser::default().parse_string_with_options(xml, options).is_ok()
+    }
+
+    #[test]
+    fn test_menota_export_with_entities_is_well_formed() {
+        let template = TemplateManager { templates_dir: PathBuf::new() }.menota_template();
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: true };
+        let body = Compiler::new().with_config(config).compile("///1r maþr :thorn:orir :middot:").unwrap();
+        assert!(body.contains("&thorn;"), "{body}");
+
+        let document = format!("{}{}{}", template.header, body, template.footer);
+        assert!(document.contains(crate::entities::MENOTA_DOCTYPE));
+        // Declares its entities: with them filled in (as the importer and
+        // validator do), it is well-formed even to a strict parser
+        let declared = crate::xml::declare_entities_for_parsing(&document);
+        assert!(is_well_formed(&declared), "{}", &declared[..400]);
+        // And reads back with every entity
+        let reread = crate::importer::tei::parse(&document).unwrap().dsl;
+        assert!(reread.contains(":thorn:orir") && reread.contains(":middot:"), "{reread}");
     }
 }

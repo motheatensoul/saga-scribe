@@ -1,5 +1,4 @@
 use super::types::{ValidationError, ValidationResult};
-use libxml::parser::Parser;
 use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 use std::path::Path;
 
@@ -7,43 +6,52 @@ use std::path::Path;
 pub struct XsdValidator;
 
 impl XsdValidator {
-    /// Validate XML content against an XSD schema file
+    /// Validate XML content against an XSD schema file (parses the schema each call)
+    #[cfg(test)]
     pub fn validate(xml_content: &str, schema_path: &Path) -> Result<ValidationResult, String> {
-        let schema_name = schema_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
+        let mut schema_ctx = Self::load_schema(schema_path)?;
+        Self::validate_with_context(&mut schema_ctx, xml_content, &Self::schema_name(schema_path))
+    }
 
-        // Parse the XML document
-        let parser = Parser::default();
-        let xml_doc = parser
-            .parse_string(xml_content)
-            .map_err(|e| format!("Failed to parse XML: {}", e))?;
-
-        // Load and parse the schema
+    /// Parses an XSD schema file into a reusable validation context.
+    ///
+    /// Parsing a large schema such as `tei_all.xsd` takes seconds, so callers
+    /// validating repeatedly should keep the context.
+    pub fn load_schema(schema_path: &Path) -> Result<SchemaValidationContext, String> {
         let schema_path_str = schema_path
             .to_str()
             .ok_or("Invalid schema path encoding")?;
 
         let mut schema_parser = SchemaParserContext::from_file(schema_path_str);
-        let schema_ctx = SchemaValidationContext::from_parser(&mut schema_parser).map_err(|errs| {
+        SchemaValidationContext::from_parser(&mut schema_parser).map_err(|errs| {
             let messages: Vec<String> = errs
                 .iter()
                 .filter_map(|e| e.message.clone())
                 .collect();
             format!("Failed to parse schema: {}", messages.join("; "))
-        })?;
+        })
+    }
 
-        let mut schema_ctx = schema_ctx;
+    /// Display name for a schema file (its file stem).
+    pub fn schema_name(schema_path: &Path) -> String {
+        schema_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string()
+    }
 
-        // Validate the document
-        // Wrap in catch_unwind? No, libxml crate panic comes from explicit panic! macro.
-        // We should try to avoid conditions that cause it.
-        // The panic happens if validation returns -1 (internal error).
-        // This usually happens on memory issues or severe internal libxml2 errors.
-        
-        // However, we can use catch_unwind at the actor level (which we did).
-        
+    /// Validates XML content with an already loaded schema context.
+    pub fn validate_with_context(
+        schema_ctx: &mut SchemaValidationContext,
+        xml_content: &str,
+        schema_name: &str,
+    ) -> Result<ValidationResult, String> {
+        let xml_doc = crate::xml::parse(xml_content)?;
+
+        // Discard anything left over from a previous run of this context
+        schema_ctx.drain_errors();
+
         match schema_ctx.validate_document(&xml_doc) {
             Ok(()) => Ok(ValidationResult::success(schema_name)),
             Err(errs) => {
@@ -69,10 +77,7 @@ impl XsdValidator {
         schema_name: &str,
     ) -> Result<ValidationResult, String> {
         // Parse the XML document
-        let parser = Parser::default();
-        let xml_doc = parser
-            .parse_string(xml_content)
-            .map_err(|e| format!("Failed to parse XML: {}", e))?;
+        let xml_doc = crate::xml::parse(xml_content)?;
 
         // Load and parse the schema from string
         let mut schema_parser = SchemaParserContext::from_buffer(schema_content);
@@ -109,6 +114,7 @@ impl XsdValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libxml::parser::Parser;
     use std::path::PathBuf;
 
     fn get_test_schema_path() -> Option<PathBuf> {

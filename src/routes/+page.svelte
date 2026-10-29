@@ -1,8 +1,8 @@
 <script lang="ts">
     import { onMount, tick } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
-    import { open, save } from "@tauri-apps/plugin-dialog";
-    import { readTextFile } from "@tauri-apps/plugin-fs";
+    import { open } from "@tauri-apps/plugin-dialog";
+    import { saveAs } from "$lib/utils/saveDialog";
     import Editor from "$lib/components/Editor.svelte";
     import Preview from "$lib/components/Preview.svelte";
     import Toolbar from "$lib/components/Toolbar.svelte";
@@ -40,6 +40,9 @@
         openProject,
         exportTei,
         exportHtml,
+        exportPdf,
+        cancelPdfExport,
+        pdfExportSupported,
         openFile,
         importFile,
         exportInflections,
@@ -49,7 +52,13 @@
     } from "$lib/tauri";
     import type { InflectedForm } from "$lib/tauri";
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
-    import { printToPdf } from "$lib/utils/pdfExport";
+    import { printToPdf, withPrintStyles } from "$lib/utils/pdfExport";
+    import {
+        type XsltStage,
+        createXsltProcessor,
+        loadStylesheetText,
+        runXsltTransform,
+    } from "$lib/utils/xslt";
     import {
         dictionaryStore,
         inflectionStore,
@@ -183,11 +192,11 @@
         }> = [];
 
         // Match each <w ...>...</w> element (non-greedy, handles nested content)
-        const wordRegex = /<w\s([^>]*)>([\s\S]*?)<\/w>/g;
+        const wordRegex = /<w(?:\s([^>]*))?>([\s\S]*?)<\/w>/g;
         let match;
 
         while ((match = wordRegex.exec(xml)) !== null) {
-            const attrs = match[1];
+            const attrs = match[1] ?? "";
             const content = match[2];
 
             // Extract lemma attribute
@@ -209,15 +218,6 @@
         return results;
     }
 
-    function countDslWords(dsl: string): number {
-        const headMatch = dsl.match(/^\s*\.head\{([\s\S]*)\}\s*$/);
-        const content = headMatch ? headMatch[1] : dsl;
-        const withoutKeywords = content.replace(/\.(head|abbr|supplied|norm)\b/g, " ");
-        const withoutEntities = withoutKeywords.replace(/:([^\s:]+):/g, "$1");
-        const normalized = withoutEntities.replace(/[<>{}\[\]+\-\?\^]/g, " ");
-        const tokens = normalized.match(/[\p{L}\p{N}]+/gu);
-        return tokens ? tokens.length : 0;
-    }
     onMount(async () => {
         errorStore.info("App", "Application starting...");
 
@@ -534,28 +534,48 @@
         );
     }
 
-    async function doCompile(content: string) {
+    /** Idle time after the last compile before the output is validated. */
+    const VALIDATION_DELAY_MS = 1000;
+    let validationTimeout: ReturnType<typeof setTimeout>;
+    let validationRun = 0;
+
+    /**
+     * Validates compiled XML once editing pauses. Validating a large document
+     * takes hundreds of milliseconds, so it never holds up the preview, and a
+     * result is discarded if newer output arrived meanwhile.
+     */
+    function scheduleValidation(xml: string) {
+        clearTimeout(validationTimeout);
+        const run = ++validationRun;
+        validationTimeout = setTimeout(async () => {
+            const schemaId = $templateStore.active?.validationSchemaId || "tei-p5";
+            try {
+                const validationResult = await validateXml(xml, schemaId);
+                if (run === validationRun) validationStore.setResult(validationResult);
+            } catch (validationError) {
+                if (run !== validationRun) return;
+                console.warn("Validation failed:", validationError);
+                // Don't block on validation errors - just clear the validation state
+                validationStore.setResult(null);
+            }
+        }, VALIDATION_DELAY_MS);
+    }
+
+    /** Compiles and schedules validation; returns whether compilation succeeded. */
+    async function doCompile(content: string): Promise<boolean> {
         try {
             const result = await compileOnly(content);
-            if (result !== null) {
-                previewContent = result;
-
-                // Validate the compiled XML against the schema
-                // This ensures validation errors have correct line numbers for the displayed XML
-                const template = $templateStore.active;
-                const schemaId = template?.validationSchemaId || "tei-p5";
-                try {
-                    const validationResult = await validateXml(result, schemaId);
-                    validationStore.setResult(validationResult);
-                } catch (validationError) {
-                    console.warn("Validation failed:", validationError);
-                    // Don't block on validation errors - just clear the validation state
-                    validationStore.setResult(null);
-                }
-            }
+            if (result === null) return false;
+            previewContent = result;
+            scheduleValidation(result);
+            return true;
         } catch (e) {
             previewContent = `Error: ${e}`;
+            // Drop any pending validation of the previous output
+            clearTimeout(validationTimeout);
+            validationRun++;
             validationStore.setResult(null);
+            return false;
         }
     }
 
@@ -608,11 +628,27 @@
         spanEndWordIndex = null;
     }
 
+    let warnedAnnotationsNotExported = false;
+
+    /**
+     * Imported-mode output is spliced from the original XML and does not yet
+     * include annotations made in the editor. Say so once per session.
+     */
+    function warnIfAnnotationsNotExported() {
+        if (!importedStore.isImportedMode || warnedAnnotationsNotExported) return;
+        warnedAnnotationsNotExported = true;
+        errorStore.warning(
+            "Annotations",
+            "Annotations on an imported TEI file are kept in the project but are not yet written to its XML output.",
+        );
+    }
+
     async function handleLemmatizerSave(
         wordIndex: number,
         lemma?: string,
         msa?: string,
     ) {
+        warnIfAnnotationsNotExported();
         // Wait for Svelte reactivity to propagate store updates
         await tick();
         // Trigger immediate recompile to update TEI output with new lemma
@@ -626,6 +662,7 @@
      * Triggers recompile to update the XML output.
      */
     async function handleAnnotationSave() {
+        warnIfAnnotationsNotExported();
         // Wait for Svelte reactivity to propagate store updates
         await tick();
         // Trigger immediate recompile to update TEI output
@@ -744,7 +781,7 @@
     async function handleOpenProject() {
         const path = await open({
             filters: [
-                { name: "TEI Scribe Project", extensions: ["teis"] },
+                { name: "Saga Scribe Project", extensions: ["teis"] },
                 { name: "DSL Source", extensions: ["dsl", "txt"] },
             ],
         });
@@ -792,10 +829,12 @@
                 if (project.imported_document && project.original_body_xml) {
                     importedStore.load({
                         segments: project.imported_document.segments,
+                        spans: project.imported_document.spans,
                         originalBodyXml: project.original_body_xml,
                         originalPreamble: project.original_preamble ?? "",
                         originalPostamble: project.original_postamble ?? "",
                         isMenota: project.imported_document.is_menota ?? false,
+                        dslRules: project.imported_document.dsl_rules ?? 0,
                     });
                     preservationStore.setSections({
                         preamble: project.original_preamble ?? "",
@@ -847,8 +886,7 @@
         // Get save path (use existing or prompt for new)
         let path = $editor.filePath;
         if (!path || !path.endsWith(".teis")) {
-            path = await save({
-                filters: [{ name: "TEI Scribe Project", extensions: ["teis"] }],
+            path = await saveAs({ name: "Saga Scribe Project", extensions: ["teis"] }, {
                 defaultPath: path
                     ? path.replace(/\.[^.]+$/, ".teis")
                     : undefined,
@@ -857,9 +895,15 @@
         if (!path) return;
 
         try {
-            // Ensure we have fresh compiled output
+            // Ensure we have fresh compiled output; never write a failed compile
             clearTimeout(compileTimeout);
-            await doCompile($editor.content);
+            if (!(await doCompile($editor.content))) {
+                errorStore.error(
+                    "Save",
+                    "Project not saved: the document could not be compiled. Fix the errors and save again.",
+                );
+                return;
+            }
 
             // Serialize session confirmations (lemma mappings for backward compat)
             const confirmationsJson = JSON.stringify($lemmaMappings.mappings);
@@ -872,7 +916,7 @@
                 ? JSON.stringify(currentMetadata)
                 : undefined;
             const segmentsJson = importedStore.isImportedMode
-                ? JSON.stringify(importedStore.segments)
+                ? importedStore.buildManifestJson()
                 : undefined;
             const originalBodyXml = importedStore.isImportedMode
                 ? importedStore.originalBodyXml
@@ -914,8 +958,7 @@
             return;
         }
 
-        const path = await save({
-            filters: [{ name: "TEI-XML", extensions: ["xml"] }],
+        const path = await saveAs({ name: "TEI-XML", extensions: ["xml"] }, {
             defaultPath: $editor.filePath
                 ? $editor.filePath.replace(/\.[^.]+$/, ".xml")
                 : undefined,
@@ -923,9 +966,15 @@
         if (!path) return;
 
         try {
-            // Ensure we have fresh compiled output
+            // Ensure we have fresh compiled output; never export a failed compile
             clearTimeout(compileTimeout);
-            await doCompile($editor.content);
+            if (!(await doCompile($editor.content))) {
+                errorStore.error(
+                    "Export",
+                    "Not exported: the document could not be compiled. Fix the errors and export again.",
+                );
+                return;
+            }
 
             await exportTei(path, previewContent);
             errorStore.info("Export", `Exported TEI-XML to ${path}`);
@@ -935,8 +984,7 @@
     }
 
     async function handleExportDictionary() {
-        const path = await save({
-            filters: [{ name: "JSON", extensions: ["json"] }],
+        const path = await saveAs({ name: "JSON", extensions: ["json"] }, {
             defaultPath: "inflections.json",
         });
         if (!path) return;
@@ -952,85 +1000,66 @@
         }
     }
 
-    async function loadStylesheetText(path: string): Promise<string> {
-        if (path.startsWith("/xsl/")) {
-            const response = await fetch(path);
-            if (!response.ok) {
-                throw new Error(`Failed to load stylesheet: ${response.statusText}`);
-            }
-            return response.text();
-        }
+    /** Label of the running HTML/PDF export step; non-null shows the progress overlay. */
+    let exportProgress = $state<string | null>(null);
+    let exportController: AbortController | null = null;
 
-        return readTextFile(path);
-    }
+    const EXPORT_STAGE_LABELS: Record<XsltStage, string> = {
+        preparing: "Preparing document…",
+        parsing: "Parsing XML…",
+        transforming: "Applying stylesheet…",
+        sanitizing: "Cleaning up output…",
+    };
 
     /**
-     * Apply XSLT transformation to XML content
-     * Extracted from XsltRenderer.svelte for reuse in exports
+     * Runs an export behind the progress overlay. The work yields between steps,
+     * so the UI stays painted and the user can cancel.
      */
-    async function applyXsltTransform(xmlContent: string): Promise<string> {
-        const stylesheetPath = activeStylesheetPath;
-        const xslText = await loadStylesheetText(stylesheetPath);
-
-        const parser = new DOMParser();
-        const xslDoc = parser.parseFromString(xslText, "application/xml");
-
-        const parseError = xslDoc.querySelector("parsererror");
-        if (parseError) {
-            throw new Error(`XSL parse error: ${parseError.textContent}`);
-        }
-
-        const processor = new XSLTProcessor();
-        processor.importStylesheet(xslDoc);
-
-        // Replace entity references with placeholders to avoid XML parsing errors
-        let processedXml = xmlContent;
-
-        // Strip DOCTYPE/entity declarations (not supported by DOMParser)
-        processedXml = processedXml
-            .replace(/<!DOCTYPE[\s\S]*?\]>\s*/gi, "")
-            .replace(/<!DOCTYPE[^>]*>\s*/gi, "");
-        const entityPattern = /&([a-zA-Z][a-zA-Z0-9]*);/g;
-        const entityMap = new Map<string, string>();
-        let entityCounter = 0;
-
-        processedXml = processedXml.replace(entityPattern, (match, name) => {
-            // Skip standard XML entities
-            if (["lt", "gt", "amp", "quot", "apos"].includes(name)) {
-                return match;
+    async function withExportProgress(
+        what: string,
+        task: (signal: AbortSignal) => Promise<void>,
+    ) {
+        const controller = new AbortController();
+        exportController = controller;
+        exportProgress = "Starting…";
+        try {
+            await task(controller.signal);
+        } catch (e) {
+            if (controller.signal.aborted) {
+                errorStore.info("Export", `${what} export cancelled`);
+            } else {
+                errorStore.error("Export", `Failed to export ${what}: ${e}`);
             }
-            const placeholder = `__ENTITY_${entityCounter}__`;
-            entityMap.set(placeholder, name);
-            entityCounter++;
-            return placeholder;
+        } finally {
+            exportProgress = null;
+            exportController = null;
+        }
+    }
+
+    function cancelExport() {
+        exportController?.abort();
+    }
+
+    /** Compiles the document and renders it to sanitized HTML with the active stylesheet. */
+    async function renderExportHtml(signal: AbortSignal): Promise<string> {
+        exportProgress = "Compiling…";
+        clearTimeout(compileTimeout);
+        // Never export a failed compile
+        if (!(await doCompile($editor.content))) {
+            throw new Error(
+                "the document could not be compiled. Fix the errors and try again.",
+            );
+        }
+        signal.throwIfAborted();
+
+        exportProgress = "Loading stylesheet…";
+        const processor = createXsltProcessor(
+            await loadStylesheetText(activeStylesheetPath),
+        );
+        return runXsltTransform(processor, previewContent, $entityStore.entities, {
+            signal,
+            onStage: (stage) => (exportProgress = EXPORT_STAGE_LABELS[stage]),
         });
-
-        const xmlDoc = parser.parseFromString(processedXml, "application/xml");
-
-        const xmlParseError = xmlDoc.querySelector("parsererror");
-        if (xmlParseError) {
-            throw new Error(`XML parse error: ${xmlParseError.textContent}`);
-        }
-
-        // Apply XSLT transformation
-        const resultDoc = processor.transformToDocument(xmlDoc);
-
-        if (!resultDoc || !resultDoc.documentElement) {
-            throw new Error("XSLT transformation produced no output");
-        }
-
-        // Get the HTML content
-        let html = resultDoc.documentElement.outerHTML;
-
-        // Resolve entity placeholders to actual glyphs
-        const entities = $entityStore.entities;
-        for (const [placeholder, entityName] of entityMap) {
-            const entity = entities[entityName];
-            const glyph = entity?.char || `[${entityName}]`;
-            html = html.replaceAll(placeholder, glyph);
-        }
-
-        return html;
     }
 
     async function handleExportHtml() {
@@ -1043,33 +1072,27 @@
             return;
         }
 
-        const path = await save({
-            filters: [{ name: "HTML", extensions: ["html", "htm"] }],
+        const path = await saveAs({ name: "HTML", extensions: ["html", "htm"] }, {
             defaultPath: $editor.filePath
                 ? $editor.filePath.replace(/\.[^.]+$/, ".html")
                 : undefined,
         });
         if (!path) return;
 
-        try {
-            // Ensure we have fresh compiled output
-            clearTimeout(compileTimeout);
-            await doCompile($editor.content);
-
-            // Apply XSLT transformation
-            const htmlBody = await applyXsltTransform(previewContent);
+        await withExportProgress("HTML", async (signal) => {
+            const htmlBody = await renderExportHtml(signal);
 
             // Generate standalone HTML with embedded styles
             const fileName = $editor.filePath
                 ? $editor.filePath.split("/").pop()?.replace(/\.[^.]+$/, "")
                 : "export";
             const fullHtml = generateStandaloneHtml(htmlBody, { title: fileName });
+            signal.throwIfAborted();
 
+            exportProgress = "Writing file…";
             await exportHtml(path, fullHtml);
             errorStore.info("Export", `Exported HTML to ${path}`);
-        } catch (e) {
-            errorStore.error("Export", `Failed to export HTML: ${e}`);
-        }
+        });
     }
 
     async function handleExportPdf() {
@@ -1082,13 +1105,21 @@
             return;
         }
 
-        try {
-            // Ensure we have fresh compiled output
-            clearTimeout(compileTimeout);
-            await doCompile($editor.content);
+        // Where the backend writes PDFs itself, ask where to save first;
+        // otherwise the system print dialog offers "Save as PDF".
+        const direct = await pdfExportSupported().catch(() => false);
+        let path: string | null = null;
+        if (direct) {
+            path = await saveAs({ name: "PDF", extensions: ["pdf"] }, {
+                defaultPath: $editor.filePath
+                    ? $editor.filePath.replace(/\.[^.]+$/, ".pdf")
+                    : undefined,
+            });
+            if (!path) return;
+        }
 
-            // Apply XSLT transformation
-            const htmlBody = await applyXsltTransform(previewContent);
+        await withExportProgress("PDF", async (signal) => {
+            const htmlBody = await renderExportHtml(signal);
 
             // Generate standalone HTML
             const fileName = $editor.filePath
@@ -1098,17 +1129,34 @@
                 title: fileName,
                 pageBreakStyle: "print-break",
             });
+            signal.throwIfAborted();
 
-            // Open print dialog (user can "Save as PDF")
-            await printToPdf(fullHtml, { pageSize: "A4" });
+            if (path) {
+                exportProgress = "Laying out pages…";
+                // The typesetter is large, so it's only loaded for PDF export
+                const { paginateForPrint } = await import("$lib/utils/paginate");
+                const pages = await paginateForPrint(withPrintStyles(fullHtml, "A4"), signal);
 
-            errorStore.info(
-                "Export",
-                "Print dialog opened - select 'Save as PDF' to export",
-            );
-        } catch (e) {
-            errorStore.error("Export", `Failed to prepare PDF: ${e}`);
-        }
+                // Printed in a hidden window; this one stays responsive
+                exportProgress = "Writing PDF…";
+                const stop = () => void cancelPdfExport();
+                signal.addEventListener("abort", stop);
+                try {
+                    await exportPdf(pages, path);
+                } finally {
+                    signal.removeEventListener("abort", stop);
+                }
+                signal.throwIfAborted();
+                errorStore.info("Export", `Exported PDF to ${path}`);
+            } else {
+                exportProgress = "Laying out pages…";
+                await printToPdf(fullHtml, { pageSize: "A4" });
+                errorStore.info(
+                    "Export",
+                    "Print dialog opened - select 'Save as PDF' to export",
+                );
+            }
+        });
     }
 
     async function handleImport() {
@@ -1146,10 +1194,12 @@
             ) {
                 importedStore.load({
                     segments: result.importedDocument.segments,
+                    spans: result.importedDocument.spans,
                     originalBodyXml: result.originalBodyXml,
                     originalPreamble: result.originalPreamble ?? "",
                     originalPostamble: result.originalPostamble ?? "",
                     isMenota: result.importedDocument.is_menota ?? false,
+                    dslRules: result.importedDocument.dsl_rules ?? 0,
                 });
                 preservationStore.setSections({
                     preamble: result.originalPreamble ?? "",
@@ -1170,81 +1220,38 @@
                     if (!("has_inline_lb" in segment)) {
                         continue;
                     }
-                    const isHead = segment.dsl_content.startsWith(".head{");
-                    if (isHead) {
-                        // Extract lemmas from words nested inside head elements
-                        // (e.g., <head><supplied><w lemma="...">...</w></supplied></head>)
-                        const headWords = extractWordAttributesFromXml(segment.original_xml);
-                        for (const hw of headWords) {
-                            if (hw.lemma && hw.msa) {
+                    // Words nested in other elements (head, supplied, add, del, ...)
+                    // are counted in document order, matching the rendered text.
+                    if (!segment.original_xml.trimStart().startsWith("<w")) {
+                        const nestedWords = segment.original_xml.trimStart().startsWith("<")
+                            ? extractWordAttributesFromXml(segment.original_xml)
+                            : [];
+                        for (const nw of nestedWords) {
+                            if (nw.lemma && nw.msa) {
                                 lemmaConfirmations[wordIndex] = {
-                                    lemma: hw.lemma,
-                                    msa: hw.msa,
-                                    normalized: hw.normalized,
+                                    lemma: nw.lemma,
+                                    msa: nw.msa,
+                                    normalized: nw.normalized,
                                 };
 
-                                const wordform = (hw.diplomatic ?? hw.facsimile ?? "").trim();
+                                const wordform = (nw.diplomatic ?? nw.facsimile ?? "").trim();
                                 if (wordform) {
-                                    const partOfSpeech = hw.msa.split(/\s+/)[0] ?? "";
-                                    const key = `${wordform.toLowerCase()}|${hw.lemma}|${hw.msa}`;
+                                    const partOfSpeech = nw.msa.split(/\s+/)[0] ?? "";
+                                    const key = `${wordform.toLowerCase()}|${nw.lemma}|${nw.msa}`;
                                     if (!inflectionMap.has(key)) {
                                         inflectionMap.set(key, {
-                                            onp_id: `imported:${hw.lemma}`,
-                                            lemma: hw.lemma,
-                                            analysis: hw.msa,
+                                            onp_id: `imported:${nw.lemma}`,
+                                            lemma: nw.lemma,
+                                            analysis: nw.msa,
                                             part_of_speech: partOfSpeech,
-                                            facsimile: hw.facsimile,
-                                            diplomatic: hw.diplomatic,
-                                            normalized: hw.normalized,
+                                            facsimile: nw.facsimile,
+                                            diplomatic: nw.diplomatic,
+                                            normalized: nw.normalized,
                                         });
                                     }
                                 }
                             }
                             wordIndex += 1;
-                        }
-                        // If no words found via XML parsing, fall back to DSL word count
-                        if (headWords.length === 0) {
-                            const headWordCount = countDslWords(segment.dsl_content);
-                            wordIndex += headWordCount;
-                        }
-                        continue;
-                    }
-                    // Handle standalone .supplied{} segments (not inside .head{})
-                    // These may also contain <w> elements with lemma attributes
-                    const isSupplied = segment.dsl_content.startsWith(".supplied{");
-                    if (isSupplied && segment.original_xml.trimStart().startsWith("<supplied")) {
-                        const suppliedWords = extractWordAttributesFromXml(segment.original_xml);
-                        for (const sw of suppliedWords) {
-                            if (sw.lemma && sw.msa) {
-                                lemmaConfirmations[wordIndex] = {
-                                    lemma: sw.lemma,
-                                    msa: sw.msa,
-                                    normalized: sw.normalized,
-                                };
-
-                                const wordform = (sw.diplomatic ?? sw.facsimile ?? "").trim();
-                                if (wordform) {
-                                    const partOfSpeech = sw.msa.split(/\s+/)[0] ?? "";
-                                    const key = `${wordform.toLowerCase()}|${sw.lemma}|${sw.msa}`;
-                                    if (!inflectionMap.has(key)) {
-                                        inflectionMap.set(key, {
-                                            onp_id: `imported:${sw.lemma}`,
-                                            lemma: sw.lemma,
-                                            analysis: sw.msa,
-                                            part_of_speech: partOfSpeech,
-                                            facsimile: sw.facsimile,
-                                            diplomatic: sw.diplomatic,
-                                            normalized: sw.normalized,
-                                        });
-                                    }
-                                }
-                            }
-                            wordIndex += 1;
-                        }
-                        // Fallback to DSL word count if no <w> elements found
-                        if (suppliedWords.length === 0) {
-                            const suppliedWordCount = countDslWords(segment.dsl_content);
-                            wordIndex += suppliedWordCount;
                         }
                         continue;
                     }
@@ -1256,13 +1263,6 @@
                         segment.original_xml,
                         "norm",
                     );
-                    const isWordElement =
-                        segment.original_xml.trimStart().startsWith("<w");
-
-                    if (!isWordElement) {
-                        continue;
-                    }
-
                     if (isMenotaImport) {
                         if (!lemma) {
                             missingLemmaCount += 1;
@@ -1556,6 +1556,7 @@
                     </div>
                     <Editor
                         bind:this={editorComponent}
+                        onchanges={(changes) => importedStore.recordChanges(changes)}
                         onchange={handleEditorChange}
                     />
                 </div>
@@ -1679,6 +1680,59 @@
                         />
                     </div>
                 </div>
+            </div>
+        </div>
+    {/if}
+
+    {#if exportProgress !== null}
+        <div class="modal modal-open">
+            <div class="modal-backdrop bg-base-100/50"></div>
+            <div
+                class="modal-box bg-transparent shadow-none shadow-transparent border-none flex flex-col items-center justify-center overflow-hidden"
+                role="alertdialog"
+                aria-labelledby="export-progress-title"
+                aria-describedby="export-progress-step"
+            >
+                <!-- SVG spinner with explicit animation -->
+                <svg viewBox="0 0 50 50" width="48" height="48" aria-hidden="true">
+                    <circle
+                        cx="25"
+                        cy="25"
+                        r="20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="4"
+                        stroke-linecap="round"
+                        stroke-dasharray="90, 150"
+                        stroke-dashoffset="0"
+                        class="text-primary"
+                    >
+                        <animateTransform
+                            attributeName="transform"
+                            type="rotate"
+                            from="0 25 25"
+                            to="360 25 25"
+                            dur="1s"
+                            repeatCount="indefinite"
+                        />
+                    </circle>
+                </svg>
+                <p
+                    id="export-progress-title"
+                    class="mt-4 font-bold text-lg text-base-content"
+                >
+                    Exporting…
+                </p>
+                <p
+                    id="export-progress-step"
+                    class="text-sm text-base-content/70"
+                    aria-live="polite"
+                >
+                    {exportProgress}
+                </p>
+                <button class="btn btn-ghost btn-sm mt-4" onclick={cancelExport}>
+                    Cancel
+                </button>
             </div>
         </div>
     {/if}

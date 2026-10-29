@@ -58,6 +58,7 @@
             desc: "Line break with number",
         },
         { syntax: "///1v", output: '<pb n="1v"/>', desc: "Page break" },
+        { syntax: ".p", output: "</p><p>", desc: "New paragraph (standalone)" },
         {
             syntax: ".abbr[d.]{deus}",
             output: "<choice><abbr>d.</abbr><expan>deus</expan></choice>",
@@ -102,7 +103,12 @@
             desc: "Explicit word boundary",
         },
         {
-            syntax: "~//",
+            syntax: "upp~haf",
+            output: "<w>upp haf</w>",
+            desc: "One word written as two",
+        },
+        {
+            syntax: "~//5",
             output: "(continuation + lb)",
             desc: "Word continues across line",
         },

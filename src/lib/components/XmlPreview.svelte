@@ -3,17 +3,21 @@
     import { EditorView } from "@codemirror/view";
     import { EditorState } from "@codemirror/state";
     import { xml } from "@codemirror/lang-xml";
-    import { basicSetup } from "@codemirror/basic-setup";
+    import { basicSetup } from "codemirror";
     import { lintGutter, linter, type Diagnostic } from "@codemirror/lint";
     import { validationStore } from "$lib/stores/validation";
     import { scrollPositionStore } from "$lib/stores/scrollPosition.svelte";
     import { daisyExtensions } from "$lib/editor/theme";
+    import { changedRange } from "$lib/utils/textDiff";
 
     let {
         content = "",
+        active = true,
         onwordclick,
     }: {
         content?: string;
+        /** Hidden views skip updates and catch up when shown again */
+        active?: boolean;
         onwordclick?: (
             facsimile: string,
             diplomatic: string,
@@ -27,6 +31,8 @@
 
     let container: HTMLDivElement;
     let view: EditorView;
+    /** The content currently in the editor, to diff updates against */
+    let appliedContent = "";
 
     // Define a linter source that reads from the validation store
     const xmlLinter = linter((view) => {
@@ -50,6 +56,7 @@
     });
 
     onMount(() => {
+        appliedContent = content;
         const startState = EditorState.create({
             doc: content,
             extensions: [
@@ -92,16 +99,14 @@
         view?.destroy();
     });
 
-    // Reactive update for content
+    // Apply only the changed range, so an edit doesn't rebuild a multi-megabyte document
     $effect(() => {
-        if (view && content !== view.state.doc.toString()) {
-            view.dispatch({
-                changes: {
-                    from: 0,
-                    to: view.state.doc.length,
-                    insert: content,
-                },
-            });
+        const next = content;
+        if (!view || !active) return;
+        const change = changedRange(appliedContent, next);
+        appliedContent = next;
+        if (change) {
+            view.dispatch({ changes: change });
         }
     });
     

@@ -79,10 +79,11 @@ jobs:
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          cache-key: ${{ matrix.artifact_suffix }}
 
       - name: Install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-latest'
@@ -96,44 +97,9 @@ jobs:
           brew install libxml2
           echo "PKG_CONFIG_PATH=$(brew --prefix libxml2)/lib/pkgconfig" >> $GITHUB_ENV
 
-      - name: Install dependencies (windows only)
+      - name: Install libxml2 (windows only)
         if: matrix.platform == 'windows-latest'
-        run: |
-          vcpkg integrate install
-          vcpkg install libxml2:x64-windows-static-md
-          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
-          $vcpkgInstalled = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
-          echo "LIBXML2_DIR=$vcpkgInstalled" >> $env:GITHUB_ENV
-          # Set linker search paths for MSVC
-          echo "LIB=$vcpkgInstalled\lib;$env:LIB" >> $env:GITHUB_ENV
-          echo "INCLUDE=$vcpkgInstalled\include;$vcpkgInstalled\include\libxml2;$env:INCLUDE" >> $env:GITHUB_ENV
-          # Also set for pkg-config style discovery
-          echo "LIBXML2_INCLUDE_DIR=$vcpkgInstalled\include\libxml2" >> $env:GITHUB_ENV
-          echo "LIBXML2_LIB_DIR=$vcpkgInstalled\lib" >> $env:GITHUB_ENV
-          # Create xml2.lib alias if libxml2.lib exists (some crates expect this name)
-          $libxml2Lib = "$vcpkgInstalled\lib\libxml2.lib"
-          $xml2Lib = "$vcpkgInstalled\lib\xml2.lib"
-          if ((Test-Path $libxml2Lib) -and -not (Test-Path $xml2Lib)) {
-            Copy-Item $libxml2Lib $xml2Lib
-            Write-Host "Created xml2.lib alias"
-          }
-          # Find Windows SDK and MSVC paths for bindgen/clang
-          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          $msvcPath = Get-ChildItem "$vsPath\VC\Tools\MSVC" | Sort-Object Name -Descending | Select-Object -First 1
-          $msvcInclude = "$($msvcPath.FullName)\include"
-          # Find Windows SDK
-          $sdkVersion = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object Name -Descending | Select-Object -First 1
-          $sdkInclude = "C:\Program Files (x86)\Windows Kits\10\Include\$($sdkVersion.Name)\ucrt"
-          # Set bindgen clang args to find system headers
-          $clangArgs = "-I`"$msvcInclude`" -I`"$sdkInclude`" -I`"$vcpkgInstalled\include`" -I`"$vcpkgInstalled\include\libxml2`""
-          echo "BINDGEN_EXTRA_CLANG_ARGS=$clangArgs" >> $env:GITHUB_ENV
-          Write-Host "MSVC include: $msvcInclude"
-          Write-Host "SDK include: $sdkInclude"
-          Write-Host "Clang args: $clangArgs"
-          # List what was installed for debugging
-          Write-Host "Installed libraries:"
-          Get-ChildItem "$vcpkgInstalled\lib\*.lib" | ForEach-Object { Write-Host $_.Name }
-        shell: pwsh
+        uses: ./.github/actions/setup-libxml2-windows
 
       - name: Install frontend dependencies
         run: bun install
@@ -146,61 +112,33 @@ jobs:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
 
-      # Upload Linux binary as artifact for Flatpak build
-      - name: Upload Linux binary for Flatpak
-        if: matrix.platform == 'ubuntu-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-binary
-          path: src-tauri/target/release/saga-scribe
-          retention-days: 1
-
   build-flatpak:
-    needs: [create-release, build-release]
+    needs: create-release
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
       options: --privileged
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Linux binary
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-binary
-          path: flatpak-build
+      # The app itself is compiled inside the GNOME SDK (see the manifest), so
+      # it links the runtime's libraries; only the frontend is built here
+      - name: Install unzip (for setup-bun)
+        run: command -v unzip || dnf install -y unzip
 
-      - name: Prepare Flatpak build directory
+      - name: setup bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Build frontend
         run: |
-          # Make binary executable
-          chmod +x flatpak-build/saga-scribe
-
-          # Copy resource directories
-          cp -r static/entities flatpak-build/
-          cp -r static/normalizer flatpak-build/
-          cp -r static/dictionary flatpak-build/
-          cp -r static/schemas flatpak-build/
-
-          # Copy Flatpak metadata files
-          cp flatpak/app.sagascribe.Sagascribe.desktop flatpak-build/
-          cp flatpak/app.sagascribe.Sagascribe.metainfo.xml flatpak-build/
-          cp flatpak/saga-scribe-wrapper.sh flatpak-build/
-
-          # Copy icons
-          cp src-tauri/icons/icon.png flatpak-build/icon-512.png
-          cp src-tauri/icons/128x128@2x.png flatpak-build/icon-256.png
-          cp src-tauri/icons/128x128.png flatpak-build/icon-128.png
-
-          # Copy and use the CI-specific manifest
-          cp flatpak/app.sagascribe.Sagascribe.ci.yml flatpak-build/app.sagascribe.Sagascribe.yml
-
-          ls -la flatpak-build/
+          bun install --frozen-lockfile
+          bun run build
 
       - name: Build Flatpak
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          manifest-path: flatpak-build/app.sagascribe.Sagascribe.yml
+          manifest-path: flatpak/app.sagascribe.Sagascribe.yml
           bundle: saga-scribe.flatpak
           cache-key: flatpak-builder-${{ github.sha }}
 
