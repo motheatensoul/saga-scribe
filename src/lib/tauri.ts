@@ -212,20 +212,33 @@ export interface CompileImportedOptions {
   customMappings?: Record<string, string>;
 }
 
+/**
+ * Loads the imported document into the backend (or clears it with `null`).
+ * Sent once per document, so compiles only need to send the edited DSL.
+ */
+export async function setImportedDocument(
+  document: {
+    segmentsJson: string;
+    originalBodyXml: string;
+    preamble: string;
+    postamble: string;
+  } | null,
+): Promise<void> {
+  return invoke("set_imported_document", {
+    segmentsJson: document?.segmentsJson ?? null,
+    originalBodyXml: document?.originalBodyXml ?? null,
+    preamble: document?.preamble ?? null,
+    postamble: document?.postamble ?? null,
+  });
+}
+
+/** Compiles edited DSL against the document loaded with {@link setImportedDocument}. */
 export async function compileImported(
   editedDsl: string,
-  segmentsJson: string,
-  preamble: string,
-  postamble: string,
-  originalBodyXml: string,
   options?: CompileImportedOptions,
 ): Promise<string> {
   return invoke("compile_imported", {
     editedDsl,
-    segmentsJson,
-    preamble,
-    postamble,
-    originalBodyXml,
     entitiesJson: options?.entitiesJson ?? null,
     normalizerJson: options?.normalizerJson ?? null,
     entityMappingsJson: options?.entityMappingsJson ?? null,

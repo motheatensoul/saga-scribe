@@ -21,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(OnpState(Mutex::new(None)))
+        .manage(commands::parse::ImportedSession::default())
         .setup(|app| {
             // Spawn validation actor
             let validation_sender = ValidationActor::spawn();
@@ -84,6 +85,7 @@ pub fn run() {
             commands::settings::set_window_theme,
             commands::parse::compile_dsl,
             commands::parse::compile_imported,
+            commands::parse::set_imported_document,
             commands::entities::load_entities,
             commands::entities::get_entity,
             commands::entities::list_entity_names,

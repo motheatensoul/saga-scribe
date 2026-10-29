@@ -111,3 +111,29 @@ pub struct ImportedDocument {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spans: Option<SourceSpans>,
 }
+
+impl ImportedDocument {
+    /// Parses a manifest as stored in segments.json.
+    ///
+    /// Since project format 1.5 this is the full manifest. Versions up to 1.4
+    /// wrote a bare segment array, which lost `is_menota`; MENOTA structure is
+    /// then re-detected from the segments themselves.
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        if let Ok(doc) = serde_json::from_str::<ImportedDocument>(json) {
+            return Ok(doc);
+        }
+        let segments: Vec<Segment> = serde_json::from_str(json)
+            .map_err(|e| format!("Failed to parse segments.json: {}", e))?;
+        let is_menota = segments.iter().any(|seg| match seg {
+            Segment::Word { original_xml, .. } | Segment::Punctuation { original_xml, .. } => {
+                original_xml.contains(":facs")
+            }
+            _ => false,
+        });
+        Ok(ImportedDocument {
+            segments,
+            is_menota,
+            spans: None,
+        })
+    }
+}

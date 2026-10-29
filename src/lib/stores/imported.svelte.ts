@@ -1,4 +1,9 @@
-import { compileImported, type ImportedDocument, type Segment } from "$lib/tauri";
+import {
+  compileImported,
+  setImportedDocument,
+  type ImportedDocument,
+  type Segment,
+} from "$lib/tauri";
 
 export interface ImportedState {
   isImportedMode: boolean;
@@ -16,7 +21,6 @@ class ImportedStore {
   isImportedMode = $state(false);
   segments = $state<Segment[]>([]);
   spans = $state<ImportedDocument["spans"]>(undefined);
-  segmentsJson = $state<string | null>(null);
   originalBodyXml = $state("");
   originalPreamble = $state("");
   originalPostamble = $state("");
@@ -24,17 +28,29 @@ class ImportedStore {
   backMatter = $state("");
   isMenota = $state(false);
 
+  /**
+   * Backend session updates, chained so they apply in call order: a quick
+   * reset() + load() must never let the clear land after the load.
+   */
+  private backendSync: Promise<void> = Promise.resolve();
+
+  private syncBackend(document: Parameters<typeof setImportedDocument>[0]) {
+    this.backendSync = this.backendSync
+      .catch(() => {})
+      .then(() => setImportedDocument(document));
+  }
+
   reset() {
     this.isImportedMode = false;
     this.segments = [];
     this.spans = undefined;
-    this.segmentsJson = null;
     this.originalBodyXml = "";
     this.originalPreamble = "";
     this.originalPostamble = "";
     this.frontMatter = "";
     this.backMatter = "";
     this.isMenota = false;
+    this.syncBackend(null);
   }
 
   load(data: Partial<ImportedState>) {
@@ -47,10 +63,15 @@ class ImportedStore {
     if (data.frontMatter) this.frontMatter = data.frontMatter;
     if (data.backMatter) this.backMatter = data.backMatter;
     if (data.isMenota !== undefined) this.isMenota = data.isMenota;
-    this.segmentsJson = this.buildManifestJson();
+    this.syncBackend({
+      segmentsJson: this.buildManifestJson(),
+      originalBodyXml: this.originalBodyXml,
+      preamble: this.originalPreamble,
+      postamble: this.originalPostamble,
+    });
   }
 
-  /** Full manifest JSON, used both for compiling and for saving projects. */
+  /** Full manifest JSON, sent to the backend on load and written when saving projects. */
   buildManifestJson(): string {
     const manifest: ImportedDocument = {
       segments: this.segments,
@@ -73,16 +94,9 @@ class ImportedStore {
       throw new Error("Not in imported mode");
     }
 
-    const manifestJson = this.segmentsJson ?? this.buildManifestJson();
-
-    return compileImported(
-      editedDsl,
-      manifestJson,
-      this.originalPreamble,
-      this.originalPostamble,
-      this.originalBodyXml,
-      options,
-    );
+    // Make sure the backend holds this document (rejects if loading it failed)
+    await this.backendSync;
+    return compileImported(editedDsl, options);
   }
 }
 

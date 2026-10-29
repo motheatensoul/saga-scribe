@@ -7,9 +7,12 @@
 //! ## Why an Actor?
 //!
 //! 1. **Thread isolation**: libxml2 is not thread-safe; the actor serializes access
-//! 2. **Schema caching**: Parsed RelaxNG schemas are expensive; we cache them
-//! 3. **Panic safety**: `catch_unwind` prevents libxml2 panics from killing the thread
-//! 4. **Async integration**: tokio oneshot channels bridge to async/await
+//! 2. **Schema caching**: Parsed schemas are expensive (`tei_all.xsd` takes seconds); we cache them
+//! 3. **Coalescing**: Automatic validation runs after every edit. When several
+//!    file-schema requests are queued, only the newest is validated; older ones
+//!    are answered with [`SUPERSEDED`] so their results never overwrite newer ones
+//! 4. **Panic safety**: `catch_unwind` prevents libxml2 panics from killing the thread
+//! 5. **Async integration**: tokio oneshot channels bridge to async/await
 //!
 //! ## Request Flow
 //!
@@ -24,6 +27,7 @@
 use super::{RelaxNgValidator, XsdValidator};
 use crate::validator::relaxng::RelaxNgSchema;
 use crate::validator::ValidationResult;
+use libxml::schemas::SchemaValidationContext;
 use std::collections::HashMap;
 use std::panic;
 use std::path::PathBuf;
@@ -38,8 +42,12 @@ use tokio::sync::oneshot;
 pub struct ValidationActor {
     rx: Receiver<ValidationRequest>,
     rng_cache: HashMap<PathBuf, RelaxNgSchema>,
-    // TODO: Add XSD cache when we implement XSD reuse
+    xsd_cache: HashMap<PathBuf, SchemaValidationContext>,
 }
+
+/// Error returned for a validation request that was skipped because a newer
+/// request for a file schema was already queued behind it.
+pub const SUPERSEDED: &str = "superseded by a newer validation request";
 
 /// A request to validate XML against a schema.
 ///
@@ -93,6 +101,7 @@ impl ValidationActor {
                 let mut actor = ValidationActor {
                     rx,
                     rng_cache: HashMap::new(),
+                    xsd_cache: HashMap::new(),
                 };
                 actor.run();
             })
@@ -102,100 +111,176 @@ impl ValidationActor {
     }
 
     fn run(&mut self) {
-        while let Ok(req) = self.rx.recv() {
-            let start = std::time::Instant::now();
-            
-            //FIXME The comment below reads like Opus thought output, not actual documentation. Redo.
-            
-            // We use catch_unwind to ensure that if libxml panics (e.g. on internal error),
-            // the actor thread doesn't die and can continue processing requests.
-            // Note: We need to move the cache OUT of the catch_unwind closure 
-            // if we want to modify it, but catch_unwind requires UnwindSafe.
-            // HashMap and RelaxNgSchema (raw ptr) are not UnwindSafe by default.
-            // So we handle the request logic first, then validate inside catch_unwind?
-            // Or we just accept that if it panics, we might lose cache state if we were mutating it?
-            // Actually, we can use AssertUnwindSafe on &mut self.
-            
-            // However, we need to split the borrowing.
-            // Let's match first.
-            
-            match req {
-                ValidationRequest::Xsd { xml, schema_path, reply } => {
-                    log::info!("Starting XSD validation against {:?}", schema_path);
+        while let Ok(first) = self.rx.recv() {
+            for req in self.coalesce(first) {
+                self.handle(req);
+            }
+        }
+    }
+
+    /// Collects everything already queued after `first` and drops all but the
+    /// newest file-schema request. String-schema requests are kept in order.
+    fn coalesce(&self, first: ValidationRequest) -> Vec<ValidationRequest> {
+        let mut pending = vec![first];
+        pending.extend(self.rx.try_iter());
+
+        let newest_file_request = pending.iter().rposition(ValidationRequest::is_file_schema);
+        let mut kept = Vec::with_capacity(pending.len());
+        for (i, req) in pending.into_iter().enumerate() {
+            if req.is_file_schema() && Some(i) != newest_file_request {
+                req.reply_superseded();
+            } else {
+                kept.push(req);
+            }
+        }
+        kept
+    }
+
+    fn handle(&mut self, req: ValidationRequest) {
+        let start = std::time::Instant::now();
+
+        // Each validation runs inside catch_unwind: the libxml crate panics on
+        // internal libxml2 errors, and the actor thread must survive those.
+        // AssertUnwindSafe is acceptable because a panicking validation leaves
+        // no partially updated state behind; a cached schema is only read.
+        match req {
+            ValidationRequest::Xsd { xml, schema_path, reply } => {
+                log::info!("Starting XSD validation against {:?}", schema_path);
+                if !self.xsd_cache.contains_key(&schema_path) {
+                    log::info!("Cache miss for XSD schema: {:?}", schema_path);
+                    match XsdValidator::load_schema(&schema_path) {
+                        Ok(ctx) => {
+                            self.xsd_cache.insert(schema_path.clone(), ctx);
+                        }
+                        Err(e) => {
+                            let _ = reply.send(Err(e));
+                            return;
+                        }
+                    }
+                }
+                let schema_name = XsdValidator::schema_name(&schema_path);
+                if let Some(ctx) = self.xsd_cache.get_mut(&schema_path) {
                     let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                        XsdValidator::validate(&xml, &schema_path)
+                        XsdValidator::validate_with_context(ctx, &xml, &schema_name)
                     }));
                     if let Ok(res) = result {
                         log::info!("XSD validation took {:?}", start.elapsed());
                         let _ = reply.send(res);
                     } else {
-                        log::error!("XSD validation panicked");
-                    }
-                }
-                ValidationRequest::XsdString { xml, schema_content, schema_name, reply } => {
-                    log::info!("Starting XSD string validation: {}", schema_name);
-                    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                        XsdValidator::validate_with_schema_string(&xml, &schema_content, &schema_name)
-                    }));
-                    if let Ok(res) = result {
-                        log::info!("XSD string validation took {:?}", start.elapsed());
-                        let _ = reply.send(res);
-                    } else {
-                        log::error!("XSD string validation panicked");
-                    }
-                }
-                ValidationRequest::RelaxNg { xml, schema_path, reply } => {
-                    log::info!("Starting RelaxNG validation against {:?}", schema_path);
-                    
-                    // Check cache first
-                    if !self.rng_cache.contains_key(&schema_path) {
-                        log::info!("Cache miss for RelaxNG schema: {:?}", schema_path);
-                        match RelaxNgSchema::parse_file(&schema_path) {
-                            Ok(schema) => {
-                                self.rng_cache.insert(schema_path.clone(), schema);
-                            }
-                            Err(e) => {
-                                let _ = reply.send(Err(e));
-                                continue;
-                            }
-                        }
-                    } else {
-                        log::info!("Cache hit for RelaxNG schema: {:?}", schema_path);
-                    }
-
-                    // Get schema from cache
-                    if let Some(schema) = self.rng_cache.get(&schema_path) {
-                        let schema_name = schema_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
-                        
-                        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                            schema.validate(&xml, &schema_name)
-                        }));
-                        
-                        if let Ok(res) = result {
-                            log::info!("RelaxNG validation took {:?}", start.elapsed());
-                            let _ = reply.send(res);
-                        } else {
-                            log::error!("RelaxNG validation panicked");
-                            // If it panicked, maybe the schema is corrupted? 
-                            // We could remove it from cache, but it's risky.
-                        }
-                    }
-                }
-                ValidationRequest::RelaxNgString { xml, schema_content, schema_name, reply } => {
-                    // String schemas are harder to cache effectively without a hash of content.
-                    // For now, we won't cache strings, assuming they are rare or small.
-                    log::info!("Starting RelaxNG string validation: {}", schema_name);
-                    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
-                        RelaxNgValidator::validate_with_schema_string(&xml, &schema_content, &schema_name)
-                    }));
-                    if let Ok(res) = result {
-                        log::info!("RelaxNG string validation took {:?}", start.elapsed());
-                        let _ = reply.send(res);
-                    } else {
-                        log::error!("RelaxNG string validation panicked");
+                        log::error!("XSD validation panicked; dropping cached schema");
+                        self.xsd_cache.remove(&schema_path);
                     }
                 }
             }
+            ValidationRequest::XsdString { xml, schema_content, schema_name, reply } => {
+                log::info!("Starting XSD string validation: {}", schema_name);
+                let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                    XsdValidator::validate_with_schema_string(&xml, &schema_content, &schema_name)
+                }));
+                if let Ok(res) = result {
+                    log::info!("XSD string validation took {:?}", start.elapsed());
+                    let _ = reply.send(res);
+                } else {
+                    log::error!("XSD string validation panicked");
+                }
+            }
+            ValidationRequest::RelaxNg { xml, schema_path, reply } => {
+                log::info!("Starting RelaxNG validation against {:?}", schema_path);
+                if !self.rng_cache.contains_key(&schema_path) {
+                    log::info!("Cache miss for RelaxNG schema: {:?}", schema_path);
+                    match RelaxNgSchema::parse_file(&schema_path) {
+                        Ok(schema) => {
+                            self.rng_cache.insert(schema_path.clone(), schema);
+                        }
+                        Err(e) => {
+                            let _ = reply.send(Err(e));
+                            return;
+                        }
+                    }
+                }
+                if let Some(schema) = self.rng_cache.get(&schema_path) {
+                    let schema_name = schema_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                    let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                        schema.validate(&xml, &schema_name)
+                    }));
+                    if let Ok(res) = result {
+                        log::info!("RelaxNG validation took {:?}", start.elapsed());
+                        let _ = reply.send(res);
+                    } else {
+                        log::error!("RelaxNG validation panicked; dropping cached schema");
+                        self.rng_cache.remove(&schema_path);
+                    }
+                }
+            }
+            ValidationRequest::RelaxNgString { xml, schema_content, schema_name, reply } => {
+                // Not cached: string schemas would need a content hash as key,
+                // and they are only used for one-off validations.
+                log::info!("Starting RelaxNG string validation: {}", schema_name);
+                let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+                    RelaxNgValidator::validate_with_schema_string(&xml, &schema_content, &schema_name)
+                }));
+                if let Ok(res) = result {
+                    log::info!("RelaxNG string validation took {:?}", start.elapsed());
+                    let _ = reply.send(res);
+                } else {
+                    log::error!("RelaxNG string validation panicked");
+                }
+            }
         }
+    }
+}
+
+impl ValidationRequest {
+    /// Requests against schema files are the automatic per-edit validations.
+    fn is_file_schema(&self) -> bool {
+        matches!(self, Self::Xsd { .. } | Self::RelaxNg { .. })
+    }
+
+    fn reply_superseded(self) {
+        let reply = match self {
+            Self::Xsd { reply, .. }
+            | Self::XsdString { reply, .. }
+            | Self::RelaxNg { reply, .. }
+            | Self::RelaxNgString { reply, .. } => reply,
+        };
+        let _ = reply.send(Err(SUPERSEDED.to_string()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rng_request(xml: &str) -> (ValidationRequest, oneshot::Receiver<Result<ValidationResult, String>>) {
+        let (reply, rx) = oneshot::channel();
+        let req = ValidationRequest::RelaxNg {
+            xml: xml.to_string(),
+            schema_path: PathBuf::from("/nonexistent.rng"),
+            reply,
+        };
+        (req, rx)
+    }
+
+    #[test]
+    fn test_coalesce_keeps_only_newest_file_request() {
+        let (tx, rx) = channel();
+        let actor = ValidationActor {
+            rx,
+            rng_cache: HashMap::new(),
+            xsd_cache: HashMap::new(),
+        };
+
+        let (first, mut first_rx) = rng_request("<a/>");
+        let (second, mut second_rx) = rng_request("<b/>");
+        let (third, _third_rx) = rng_request("<c/>");
+        tx.send(second).unwrap();
+        tx.send(third).unwrap();
+
+        let kept = actor.coalesce(first);
+
+        assert_eq!(kept.len(), 1);
+        assert!(matches!(&kept[0], ValidationRequest::RelaxNg { xml, .. } if xml == "<c/>"));
+        assert_eq!(first_rx.try_recv().unwrap().unwrap_err(), SUPERSEDED);
+        assert_eq!(second_rx.try_recv().unwrap().unwrap_err(), SUPERSEDED);
     }
 }

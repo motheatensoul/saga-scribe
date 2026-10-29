@@ -1,10 +1,12 @@
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
 use crate::importer::tei::patching::{compiler_config_for, compute_patches, render_body};
-use crate::importer::tei::segments::{ImportedDocument, Segment};
+use crate::importer::tei::segments::ImportedDocument;
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use tauri::State;
 
 /// Compile DSL input to TEI-XML.
 ///
@@ -98,43 +100,77 @@ pub async fn compile_dsl(
     .map_err(|e| format!("Compilation task failed: {}", e))?
 }
 
+/// The imported document being edited, held in the backend.
+///
+/// The segment manifest of a large manuscript is tens of megabytes of JSON.
+/// Keeping it here means it crosses IPC once (via [`set_imported_document`])
+/// instead of with every compile.
+#[derive(Default, Clone)]
+pub struct ImportedSession(Arc<Mutex<Option<ImportedSource>>>);
+
+/// Everything needed to compile edited DSL back into the original file.
+pub struct ImportedSource {
+    document: ImportedDocument,
+    original_body_xml: String,
+    preamble: String,
+    postamble: String,
+}
+
+/// Sets (or, with no manifest, clears) the imported document used by [`compile_imported`].
+#[tauri::command(async, rename_all = "camelCase")]
+pub async fn set_imported_document(
+    session: State<'_, ImportedSession>,
+    segments_json: Option<String>,
+    original_body_xml: Option<String>,
+    preamble: Option<String>,
+    postamble: Option<String>,
+) -> Result<(), String> {
+    let source = match segments_json {
+        Some(json) => Some(
+            tauri::async_runtime::spawn_blocking(move || {
+                ImportedDocument::from_json(&json).map(|document| ImportedSource {
+                    document,
+                    original_body_xml: original_body_xml.unwrap_or_default(),
+                    preamble: preamble.unwrap_or_default(),
+                    postamble: postamble.unwrap_or_default(),
+                })
+            })
+            .await
+            .map_err(|e| format!("Loading imported document failed: {}", e))??,
+        ),
+        None => None,
+    };
+    *session.0.lock().map_err(|_| "Imported document state is poisoned")? = source;
+    Ok(())
+}
+
 /// Compile an imported document using the patching system for round-trip fidelity.
 ///
-/// This command takes edited DSL, the original segment manifest, and original body XML,
-/// computes the differences, and splices them into the original XML. Unedited content
-/// is emitted byte-for-byte.
+/// Takes the edited DSL, computes the differences against the imported
+/// document held in [`ImportedSession`], and splices them into the original
+/// XML. Unedited content is emitted byte-for-byte.
 ///
 /// # Errors
 ///
-/// Returns an error if the edited DSL does not parse; callers must keep the
-/// previous output rather than writing anything.
-#[allow(clippy::too_many_arguments)]
+/// Returns an error if no imported document is loaded or the edited DSL does
+/// not parse; callers must keep the previous output rather than writing anything.
 #[tauri::command(async, rename_all = "camelCase")]
 pub async fn compile_imported(
+    session: State<'_, ImportedSession>,
     edited_dsl: String,
-    segments_json: String,
-    preamble: String,
-    postamble: String,
-    original_body_xml: Option<String>,
     entities_json: Option<String>,
     normalizer_json: Option<String>,
     entity_mappings_json: Option<String>,
     custom_mappings: Option<HashMap<String, String>>,
 ) -> Result<String, String> {
+    let session = session.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Deserialize the imported document (accept either full manifest or raw segments list)
-        let imported_doc: ImportedDocument = match serde_json::from_str(&segments_json) {
-            Ok(doc) => doc,
-            Err(_) => {
-                let segments: Vec<Segment> = serde_json::from_str(&segments_json)
-                    .map_err(|e| format!("Failed to parse segments: {}", e))?;
-                ImportedDocument {
-                    segments,
-                    is_menota: false,
-                    spans: None,
-                }
-            }
-        };
+        let guard = session
+            .0
+            .lock()
+            .map_err(|_| "Imported document state is poisoned")?;
+        let source = guard.as_ref().ok_or("No imported document is loaded")?;
+
         // Load entities if provided
         let mut registry = EntityRegistry::new();
         if let Some(json) = entities_json {
@@ -158,7 +194,7 @@ pub async fn compile_imported(
         }
 
         // Match the document's own encoding style
-        let config = compiler_config_for(&imported_doc);
+        let config = compiler_config_for(&source.document);
 
         let mut compiler = Compiler::new()
             .with_entities(&registry)
@@ -169,18 +205,18 @@ pub async fn compile_imported(
         }
 
         // Compute patches between original segments and edited DSL
-        let patches = compute_patches(&imported_doc.segments, &edited_dsl)?;
+        let patches = compute_patches(&source.document.segments, &edited_dsl)?;
 
         // Apply patches to the original body XML
         let body = render_body(
-            &imported_doc,
-            original_body_xml.as_deref(),
+            &source.document,
+            Some(&source.original_body_xml),
             &patches,
             &mut compiler,
         );
 
         // Combine with preamble (everything before body) and postamble (everything after)
-        Ok(format!("{}{}{}", preamble, body, postamble))
+        Ok(format!("{}{}{}", source.preamble, body, source.postamble))
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?

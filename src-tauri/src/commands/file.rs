@@ -36,7 +36,7 @@
 
 use crate::annotations::AnnotationSet;
 use crate::importer::tei::recompute_spans;
-use crate::importer::tei::segments::{ImportedDocument, Segment};
+use crate::importer::tei::segments::ImportedDocument;
 use crate::metadata::Metadata;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -379,7 +379,7 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
 
     // Read imported document data (optional, new in v1.3)
     let mut imported_document = match read_zip_file(&mut archive, "segments.json") {
-        Ok(seg_str) => Some(parse_imported_document(&seg_str)?),
+        Ok(seg_str) => Some(ImportedDocument::from_json(&seg_str)?),
         Err(_) => None,
     };
 
@@ -407,28 +407,6 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         original_body_xml,
         original_preamble,
         original_postamble,
-    })
-}
-
-/// Parses segments.json, which is the full manifest since v1.5. Versions up to
-/// 1.4 wrote a bare segment array, which lost `is_menota`; MENOTA structure is
-/// then re-detected from the segments themselves.
-fn parse_imported_document(json: &str) -> Result<ImportedDocument, String> {
-    if let Ok(doc) = serde_json::from_str::<ImportedDocument>(json) {
-        return Ok(doc);
-    }
-    let segments: Vec<Segment> = serde_json::from_str(json)
-        .map_err(|e| format!("Failed to parse segments.json: {}", e))?;
-    let is_menota = segments.iter().any(|seg| match seg {
-        Segment::Word { original_xml, .. } | Segment::Punctuation { original_xml, .. } => {
-            original_xml.contains(":facs")
-        }
-        _ => false,
-    });
-    Ok(ImportedDocument {
-        segments,
-        is_menota,
-        spans: None,
     })
 }
 
@@ -505,7 +483,7 @@ mod tests {
     #[test]
     fn test_parse_imported_document_accepts_full_manifest() {
         let json = r#"{"segments":[{"type":"whitespace","id":0,"content":" "}],"is_menota":true,"spans":[null]}"#;
-        let doc = parse_imported_document(json).unwrap();
+        let doc = ImportedDocument::from_json(json).unwrap();
         assert!(doc.is_menota);
         assert_eq!(doc.spans, Some(vec![None]));
     }
@@ -514,7 +492,7 @@ mod tests {
     fn test_parse_imported_document_accepts_legacy_bare_array() {
         // Projects up to v1.4 saved a bare segment array.
         let json = r#"[{"type":"word","id":0,"original_xml":"<w><choice><me:facs>a</me:facs></choice></w>","attributes":{},"dsl_content":"a","has_inline_lb":false}]"#;
-        let doc = parse_imported_document(json).unwrap();
+        let doc = ImportedDocument::from_json(json).unwrap();
         assert_eq!(doc.segments.len(), 1);
         assert!(doc.is_menota, "MENOTA structure should be re-detected");
         assert!(doc.spans.is_none());
@@ -522,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_parse_imported_document_reports_garbage() {
-        assert!(parse_imported_document("{not json").is_err());
+        assert!(ImportedDocument::from_json("{not json").is_err());
     }
 
     #[test]

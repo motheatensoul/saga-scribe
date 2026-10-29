@@ -539,28 +539,46 @@
         );
     }
 
-    /** Compiles and validates; returns whether compilation succeeded. */
+    /** Idle time after the last compile before the output is validated. */
+    const VALIDATION_DELAY_MS = 1000;
+    let validationTimeout: ReturnType<typeof setTimeout>;
+    let validationRun = 0;
+
+    /**
+     * Validates compiled XML once editing pauses. Validating a large document
+     * takes hundreds of milliseconds, so it never holds up the preview, and a
+     * result is discarded if newer output arrived meanwhile.
+     */
+    function scheduleValidation(xml: string) {
+        clearTimeout(validationTimeout);
+        const run = ++validationRun;
+        validationTimeout = setTimeout(async () => {
+            const schemaId = $templateStore.active?.validationSchemaId || "tei-p5";
+            try {
+                const validationResult = await validateXml(xml, schemaId);
+                if (run === validationRun) validationStore.setResult(validationResult);
+            } catch (validationError) {
+                if (run !== validationRun) return;
+                console.warn("Validation failed:", validationError);
+                // Don't block on validation errors - just clear the validation state
+                validationStore.setResult(null);
+            }
+        }, VALIDATION_DELAY_MS);
+    }
+
+    /** Compiles and schedules validation; returns whether compilation succeeded. */
     async function doCompile(content: string): Promise<boolean> {
         try {
             const result = await compileOnly(content);
             if (result === null) return false;
             previewContent = result;
-
-            // Validate the compiled XML against the schema
-            // This ensures validation errors have correct line numbers for the displayed XML
-            const template = $templateStore.active;
-            const schemaId = template?.validationSchemaId || "tei-p5";
-            try {
-                const validationResult = await validateXml(result, schemaId);
-                validationStore.setResult(validationResult);
-            } catch (validationError) {
-                console.warn("Validation failed:", validationError);
-                // Don't block on validation errors - just clear the validation state
-                validationStore.setResult(null);
-            }
+            scheduleValidation(result);
             return true;
         } catch (e) {
             previewContent = `Error: ${e}`;
+            // Drop any pending validation of the previous output
+            clearTimeout(validationTimeout);
+            validationRun++;
             validationStore.setResult(null);
             return false;
         }
