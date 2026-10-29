@@ -3,6 +3,7 @@
     import { getInflections, lemmaMappings } from '$lib/stores/dictionary';
     import { annotationsForWord, type AnnotationType } from '$lib/stores/annotations';
     import { validationStore } from '$lib/stores/validation';
+    import { importedStore } from '$lib/stores/imported.svelte';
     import type { ParsedDocument, TextToken } from '$lib/rendered/document';
     import { renderFull, renderUpdate, type RenderedState } from '$lib/rendered/incremental';
 
@@ -111,6 +112,11 @@
     function isWordConfirmed(wordIndex: number | undefined): boolean {
         if (wordIndex === undefined || wordIndex < 0) return false;
         return confirmedWordSet.has(wordIndex);
+    }
+
+    /** Edited since import, keeping the original's lemma and normalized form */
+    function isWordEdited(wordIndex: number | undefined): boolean {
+        return wordIndex !== undefined && importedStore.editedWords.has(wordIndex);
     }
 
     // Check for different annotation types on a word
@@ -287,6 +293,7 @@
                                 type="button"
                                 class="word-token"
                                 class:is-confirmed={isWordConfirmed(token.wordIndex)}
+                                class:is-edited={isWordEdited(token.wordIndex)}
                                 class:has-suggestion={!isWordConfirmed(token.wordIndex) && hasKnownLemma(token.diplomatic || token.displayText)}
                                 class:has-note={hasAnnotationType(token.wordIndex, 'note')}
                                 class:has-semantic={hasAnnotationType(token.wordIndex, 'semantic')}
@@ -362,6 +369,12 @@
     .word-token.is-confirmed:hover {
         border-color: var(--color-success);
         background-color: color-mix(in oklch, var(--color-success) 25%, transparent);
+    }
+
+    /* Edited since import: lemma and normalized form are the original's */
+    .word-token.is-edited {
+        text-decoration: underline wavy var(--color-warning);
+        text-underline-offset: 0.25em;
     }
 
     /* Unconfirmed words with suggestions - faded styling */

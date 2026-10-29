@@ -2,6 +2,7 @@
     import { createXsltProcessor, loadStylesheetText, runXsltTransform } from '$lib/utils/xslt';
     import { entityStore } from '$lib/stores/entities';
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
+    import { importedStore } from '$lib/stores/imported.svelte';
 
     let {
         content = '',
@@ -143,6 +144,7 @@
             containerEl.querySelectorAll<HTMLElement>('[data-word-index]')
         );
         const lemmaMap = $lemmaMappings.mappings;
+        const editedWords = importedStore.editedWords;
         const inflectionCache = new Map<string, boolean>();
         const YIELD_EVERY = 500;
 
@@ -159,7 +161,8 @@
                 element.dataset.wordIndex = `${wordIndex}`;
                 const diplomatic = element.dataset.diplomatic || element.textContent || '';
 
-                element.classList.remove('is-confirmed', 'has-suggestion');
+                element.classList.remove('is-confirmed', 'has-suggestion', 'is-edited');
+                element.classList.toggle('is-edited', editedWords.has(wordIndex));
 
                 if (wordIndex in lemmaMap) {
                     element.classList.add('is-confirmed');
@@ -266,6 +269,12 @@
         border-color: var(--color-warning);
         background-color: color-mix(in oklch, var(--color-warning) 15%, transparent);
         opacity: 1;
+    }
+
+    /* Edited since import: lemma and normalized form are the original's */
+    .xslt-rendered :global(.word.is-edited) {
+        text-decoration: underline wavy var(--color-warning);
+        text-underline-offset: 0.25em;
     }
 
     /* Hyphen at the end of a line that breaks a word */

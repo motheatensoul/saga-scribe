@@ -598,14 +598,14 @@ pub fn render_body(
     original_body: Option<&str>,
     patches: &[PatchOperation],
     compiler: &mut Compiler,
-) -> Result<String, String> {
+) -> Result<RenderedBody, String> {
     let unchanged = patches
         .iter()
         .all(|p| matches!(p, PatchOperation::Keep { .. }));
 
     if let Some(body) = original_body {
         if unchanged {
-            return Ok(body.to_string());
+            return Ok(RenderedBody { xml: body.to_string(), edited_words: Vec::new() });
         }
     }
 
@@ -613,8 +613,8 @@ pub fn render_body(
     check_paragraph_edits(&doc.segments, &patches)?;
 
     if let (Some(body), Some(spans)) = (original_body, &doc.spans) {
-        if let Some(xml) = splice_into_source(body, &doc.segments, spans, &patches, compiler) {
-            return Ok(xml);
+        if let Some(rendered) = splice_into_source(body, &doc.segments, spans, &patches, compiler) {
+            return Ok(rendered);
         }
         log::warn!("Source spans inconsistent with patches; falling back to reconstruction");
     }
@@ -630,7 +630,38 @@ pub fn render_body(
                 .to_string(),
         );
     }
-    Ok(apply_patches_and_reconstruct(&doc.segments, &patches, compiler))
+    Ok(reconstruct(&doc.segments, &patches, compiler))
+}
+
+/// The rewritten `<body>` of an imported document.
+#[derive(Debug)]
+pub struct RenderedBody {
+    pub xml: String,
+    /// Byte offsets (in `xml`) of edited `<w>` elements whose lemma, msa and
+    /// normalized form were kept from the original and need a review.
+    pub edited_words: Vec<usize>,
+}
+
+impl RenderedBody {
+    /// The edited words as word numbers: the count of `<w>` elements before
+    /// each, the numbering the previews and annotations use.
+    pub fn edited_word_indices(&self) -> Vec<u32> {
+        let starts: Vec<usize> = self
+            .xml
+            .match_indices("<w")
+            .map(|(i, _)| i)
+            .filter(|&i| {
+                self.xml[i + 2..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c == '>' || c == '/' || c.is_whitespace())
+            })
+            .collect();
+        self.edited_words
+            .iter()
+            .map(|&offset| starts.partition_point(|&start| start < offset) as u32)
+            .collect()
+    }
 }
 
 /// Rewrites patches so that paragraph breaks are only ever kept, deleted or
@@ -844,8 +875,9 @@ fn splice_into_source(
     spans: &[Option<(usize, usize)>],
     patches: &[PatchOperation],
     compiler: &mut Compiler,
-) -> Option<String> {
+) -> Option<RenderedBody> {
     let by_id: HashMap<usize, &Segment> = segments.iter().map(|s| (s.id(), s)).collect();
+    let mut edited_words = Vec::new();
     let structure = ParagraphStructure::new(segments);
 
     let mut out = String::with_capacity(body.len() + 1024);
@@ -907,6 +939,9 @@ fn splice_into_source(
                         let source = body.get(start..end)?;
                         let replacement = render_modify(segment, Some(source), new_dsl, compiler);
                         out.push_str(body.get(copied_to..start)?);
+                        if keeps_word_data(segment, new_dsl) {
+                            edited_words.push(out.len());
+                        }
                         out.push_str(replacement.trim_end());
                         copied_to = end;
                     }
@@ -947,7 +982,7 @@ fn splice_into_source(
     }
 
     out.push_str(body.get(copied_to..)?);
-    Some(out)
+    Some(RenderedBody { xml: out, edited_words })
 }
 
 /// The kind of the first token in a DSL fragment.
@@ -971,6 +1006,61 @@ fn token_kind(dsl: &str) -> TokenKind {
         Some(Node::PageBreak(n)) => TokenKind::PageBreak(Some(n).filter(|n| !n.is_empty())),
         _ => TokenKind::Other,
     }
+}
+
+/// Whether a modification keeps an imported word's lemma, msa and norm (an
+/// edited `<w>` that is still a word); such words are reported for review.
+fn keeps_word_data(segment: &Segment, new_dsl: &str) -> bool {
+    matches!(segment, Segment::Word { original_xml, .. } if is_w_element(original_xml))
+        && matches!(token_kind(new_dsl), TokenKind::Word)
+}
+
+/// The content of the first element named `level` (any namespace prefix),
+/// e.g. the `<me:norm>` of a MENOTA word; empty for `<me:norm/>`.
+fn level_content<'a>(xml: &'a str, level: &str) -> Option<&'a str> {
+    let mut from = 0;
+    while let Some(lt) = xml[from..].find('<').map(|i| from + i) {
+        from = lt + 1;
+        let tag = &xml[lt + 1..];
+        let name_len = tag
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .unwrap_or(tag.len());
+        let qname = &tag[..name_len];
+        if qname.rsplit(':').next() != Some(level) {
+            continue;
+        }
+        let tag_end = lt + 1 + tag.find('>')?;
+        if xml[..tag_end].ends_with('/') {
+            return Some("");
+        }
+        let close = format!("</{}>", qname);
+        let end = xml[tag_end + 1..].find(&close)? + tag_end + 1;
+        return Some(&xml[tag_end + 1..end]);
+    }
+    None
+}
+
+/// `xml` without empty `<lb/>` and `<pb/>` elements (any prefix or attributes).
+fn without_breaks(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(lt) = rest.find('<') {
+        out.push_str(&rest[..lt]);
+        let tag = &rest[lt..];
+        let end = tag.find('>').map_or(tag.len(), |i| i + 1);
+        let name = tag[1..]
+            .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .next()
+            .unwrap_or_default();
+        let local = name.rsplit(':').next().unwrap_or(name);
+        let is_break = (local == "lb" || local == "pb") && tag[..end].ends_with("/>");
+        if !is_break {
+            out.push_str(&tag[..end]);
+        }
+        rest = &tag[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Whether a segment's original XML is a `<w>` element (as opposed to bare text
@@ -1010,7 +1100,18 @@ fn render_modify(
                 ..
             },
             TokenKind::Word,
-        ) if is_w_element(original_xml) => compiler.compile_word_from_dsl(new_dsl, attributes),
+        ) if is_w_element(original_xml) => {
+            // Lemma, msa (attributes) and the curated norm are kept; facs and
+            // dipl follow the edit. The word is reported as edited for review.
+            let original = source.unwrap_or(original_xml);
+            let norm = compiler
+                .config()
+                .multi_level
+                .then(|| level_content(original, "norm"))
+                .flatten()
+                .map(without_breaks);
+            compiler.compile_word_from_dsl(new_dsl, attributes, norm.as_deref())
+        }
         (Segment::Punctuation { .. }, TokenKind::Punctuation) => {
             compiler.compile_punctuation_from_dsl(new_dsl)
         }
@@ -1057,12 +1158,18 @@ fn rewrite_break(
 /// - **Insert**: Compile new DSL to XML (no original attributes available)
 /// - **Structural**: Always emit verbatim (divs, paragraphs, etc.)
 /// - **Whitespace**: Always emit verbatim (formatting preservation)
+#[cfg(test)]
 pub fn apply_patches_and_reconstruct(
     segments: &[Segment],
     patches: &[PatchOperation],
     compiler: &mut Compiler,
 ) -> String {
+    reconstruct(segments, patches, compiler).xml
+}
+
+fn reconstruct(segments: &[Segment], patches: &[PatchOperation], compiler: &mut Compiler) -> RenderedBody {
     let mut xml = String::new();
+    let mut edited_words = Vec::new();
     let mut current_patch_idx = 0;
 
     // 1. Process segments in order
@@ -1101,6 +1208,9 @@ pub fn apply_patches_and_reconstruct(
                                 xml.push_str(&serialize_original_segment(seg));
                             }
                             PatchOperation::Modify { new_dsl, .. } => {
+                                if keeps_word_data(seg, new_dsl) {
+                                    edited_words.push(xml.len());
+                                }
                                 xml.push_str(&render_modify(seg, None, new_dsl, compiler));
                             }
                             PatchOperation::Delete { .. } if matches!(seg, Segment::Paragraph { .. }) => {
@@ -1142,7 +1252,7 @@ pub fn apply_patches_and_reconstruct(
         }
     }
 
-    xml
+    RenderedBody { xml, edited_words }
 }
 
 fn serialize_original_segment(seg: &Segment) -> String {

@@ -162,7 +162,7 @@ pub async fn compile_imported(
     normalizer_json: Option<String>,
     entity_mappings_json: Option<String>,
     custom_mappings: Option<HashMap<String, String>>,
-) -> Result<String, String> {
+) -> Result<ImportedCompile, String> {
     let session = session.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let guard = session
@@ -216,10 +216,24 @@ pub async fn compile_imported(
         )?;
 
         // Combine with preamble (everything before body) and postamble (everything after)
-        Ok(format!("{}{}{}", source.preamble, body, source.postamble))
+        Ok(ImportedCompile {
+            edited_words: body.edited_word_indices(),
+            xml: format!("{}{}{}", source.preamble, body.xml, source.postamble),
+        })
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
+}
+
+/// The result of [`compile_imported`].
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportedCompile {
+    /// The full document
+    pub xml: String,
+    /// Words (by number, in document order) edited in the DSL whose lemma, msa
+    /// and normalized form were kept from the original and should be reviewed
+    pub edited_words: Vec<u32>,
 }
 
 /// A DSL syntax error, positioned for the editor.

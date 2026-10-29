@@ -238,11 +238,21 @@ export async function setImportedDocument(
   });
 }
 
+/** Result of {@link compileImported}. */
+export interface ImportedCompileResult {
+  xml: string;
+  /**
+   * Words (by number) edited in the DSL whose lemma, analysis and normalized
+   * form were kept from the original and should be reviewed
+   */
+  editedWords: number[];
+}
+
 /** Compiles edited DSL against the document loaded with {@link setImportedDocument}. */
 export async function compileImported(
   editedDsl: string,
   options?: CompileImportedOptions,
-): Promise<string> {
+): Promise<ImportedCompileResult> {
   return invoke("compile_imported", {
     editedDsl,
     entitiesJson: options?.entitiesJson ?? null,

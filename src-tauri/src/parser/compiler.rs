@@ -954,10 +954,15 @@ impl<'a> Compiler<'a> {
     /// Compile a DSL fragment for a word element.
     /// Used by patching module to recompile modified words.
     /// The attributes parameter provides lemma, me:msa, etc. from the original word.
+    ///
+    /// `kept_norm` is the word's curated normalized form (XML content without
+    /// breaks); when given, it is kept instead of being regenerated, and the
+    /// edited word's breaks are appended to it.
     pub fn compile_word_from_dsl(
         &mut self,
         dsl: &str,
         attributes: &std::collections::HashMap<String, String>,
+        kept_norm: Option<&str>,
     ) -> String {
         // Parse the DSL fragment
         let mut lexer = Lexer::new(dsl);
@@ -1001,7 +1006,13 @@ impl<'a> Compiler<'a> {
             let join = |level: Vec<String>| level.join(" ");
             let facs = join(words.iter().map(|w| self.nodes_to_facs(w)).collect());
             let dipl = join(words.iter().map(|w| self.nodes_to_diplomatic(w)).collect());
-            let norm = join(words.iter().map(|w| self.nodes_to_normalized(w)).collect());
+            let norm = match kept_norm {
+                Some(norm) => {
+                    let breaks: String = words.iter().map(|w| self.word_breaks_xml(w)).collect();
+                    format!("{}{}", norm, breaks)
+                }
+                None => join(words.iter().map(|w| self.nodes_to_normalized(w)).collect()),
+            };
 
             return format!(
                 "<w{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</w>\n",

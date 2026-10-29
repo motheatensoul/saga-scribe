@@ -27,6 +27,11 @@ class ImportedStore {
   frontMatter = $state("");
   backMatter = $state("");
   isMenota = $state(false);
+  /**
+   * Words edited since import that kept the original's lemma, analysis and
+   * normalized form; updated by every compile
+   */
+  editedWords = $state<ReadonlySet<number>>(new Set());
 
   /**
    * Backend session updates, chained so they apply in call order: a quick
@@ -42,6 +47,7 @@ class ImportedStore {
 
   reset() {
     this.isImportedMode = false;
+    this.editedWords = new Set();
     this.segments = [];
     this.spans = undefined;
     this.originalBodyXml = "";
@@ -55,6 +61,7 @@ class ImportedStore {
 
   load(data: Partial<ImportedState>) {
     this.isImportedMode = true;
+    this.editedWords = new Set();
     if (data.segments) this.segments = data.segments;
     this.spans = data.spans ?? undefined;
     if (data.originalBodyXml) this.originalBodyXml = data.originalBodyXml;
@@ -96,7 +103,9 @@ class ImportedStore {
 
     // Make sure the backend holds this document (rejects if loading it failed)
     await this.backendSync;
-    return compileImported(editedDsl, options);
+    const result = await compileImported(editedDsl, options);
+    this.editedWords = new Set(result.editedWords);
+    return result.xml;
   }
 }
 

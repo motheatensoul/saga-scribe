@@ -2,7 +2,7 @@ use super::tei::parse;
 use crate::importer::tei::helpers;
 use crate::importer::tei::patching::{
     apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body,
-    PatchOperation,
+    PatchOperation, RenderedBody,
 };
 use crate::importer::tei::segments::Segment;
 use crate::parser::{Compiler, CompilerConfig, Lexer};
@@ -990,6 +990,14 @@ const MENOTA_SAMPLE: &str = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me
 /// Imports `xml`, applies `edit` to the DSL, and compiles back the way
 /// `compile_imported` does. Returns (original body, new body).
 fn imported_roundtrip(xml: &str, edit: impl Fn(&str) -> String) -> Result<(String, String), String> {
+    imported_render(xml, edit).map(|(original, rendered)| (original, rendered.xml))
+}
+
+/// Like [`imported_roundtrip`], with the full render result.
+fn imported_render(
+    xml: &str,
+    edit: impl Fn(&str) -> String,
+) -> Result<(String, RenderedBody), String> {
     let import = parse(xml)?;
     let doc = import.imported_document.expect("manifest");
     let original_body = import.original_body_xml.expect("body");
@@ -1196,7 +1204,7 @@ fn test_menota_file_paragraph_edits_reimport_as_edited() {
 
     // Merge the 3rd paragraph into the 2nd, and split one later on
     let third = dsl.match_indices(" .p ").nth(2).unwrap().0;
-    let mut edited = format!("{}{}", &dsl[..third], &dsl[third + 3..]);
+    let edited = format!("{}{}", &dsl[..third], &dsl[third + 3..]);
     // Split after the first sentence end (". " closes an <s>) that allows it;
     // mid-sentence splits are refused, as <s> can't be split
     let mut result = None;
@@ -1222,4 +1230,44 @@ fn test_menota_file_paragraph_edits_reimport_as_edited() {
         |s: &str| s.replace("</p>", "").replace("<p>", "").split_whitespace().collect::<String>();
     assert_eq!(without_paragraphs(&rewritten), without_paragraphs(&xml));
     assert_ne!(rewritten, xml);
+}
+
+// ============================================================================
+// EDITED WORDS KEEP THEIR CURATED DATA
+// ============================================================================
+
+#[test]
+fn test_edited_word_keeps_lemma_msa_and_norm() {
+    // DSL: ".p \n//3 maþr geck. .p ok"; "maþr" has lemma maðr and norm maðr
+    let (_, rendered) = imported_render(MENOTA_SAMPLE, |d| d.replace("maþr", "maþꝛ")).unwrap();
+    let xml = &rendered.xml;
+    let start = xml.find("<w").unwrap();
+    let word = &xml[start..start + xml[start..].find("</w>").unwrap()];
+    assert!(word.contains(r#"lemma="maðr""#), "{word}");
+    assert!(word.contains(r#"me:msa="xNC""#), "{word}");
+    assert!(word.contains("<me:norm>maðr</me:norm>"), "curated norm kept: {word}");
+    assert!(word.contains("<me:facs>maþꝛ</me:facs>"), "facs follows the edit: {word}");
+    assert_eq!(rendered.edited_word_indices(), vec![0]);
+}
+
+#[test]
+fn test_edited_word_numbers_follow_document_order() {
+    let (_, rendered) = imported_render(MENOTA_SAMPLE, |d| d.replace("geck", "gekk").replace("ok", "oc")).unwrap();
+    assert_eq!(rendered.edited_word_indices(), vec![1, 2]);
+}
+
+#[test]
+fn test_unedited_and_inserted_words_are_not_flagged() {
+    let (_, rendered) = imported_render(MENOTA_SAMPLE, |d| d.replace("geck.", "geck nyr.")).unwrap();
+    assert!(rendered.edited_word_indices().is_empty(), "{:?}", rendered.edited_words);
+}
+
+#[test]
+fn test_edited_word_with_break_moves_break_in_norm() {
+    let xml = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="frostuþing"><choice><me:facs>fro<lb n="5"/>sto</me:facs><me:dipl>fro<lb n="5"/>sto</me:dipl><me:norm>Frostu<lb n="5"/></me:norm></choice></w></p></body></text></TEI>"#;
+    let (_, rendered) = imported_render(xml, |d| d.replace("fro~//5sto", "frost~//5o")).unwrap();
+    let out = &rendered.xml;
+    assert!(out.contains("<me:facs>frost<lb n=\"5\"/>o</me:facs>"), "{out}");
+    assert!(out.contains("<me:norm>Frostu<lb n=\"5\"/></me:norm>"), "{out}");
+    assert_eq!(out.matches("<lb").count(), 3, "one break per level: {out}");
 }

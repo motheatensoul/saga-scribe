@@ -14,6 +14,7 @@
         type InflectedForm,
     } from '$lib/tauri';
     import { X as CloseButton } from "@lucide/svelte";
+    import { importedStore } from '$lib/stores/imported.svelte';
     import {
         wordClasses,
         cases,
@@ -492,11 +493,21 @@
             {#if sessionConfirmation}
                 <span class="badge badge-success badge-xs ml-2">confirmed</span>
             {/if}
+            {#if importedStore.editedWords.has(wordIndex)}
+                <span class="badge badge-warning badge-xs ml-2">edited</span>
+            {/if}
         </div>
         <button type="button" class="btn btn-sm btn-ghost btn-circle" onclick={onclose} aria-label="Close">
             <CloseButton size={16} />
         </button>
     </div>
+
+    {#if importedStore.editedWords.has(wordIndex)}
+        <div role="status" class="alert alert-warning alert-soft text-sm py-2">
+            This word was edited after import. Its lemma, analysis and normalized
+            form are still the original word's: check that they fit.
+        </div>
+    {/if}
 
     {#if existingMappings.length > 0}
         <div class="bg-base-200 rounded-lg p-3">
