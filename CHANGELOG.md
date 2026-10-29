@@ -9,7 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Direct PDF export** (Linux, Windows): choose where to save, and the PDF is written without the print dialog; the document is laid out in a hidden window so the editor stays responsive. macOS keeps the print dialog ("Save as PDF")
+- **Direct PDF export** (Linux, Windows): choose where to save, and the PDF is written without the print dialog, from a hidden window so the editor stays responsive. macOS keeps the print dialog ("Save as PDF")
+- **Typeset PDFs**: pages are laid out with [Vivliostyle](https://vivliostyle.org/) (CSS Paged Media), giving fixed page margins, page numbers, and no headings or single lines stranded at a page edge
 - **Bundled Junicode in PDFs**, so MUFI characters print even where the font isn't installed
 - **Syntax errors in the editor**: every DSL syntax error is underlined where it occurs, not just the first; compile errors name the line and column
 - **Export progress**: HTML and PDF export run behind a progress overlay showing the current step, with a Cancel button
@@ -29,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Content Security Policy** enabled; XSLT output is sanitized before it is rendered, exported or printed
 - **SvelteKit 3 / Vite 8**, Tauri 2.12, zip 9 and other dependency upgrades; minimum Rust version 1.90, toolchain pinned
 - **Window title and dialogs** use the Saga Scribe name
+- **Line numbers after `~//` are digits only**, as after `//`: `hel~//5lo` is one word broken across lines 4 and 5 (the importer writes breaks this way); whitespace right after `~//5` no longer splits the word
 
 ### Fixed
 
@@ -41,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **PDF/HTML export freeze** on large files (minutes spent resolving entity placeholders)
 - **Rendered Text**: `<add>`/`<del>`/`<unclear>` around words showed all three transcription levels and stray line breaks; sic/corr words were missing; the view no longer jumps to page 1 or flashes on every edit
 - **Word numbering** now follows document order everywhere, so lemmas loaded from a file stay on the right words
+- **Mid-word line breaks** (`~//`): the compiled XML kept the break (single-level) or dropped it entirely (MENOTA), and read the rest of the word as the line number; the default XSLT dropped breaks inside words, merging lines and losing their numbers. It now shows a broken word as one box per line, the first ending in a hyphen
+- **Default XSLT, line-by-line transcriptions**: a paragraph starting mid-line pushed the rest of that line onto a row of its own; paragraphs now run inline there, marked with a pilcrow (¶). Prose without line breaks (e.g. front matter) keeps block paragraphs
+- **PDF margins**: page margins were ignored, so text ran to the edge of the page
+- **Export menu** stopped responding after cancelling a file dialog
+- **Save and export dialogs** add the file extension (`.teis`, `.xml`, `.html`, `.pdf`, `.json`) when a name is typed without one
 - **Security**: XSS via XSLT output, network access during XML parsing, vulnerable `zip`, Svelte, Vite and PostCSS versions
 
 ## [0.5.0] - 2026-01-22

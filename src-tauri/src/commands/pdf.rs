@@ -1,9 +1,10 @@
 //! # PDF Export
 //!
 //! Writes a PDF straight to a file the user chose, instead of going through the
-//! system print dialog. The document is laid out in a hidden window, so even a
-//! very large manuscript never blocks the main window, and is printed there
-//! with the platform webview's own PDF support:
+//! system print dialog. The document is paginated in a hidden window (with
+//! Vivliostyle, see `src/routes/print`), so even a very large manuscript never
+//! blocks the main window, and the finished pages are printed there with the
+//! platform webview's own PDF support:
 //!
 //! - **Linux**: a WebKitGTK print operation to GTK's "Print to File" printer
 //! - **Windows**: WebView2 `PrintToPdf`
@@ -15,7 +16,7 @@
 //! ```text
 //! export_pdf ──► opens hidden "pdf-export" window at /print
 //!                  │ take_print_document   (page fetches the HTML)
-//!                  │ print_document_ready  (page has laid it out)
+//!                  │ print_document_ready  (page has paginated it)
 //!                  ▼
 //!                platform print to PDF ──► completion resolves export_pdf
 //! ```
@@ -201,8 +202,14 @@ fn print_to_pdf(window: &WebviewWindow, path: &Path, completion: Completion) -> 
             settings.set(gtk::PRINT_SETTINGS_OUTPUT_URI, Some(&uri));
             operation.set_print_settings(&settings);
 
+            // The pages are laid out with their margins already (see
+            // src/routes/print), so the printer must not add its own
             let page_setup = gtk::PageSetup::new();
             page_setup.set_paper_size(&gtk::PaperSize::new(Some(gtk::PAPER_NAME_A4)));
+            page_setup.set_top_margin(0.0, gtk::Unit::Mm);
+            page_setup.set_bottom_margin(0.0, gtk::Unit::Mm);
+            page_setup.set_left_margin(0.0, gtk::Unit::Mm);
+            page_setup.set_right_margin(0.0, gtk::Unit::Mm);
             operation.set_page_setup(&page_setup);
 
             // "failed" is always followed by "finished"; the first outcome wins
@@ -269,6 +276,12 @@ mod windows_print {
         settings.SetPageWidth(8.27)?;
         settings.SetPageHeight(11.69)?;
         settings.SetShouldPrintBackgrounds(true)?;
+        // The pages are laid out with their margins already (see src/routes/print)
+        settings.SetMarginTop(0.0)?;
+        settings.SetMarginBottom(0.0)?;
+        settings.SetMarginLeft(0.0)?;
+        settings.SetMarginRight(0.0)?;
+        settings.SetShouldPrintHeaderAndFooter(false)?;
 
         let handler = PrintToPdfCompletedHandler::create(Box::new(move |result, written| {
             completion.complete(match result {

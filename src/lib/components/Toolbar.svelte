@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { open, save } from "@tauri-apps/plugin-dialog";
     import { editor, fileName } from "$lib/stores/editor";
     import { templateStore } from "$lib/stores/template";
     import { settings } from "$lib/stores/settings";
@@ -42,6 +41,28 @@
         onhelp?: () => void; // Open help dialog
     } = $props();
 
+    let exportMenu: HTMLDetailsElement;
+    let exportOpen = $state(false);
+
+    /** Closes the menu before the export opens its dialog. */
+    function runExport(action?: () => void) {
+        exportOpen = false;
+        action?.();
+    }
+
+    function closeExportOnOutsideClick(event: MouseEvent) {
+        if (exportOpen && !exportMenu.contains(event.target as Node)) {
+            exportOpen = false;
+        }
+    }
+
+    function closeExportOnEscape(event: KeyboardEvent) {
+        if (exportOpen && event.key === "Escape") {
+            exportOpen = false;
+            exportMenu.querySelector("summary")?.focus();
+        }
+    }
+
     async function handleTemplateChange(e: Event) {
         const select = e.target as HTMLSelectElement;
         const templates = $templateStore.templates;
@@ -52,6 +73,8 @@
         }
     }
 </script>
+
+<svelte:window onclick={closeExportOnOutsideClick} onkeydown={closeExportOnEscape} />
 
 <div class="navbar bg-neutral text-neutral-content px-4 min-h-12">
     <div class="flex gap-2">
@@ -70,25 +93,25 @@
             onclick={onsave}
             title="Save project (Ctrl+S)"><SaveIcon size="18" />Save</button
         >
-        <div class="dropdown dropdown-end">
-            <button
-                tabindex="0"
-                class="btn btn-ghost btn-sm xl:btn-md"
+        <!-- Opened and closed explicitly: a focus-based dropdown gets stuck when a
+             native file dialog takes focus away and hands it back -->
+        <details class="dropdown dropdown-end" bind:this={exportMenu} bind:open={exportOpen}>
+            <summary
+                class="btn btn-ghost btn-sm xl:btn-md list-none"
                 title="Export options"
             >
                 Export
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                     <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
                 </svg>
-            </button>
-            <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-            <ul tabindex="0" class="dropdown-content z-1 menu p-2 shadow bg-base-100 text-base-content rounded-box w-52">
-                <li><button onclick={onexportxml}>TEI-XML</button></li>
-                <li><button onclick={onexporthtml}>HTML</button></li>
-                <li><button onclick={onexportpdf}>PDF</button></li>
-                <li class="border-t border-base-300 mt-1 pt-1"><button onclick={onexportdict}>Dictionary JSON</button></li>
+            </summary>
+            <ul class="dropdown-content z-1 menu p-2 shadow bg-base-100 text-base-content rounded-box w-52">
+                <li><button onclick={() => runExport(onexportxml)}>TEI-XML</button></li>
+                <li><button onclick={() => runExport(onexporthtml)}>HTML</button></li>
+                <li><button onclick={() => runExport(onexportpdf)}>PDF</button></li>
+                <li class="border-t border-base-300 mt-1 pt-1"><button onclick={() => runExport(onexportdict)}>Dictionary JSON</button></li>
             </ul>
-        </div>
+        </details>
     </div>
 
     <div class="flex items-center gap-2 ml-4">

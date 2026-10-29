@@ -33,22 +33,38 @@ const APP_FONT_FACES = `
     </style>
 `;
 
-/** Adds page size, margins, print-only rules and the app fonts to a standalone HTML document. */
+/**
+ * Adds page size, margins, page numbers, print-only rules and the app fonts to
+ * a standalone HTML document. Direct PDF export paginates with Vivliostyle,
+ * which implements these CSS Paged Media rules (see src/routes/print).
+ */
 export function withPrintStyles(htmlContent: string, pageSize: "A4" | "Letter" = "A4"): string {
     const printStyles = `
         <style>
             @page {
                 size: ${pageSize};
-                margin: 2cm;
+                margin: 2.5cm 2cm;
+                @bottom-center {
+                    content: counter(page);
+                    font-family: 'Junicode', Georgia, serif;
+                    font-size: 10pt;
+                    color: #666;
+                }
             }
             @media print {
                 body {
                     margin: 0;
                     padding: 0;
                     max-width: none;
+                    /* At least two lines of a paragraph on either side of a page break */
+                    orphans: 2;
+                    widows: 2;
+                }
+                h1, h2, h3, h4 {
+                    break-after: avoid;
                 }
                 .pagebreak {
-                    page-break-before: always;
+                    break-before: page;
                 }
             }
         </style>

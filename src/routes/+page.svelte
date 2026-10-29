@@ -1,7 +1,8 @@
 <script lang="ts">
     import { onMount, tick } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
-    import { open, save } from "@tauri-apps/plugin-dialog";
+    import { open } from "@tauri-apps/plugin-dialog";
+    import { saveAs } from "$lib/utils/saveDialog";
     import Editor from "$lib/components/Editor.svelte";
     import Preview from "$lib/components/Preview.svelte";
     import Toolbar from "$lib/components/Toolbar.svelte";
@@ -884,8 +885,7 @@
         // Get save path (use existing or prompt for new)
         let path = $editor.filePath;
         if (!path || !path.endsWith(".teis")) {
-            path = await save({
-                filters: [{ name: "Saga Scribe Project", extensions: ["teis"] }],
+            path = await saveAs({ name: "Saga Scribe Project", extensions: ["teis"] }, {
                 defaultPath: path
                     ? path.replace(/\.[^.]+$/, ".teis")
                     : undefined,
@@ -957,8 +957,7 @@
             return;
         }
 
-        const path = await save({
-            filters: [{ name: "TEI-XML", extensions: ["xml"] }],
+        const path = await saveAs({ name: "TEI-XML", extensions: ["xml"] }, {
             defaultPath: $editor.filePath
                 ? $editor.filePath.replace(/\.[^.]+$/, ".xml")
                 : undefined,
@@ -984,8 +983,7 @@
     }
 
     async function handleExportDictionary() {
-        const path = await save({
-            filters: [{ name: "JSON", extensions: ["json"] }],
+        const path = await saveAs({ name: "JSON", extensions: ["json"] }, {
             defaultPath: "inflections.json",
         });
         if (!path) return;
@@ -1073,8 +1071,7 @@
             return;
         }
 
-        const path = await save({
-            filters: [{ name: "HTML", extensions: ["html", "htm"] }],
+        const path = await saveAs({ name: "HTML", extensions: ["html", "htm"] }, {
             defaultPath: $editor.filePath
                 ? $editor.filePath.replace(/\.[^.]+$/, ".html")
                 : undefined,
@@ -1112,8 +1109,7 @@
         const direct = await pdfExportSupported().catch(() => false);
         let path: string | null = null;
         if (direct) {
-            path = await save({
-                filters: [{ name: "PDF", extensions: ["pdf"] }],
+            path = await saveAs({ name: "PDF", extensions: ["pdf"] }, {
                 defaultPath: $editor.filePath
                     ? $editor.filePath.replace(/\.[^.]+$/, ".pdf")
                     : undefined,
@@ -1135,12 +1131,17 @@
             signal.throwIfAborted();
 
             if (path) {
-                // Laid out and printed in a hidden window; this one stays responsive
+                exportProgress = "Laying out pages…";
+                // The typesetter is large, so it's only loaded for PDF export
+                const { paginateForPrint } = await import("$lib/utils/paginate");
+                const pages = await paginateForPrint(withPrintStyles(fullHtml, "A4"), signal);
+
+                // Printed in a hidden window; this one stays responsive
                 exportProgress = "Writing PDF…";
                 const stop = () => void cancelPdfExport();
                 signal.addEventListener("abort", stop);
                 try {
-                    await exportPdf(withPrintStyles(fullHtml, "A4"), path);
+                    await exportPdf(pages, path);
                 } finally {
                     signal.removeEventListener("abort", stop);
                 }

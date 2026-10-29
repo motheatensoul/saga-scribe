@@ -1,8 +1,9 @@
 <script lang="ts">
     /**
      * Page for the hidden PDF export window (see src-tauri/src/commands/pdf.rs).
-     * It replaces itself with the export document, waits for fonts and layout,
-     * then tells the backend to print it to PDF.
+     * It replaces itself with the export document (already paginated, see
+     * $lib/utils/paginate), waits for fonts and layout, then tells the backend
+     * to print it to PDF.
      */
     import { onMount } from 'svelte';
     import { printDocumentFailed, printDocumentReady, takePrintDocument } from '$lib/tauri';
