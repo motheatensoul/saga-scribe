@@ -6,10 +6,13 @@
     let {
         content = '',
         xslPath = '/xsl/simple.xsl',
+        active = true,
         onwordclick,
     }: {
         content?: string;
         xslPath?: string;
+        /** Hidden views skip updates and catch up when shown again */
+        active?: boolean;
         onwordclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) => void;
     } = $props();
 
@@ -19,6 +22,8 @@
     let isTransforming = $state(false);
     let containerEl: HTMLDivElement;
     let enhanceVersion = 0;
+    /** Inputs of the current rendering; an unchanged tab switch doesn't re-run the stylesheet */
+    let renderedFrom: { processor: XSLTProcessor; content: string; entities: unknown } | null = null;
 
     const yieldToMain = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -59,6 +64,7 @@
 
         if (!processor || !xmlContent.trim()) {
             renderedHtml = '';
+            renderedFrom = null;
             isTransforming = false;
             return;
         }
@@ -69,8 +75,19 @@
             return;
         }
 
+        // XSLT is a whole-document program, so it can't be re-run for just the
+        // edited part. Instead it only runs while visible, and only when its inputs changed.
+        if (!active) return;
+        if (
+            renderedFrom?.processor === processor &&
+            renderedFrom.content === xmlContent &&
+            renderedFrom.entities === entities
+        ) {
+            return;
+        }
+
+        // The previous rendering stays visible until the new one is ready
         isTransforming = true;
-        renderedHtml = '';
         error = null;
 
         // A newer run (or unmount) aborts this one at its next stage boundary
@@ -82,6 +99,7 @@
                     signal: controller.signal,
                 });
                 renderedHtml = html;
+                renderedFrom = { processor, content: xmlContent, entities };
                 error = null;
                 isTransforming = false;
             } catch (e) {
@@ -169,7 +187,7 @@
             <span class="loading loading-spinner loading-md"></span>
             <span class="ml-2">Loading stylesheet...</span>
         </div>
-    {:else if isTransforming}
+    {:else if isTransforming && !renderedHtml}
         <div class="flex items-center justify-center h-32">
             <!-- SVG spinner for reliable animation during heavy processing -->
             <svg viewBox="0 0 50 50" width="32" height="32" class="text-primary">

@@ -83,17 +83,17 @@
         <!-- Lazy mount + keep alive: only mount when first visited, then keep mounted but hidden -->
         {#if visited.rendered}
             <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'rendered'}>
-                <RenderedText {content} {onwordclick} />
+                <RenderedText {content} active={viewMode === 'rendered'} {onwordclick} />
             </div>
         {/if}
         {#if visited.xslt}
             <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'xslt'}>
-                <XsltRenderer {content} {xslPath} {onwordclick} />
+                <XsltRenderer {content} {xslPath} active={viewMode === 'xslt'} {onwordclick} />
             </div>
         {/if}
         {#if visited.xml}
             <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'xml'}>
-                <XmlPreview {content} />
+                <XmlPreview {content} active={viewMode === 'xml'} />
             </div>
         {/if}
     </div>

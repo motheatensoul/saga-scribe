@@ -188,11 +188,11 @@
         }> = [];
 
         // Match each <w ...>...</w> element (non-greedy, handles nested content)
-        const wordRegex = /<w\s([^>]*)>([\s\S]*?)<\/w>/g;
+        const wordRegex = /<w(?:\s([^>]*))?>([\s\S]*?)<\/w>/g;
         let match;
 
         while ((match = wordRegex.exec(xml)) !== null) {
-            const attrs = match[1];
+            const attrs = match[1] ?? "";
             const content = match[2];
 
             // Extract lemma attribute
@@ -214,15 +214,6 @@
         return results;
     }
 
-    function countDslWords(dsl: string): number {
-        const headMatch = dsl.match(/^\s*\.head\{([\s\S]*)\}\s*$/);
-        const content = headMatch ? headMatch[1] : dsl;
-        const withoutKeywords = content.replace(/\.(head|abbr|supplied|norm)\b/g, " ");
-        const withoutEntities = withoutKeywords.replace(/:([^\s:]+):/g, "$1");
-        const normalized = withoutEntities.replace(/[<>{}\[\]+\-\?\^]/g, " ");
-        const tokens = normalized.match(/[\p{L}\p{N}]+/gu);
-        return tokens ? tokens.length : 0;
-    }
     onMount(async () => {
         errorStore.info("App", "Application starting...");
 
@@ -1197,81 +1188,38 @@
                     if (!("has_inline_lb" in segment)) {
                         continue;
                     }
-                    const isHead = segment.dsl_content.startsWith(".head{");
-                    if (isHead) {
-                        // Extract lemmas from words nested inside head elements
-                        // (e.g., <head><supplied><w lemma="...">...</w></supplied></head>)
-                        const headWords = extractWordAttributesFromXml(segment.original_xml);
-                        for (const hw of headWords) {
-                            if (hw.lemma && hw.msa) {
+                    // Words nested in other elements (head, supplied, add, del, ...)
+                    // are counted in document order, matching the rendered text.
+                    if (!segment.original_xml.trimStart().startsWith("<w")) {
+                        const nestedWords = segment.original_xml.trimStart().startsWith("<")
+                            ? extractWordAttributesFromXml(segment.original_xml)
+                            : [];
+                        for (const nw of nestedWords) {
+                            if (nw.lemma && nw.msa) {
                                 lemmaConfirmations[wordIndex] = {
-                                    lemma: hw.lemma,
-                                    msa: hw.msa,
-                                    normalized: hw.normalized,
+                                    lemma: nw.lemma,
+                                    msa: nw.msa,
+                                    normalized: nw.normalized,
                                 };
 
-                                const wordform = (hw.diplomatic ?? hw.facsimile ?? "").trim();
+                                const wordform = (nw.diplomatic ?? nw.facsimile ?? "").trim();
                                 if (wordform) {
-                                    const partOfSpeech = hw.msa.split(/\s+/)[0] ?? "";
-                                    const key = `${wordform.toLowerCase()}|${hw.lemma}|${hw.msa}`;
+                                    const partOfSpeech = nw.msa.split(/\s+/)[0] ?? "";
+                                    const key = `${wordform.toLowerCase()}|${nw.lemma}|${nw.msa}`;
                                     if (!inflectionMap.has(key)) {
                                         inflectionMap.set(key, {
-                                            onp_id: `imported:${hw.lemma}`,
-                                            lemma: hw.lemma,
-                                            analysis: hw.msa,
+                                            onp_id: `imported:${nw.lemma}`,
+                                            lemma: nw.lemma,
+                                            analysis: nw.msa,
                                             part_of_speech: partOfSpeech,
-                                            facsimile: hw.facsimile,
-                                            diplomatic: hw.diplomatic,
-                                            normalized: hw.normalized,
+                                            facsimile: nw.facsimile,
+                                            diplomatic: nw.diplomatic,
+                                            normalized: nw.normalized,
                                         });
                                     }
                                 }
                             }
                             wordIndex += 1;
-                        }
-                        // If no words found via XML parsing, fall back to DSL word count
-                        if (headWords.length === 0) {
-                            const headWordCount = countDslWords(segment.dsl_content);
-                            wordIndex += headWordCount;
-                        }
-                        continue;
-                    }
-                    // Handle standalone .supplied{} segments (not inside .head{})
-                    // These may also contain <w> elements with lemma attributes
-                    const isSupplied = segment.dsl_content.startsWith(".supplied{");
-                    if (isSupplied && segment.original_xml.trimStart().startsWith("<supplied")) {
-                        const suppliedWords = extractWordAttributesFromXml(segment.original_xml);
-                        for (const sw of suppliedWords) {
-                            if (sw.lemma && sw.msa) {
-                                lemmaConfirmations[wordIndex] = {
-                                    lemma: sw.lemma,
-                                    msa: sw.msa,
-                                    normalized: sw.normalized,
-                                };
-
-                                const wordform = (sw.diplomatic ?? sw.facsimile ?? "").trim();
-                                if (wordform) {
-                                    const partOfSpeech = sw.msa.split(/\s+/)[0] ?? "";
-                                    const key = `${wordform.toLowerCase()}|${sw.lemma}|${sw.msa}`;
-                                    if (!inflectionMap.has(key)) {
-                                        inflectionMap.set(key, {
-                                            onp_id: `imported:${sw.lemma}`,
-                                            lemma: sw.lemma,
-                                            analysis: sw.msa,
-                                            part_of_speech: partOfSpeech,
-                                            facsimile: sw.facsimile,
-                                            diplomatic: sw.diplomatic,
-                                            normalized: sw.normalized,
-                                        });
-                                    }
-                                }
-                            }
-                            wordIndex += 1;
-                        }
-                        // Fallback to DSL word count if no <w> elements found
-                        if (suppliedWords.length === 0) {
-                            const suppliedWordCount = countDslWords(segment.dsl_content);
-                            wordIndex += suppliedWordCount;
                         }
                         continue;
                     }
@@ -1283,13 +1231,6 @@
                         segment.original_xml,
                         "norm",
                     );
-                    const isWordElement =
-                        segment.original_xml.trimStart().startsWith("<w");
-
-                    if (!isWordElement) {
-                        continue;
-                    }
-
                     if (isMenotaImport) {
                         if (!lemma) {
                             missingLemmaCount += 1;
