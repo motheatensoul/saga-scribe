@@ -127,6 +127,7 @@ The user's file is privileged. Reading it must never change it:
 - Whitespace-only or otherwise non-semantic DSL changes must produce no XML change.
 - Invalid DSL is an error, never an empty document; save/export refuse to write a failed compile.
 - The XML and the DSL generated from it read as the same tokens, one to one (`test_menota_file_xml_and_dsl_read_as_the_same_tokens`); DSL → XML → DSL likewise. A new XML construct the DSL can't express breaks this: give it DSL syntax rather than special-casing the patcher.
+- Word identity: the backend `Patcher` (`patching.rs`) remembers each token of the last compiled DSL and which original word it is. The editor's changes since then (`src/lib/editor/editHistory.ts`, sent as `Guidance`) let untouched words keep their identity outright; only edited ranges are matched by comparison. Guidance only refines which word is which: without it (or out of step) the patcher compares whole documents, and the output must be correct either way (`test_guided_character_edits_always_reimport_as_edited` fuzzes this).
 - Changing how imported XML is written as DSL changes users' stored DSL: bump `DSL_RULES` (`src-tauri/src/importer/tei/segments.rs`) and keep older documents on their rules.
 - Regression tests: `test_menota_file_unchanged_is_byte_identical` and friends in `src-tauri/src/importer/tests.rs`.
 

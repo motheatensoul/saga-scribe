@@ -827,7 +827,17 @@ impl Extractor {
                     let content = c.get_content();
                     let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
                     if normalized.is_empty() {
-                        // Ignore pure whitespace
+                        // Pure whitespace is indentation, except between an
+                        // entity and more text (`&et; &thorn;a`): a word space
+                        let after_entity = c
+                            .get_prev_sibling()
+                            .is_some_and(|p| p.get_type() == Some(NodeType::EntityRefNode));
+                        let before_text = next_child.as_ref().is_some_and(|n| {
+                            matches!(n.get_type(), Some(NodeType::EntityRefNode | NodeType::TextNode))
+                        });
+                        if after_entity && before_text && !output.ends_with(' ') {
+                            output.push(' ');
+                        }
                     } else {
                         let has_leading = content
                             .chars()

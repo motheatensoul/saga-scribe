@@ -32,6 +32,51 @@
 //! levels and joining at the normalized level.
 
 use super::ast::Node;
+use std::ops::Range;
+
+/// Collects tokens with their source ranges while a word is being built.
+#[derive(Default)]
+struct Builder {
+    result: Vec<(Node, Range<usize>)>,
+    /// The word being built
+    word: Vec<Node>,
+    /// The source range of `word` so far
+    span: Option<Range<usize>>,
+}
+
+impl Builder {
+    /// Adds a node to the word being built.
+    fn add(&mut self, node: Node, span: Range<usize>) {
+        self.word.push(node);
+        self.span = Some(match self.span.take() {
+            Some(word) => word.start..span.end.max(word.end),
+            None => span,
+        });
+    }
+
+    /// Ends the word being built, if any. A `~` with nothing to join on one
+    /// side (`upp~ haf`) is dropped, and repeated ones (`upp~~haf`) count
+    /// once, rather than compiling to stray spaces.
+    fn end_word(&mut self) {
+        self.word
+            .dedup_by(|a, b| matches!((a, b), (Node::CompoundJoin, Node::CompoundJoin)));
+        while matches!(self.word.last(), Some(Node::CompoundJoin)) {
+            self.word.pop();
+        }
+        let leading = self.word.iter().take_while(|n| matches!(n, Node::CompoundJoin)).count();
+        self.word.drain(..leading);
+        if !self.word.is_empty() {
+            let span = self.span.take().unwrap_or(0..0);
+            self.result.push((Node::Word(std::mem::take(&mut self.word)), span));
+        }
+        self.span = None;
+    }
+
+    /// Emits a token that is not part of a word.
+    fn emit(&mut self, node: Node, span: Range<usize>) {
+        self.result.push((node, span));
+    }
+}
 
 /// State machine states for word tokenization.
 #[derive(Debug, PartialEq)]
@@ -73,8 +118,15 @@ impl WordTokenizer {
     /// - **Block elements**: Always force word boundaries
     /// - **Punctuation**: Wrapped in `Punctuation` nodes, not `Word`
     pub fn tokenize(&self, nodes: Vec<Node>) -> Vec<Node> {
-        let mut result: Vec<Node> = Vec::new();
-        let mut current_word: Vec<Node> = Vec::new();
+        let spanned = nodes.into_iter().map(|node| (node, 0..0)).collect();
+        self.tokenize_spanned(spanned).into_iter().map(|(node, _)| node).collect()
+    }
+
+    /// Like [`tokenize`](Self::tokenize), for nodes with their source byte
+    /// ranges (as lowered from the syntax tree); returns each token with the
+    /// range it covers, from its first character to its last.
+    pub fn tokenize_spanned(&self, nodes: Vec<(Node, Range<usize>)>) -> Vec<(Node, Range<usize>)> {
+        let mut out = Builder::default();
         let mut state = State::BetweenWords;
         // Flag set by WordContinuation node to indicate next break should be included
         let mut continuation_active = false;
@@ -82,13 +134,11 @@ impl WordTokenizer {
         // `hel~//5 lo`) doesn't end the word
         let mut skip_leading_whitespace = false;
 
-        for node in nodes {
+        for (node, span) in nodes {
             match &node {
                 // Word boundary marker always splits
                 Node::WordBoundary => {
-                    if !current_word.is_empty() {
-                        result.push(Node::Word(std::mem::take(&mut current_word)));
-                    }
+                    out.end_word();
                     state = State::BetweenWords;
                     continuation_active = false;
                 }
@@ -107,7 +157,7 @@ impl WordTokenizer {
                 Node::LineBreak(_) | Node::PageBreak(_) => {
                     if continuation_active {
                         // Case 1: Explicit continuation via ~ marker
-                        current_word.push(node);
+                        out.add(node, span);
                         continuation_active = false;
                         state = State::InWord;
                         skip_leading_whitespace = true;
@@ -115,44 +165,35 @@ impl WordTokenizer {
                     } else {
                         // Case 2: Check heuristic - if we're in a word and last char is a letter,
                         // include the break in the word (manuscript words often span lines)
-                        let should_continue = state == State::InWord
-                            && self.last_char_is_letter(&current_word);
+                        let should_continue =
+                            state == State::InWord && self.last_char_is_letter(&out.word);
 
                         if should_continue {
-                            current_word.push(node);
+                            out.add(node, span);
                         } else {
                             // End current word, output break separately
-                            if !current_word.is_empty() {
-                                result.push(Node::Word(std::mem::take(&mut current_word)));
-                            }
-                            result.push(node);
+                            out.end_word();
+                            out.emit(node, span);
                             state = State::BetweenWords;
                         }
                     }
                 }
 
                 Node::Head(_) | Node::SuppliedBlock(_) | Node::Norm(_) | Node::ParagraphBreak => {
-                    if !current_word.is_empty() {
-                        result.push(Node::Word(std::mem::take(&mut current_word)));
-                    }
-                    result.push(node);
+                    out.end_word();
+                    out.emit(node, span);
                     state = State::BetweenWords;
                     continuation_active = false;
                 }
 
                 // Text nodes - split on whitespace and punctuation
                 Node::Text(text) => {
-                    let text = if skip_leading_whitespace {
-                        text.trim_start()
+                    let skipped = if skip_leading_whitespace {
+                        text.len() - text.trim_start().len()
                     } else {
-                        text
+                        0
                     };
-                    self.process_text(
-                        text,
-                        &mut result,
-                        &mut current_word,
-                        &mut state,
-                    );
+                    self.process_text(&text[skipped..], span.start + skipped, &mut out, &mut state);
                     continuation_active = false;
                 }
 
@@ -162,7 +203,7 @@ impl WordTokenizer {
                     if state == State::BetweenWords {
                         state = State::InWord;
                     }
-                    current_word.push(node);
+                    out.add(node, span);
                     continuation_active = false;
                 }
 
@@ -178,26 +219,22 @@ impl WordTokenizer {
                     if state == State::BetweenWords {
                         state = State::InWord;
                     }
-                    current_word.push(node);
+                    out.add(node, span);
                     continuation_active = false;
                 }
 
                 // Nested words shouldn't happen, but handle gracefully
-                Node::Word(children) => {
-                    if !current_word.is_empty() {
-                        result.push(Node::Word(std::mem::take(&mut current_word)));
-                    }
-                    result.push(Node::Word(children.clone()));
+                Node::Word(_) => {
+                    out.end_word();
+                    out.emit(node, span);
                     state = State::BetweenWords;
                     continuation_active = false;
                 }
 
                 // Punctuation nodes pass through (already wrapped)
-                Node::Punctuation(children) => {
-                    if !current_word.is_empty() {
-                        result.push(Node::Word(std::mem::take(&mut current_word)));
-                    }
-                    result.push(Node::Punctuation(children.clone()));
+                Node::Punctuation(_) => {
+                    out.end_word();
+                    out.emit(node, span);
                     state = State::BetweenWords;
                     continuation_active = false;
                 }
@@ -206,11 +243,12 @@ impl WordTokenizer {
         }
 
         // Flush remaining word
-        if !current_word.is_empty() {
-            result.push(Node::Word(current_word));
-        }
+        out.end_word();
 
-        result.into_iter().map(Self::entity_punctuation).collect()
+        out.result
+            .into_iter()
+            .map(|(node, span)| (Self::entity_punctuation(node), span))
+            .collect()
     }
 
     /// A word made only of punctuation entities (`:middot:` between spaces)
@@ -230,42 +268,37 @@ impl WordTokenizer {
         }
     }
 
-    /// Process a text node, splitting on whitespace and punctuation
-    fn process_text(
-        &self,
-        text: &str,
-        result: &mut Vec<Node>,
-        current_word: &mut Vec<Node>,
-        state: &mut State,
-    ) {
+    /// Process a text node starting at source offset `at`, splitting on
+    /// whitespace and punctuation
+    fn process_text(&self, text: &str, at: usize, out: &mut Builder, state: &mut State) {
+        // The run of regular characters not yet added to the word
         let mut buffer = String::new();
+        let mut buffer_start = at;
 
-        for c in text.chars() {
+        for (i, c) in text.char_indices() {
+            let pos = at + i;
             if c.is_whitespace() {
-                // Flush buffer to current word
+                // Flush buffer to current word, then end the word
                 if !buffer.is_empty() {
-                    current_word.push(Node::Text(std::mem::take(&mut buffer)));
+                    out.add(Node::Text(std::mem::take(&mut buffer)), buffer_start..pos);
                 }
-                // End current word
-                if !current_word.is_empty() {
-                    result.push(Node::Word(std::mem::take(current_word)));
-                }
+                out.end_word();
                 *state = State::BetweenWords;
             } else if self.punctuation.contains(&c) {
                 // Punctuation: flush buffer, end word, output punctuation as <pc>
                 if !buffer.is_empty() {
-                    current_word.push(Node::Text(std::mem::take(&mut buffer)));
+                    out.add(Node::Text(std::mem::take(&mut buffer)), buffer_start..pos);
                 }
-                if !current_word.is_empty() {
-                    result.push(Node::Word(std::mem::take(current_word)));
-                }
-                // Punctuation wrapped in <pc>
-                result.push(Node::Punctuation(vec![Node::Text(c.to_string())]));
+                out.end_word();
+                out.emit(Node::Punctuation(vec![Node::Text(c.to_string())]), pos..pos + c.len_utf8());
                 *state = State::BetweenWords;
             } else {
                 // Regular character
                 if *state == State::BetweenWords {
                     *state = State::InWord;
+                }
+                if buffer.is_empty() {
+                    buffer_start = pos;
                 }
                 buffer.push(c);
             }
@@ -273,7 +306,7 @@ impl WordTokenizer {
 
         // Flush remaining buffer
         if !buffer.is_empty() {
-            current_word.push(Node::Text(buffer));
+            out.add(Node::Text(buffer), buffer_start..at + text.len());
         }
     }
 

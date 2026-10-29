@@ -1,8 +1,8 @@
 use super::tei::parse;
 use crate::importer::tei::helpers;
 use crate::importer::tei::patching::{
-    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body,
-    PatchOperation, RenderedBody,
+    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body, Guidance,
+    PatchOperation, Patcher, RenderedBody, TextChange,
 };
 use crate::importer::tei::segments::Segment;
 use crate::parser::{Compiler, CompilerConfig, Lexer};
@@ -1367,4 +1367,192 @@ fn test_documents_imported_before_rule_changes_keep_their_dsl() {
     let patches = compute_patches(&doc.segments, 0, &edited).unwrap();
     let changes = patches.iter().filter(|p| !matches!(p, PatchOperation::Keep { .. })).count();
     assert_eq!(changes, 1);
+}
+
+// ============================================================================
+// WORD IDENTITY ACROSS EDITS (editor-guided)
+// ============================================================================
+
+/// The single change from `old` to `new` (common prefix and suffix), in
+/// UTF-16 units, as CodeMirror would report a one-place edit.
+fn change_between(old: &str, new: &str) -> TextChange {
+    let (a, b): (Vec<u16>, Vec<u16>) = (old.encode_utf16().collect(), new.encode_utf16().collect());
+    let prefix = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+    let max_suffix = a.len().min(b.len()) - prefix;
+    let suffix = a.iter().rev().zip(b.iter().rev()).take(max_suffix).take_while(|(x, y)| x == y).count();
+    TextChange { from_a: prefix, to_a: a.len() - suffix, from_b: prefix, to_b: b.len() - suffix }
+}
+
+/// An imported document being edited the way the app does it: one Patcher,
+/// each compile guided by the change since the previous one.
+struct Session {
+    doc: crate::importer::tei::segments::ImportedDocument,
+    body: String,
+    patcher: Patcher,
+    dsl: String,
+}
+
+impl Session {
+    fn open(xml: &str) -> Self {
+        let import = parse(xml).unwrap();
+        let doc = import.imported_document.unwrap();
+        let patcher = Patcher::new(&doc.segments, doc.dsl_rules);
+        let mut session = Session { doc, body: import.original_body_xml.unwrap(), patcher, dsl: import.dsl.clone() };
+        session.compile(&import.dsl, false).unwrap();
+        session
+    }
+
+    /// Compiles `dsl`, guided by the change from the previous DSL unless `blind`.
+    fn compile(&mut self, dsl: &str, blind: bool) -> Result<String, String> {
+        let change = change_between(&self.dsl, dsl);
+        self.compile_with(dsl, change, blind)
+    }
+
+    /// Compiles `dsl`, reached from the previous DSL by `change`.
+    fn compile_with(&mut self, dsl: &str, change: TextChange, blind: bool) -> Result<String, String> {
+        let guidance = Guidance { base_revision: self.patcher.revision(), changes: vec![change] };
+        let (patches, state) = self.patcher.compute(dsl, (!blind).then_some(&guidance))?;
+        let mut compiler = Compiler::new().with_config(compiler_config_for(&self.doc));
+        let body = render_body(&self.doc, Some(&self.body), &patches, &mut compiler)?;
+        self.patcher.commit(state);
+        self.dsl = dsl.to_string();
+        Ok(body.xml)
+    }
+}
+
+const TWO_OKS: &str = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="ok" me:msa="xCC"><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w> <w lemma="ok" me:msa="xAV"><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w> <w lemma="maðr"><choice><me:facs>maþr</me:facs><me:dipl>maþr</me:dipl><me:norm>maðr</me:norm></choice></w></p></body></text></TEI>"#;
+
+#[test]
+fn test_deleting_one_of_two_identical_words_deletes_that_one() {
+    // DSL ".p ok ok maþr": select and delete the first "ok " (a conjunction, xCC)
+    let delete_first = TextChange { from_a: 3, to_a: 6, from_b: 3, to_b: 3 };
+    let mut session = Session::open(TWO_OKS);
+    let xml = session.compile_with(".p ok maþr", delete_first, false).unwrap();
+    assert!(xml.contains(r#"me:msa="xAV""#) && !xml.contains(r#"me:msa="xCC""#), "{xml}");
+
+    // Comparing whole documents can't tell which "ok" went, and keeps the first
+    let mut blind = Session::open(TWO_OKS);
+    let xml = blind.compile(".p ok maþr", true).unwrap();
+    assert!(xml.contains(r#"me:msa="xCC""#), "{xml}");
+}
+
+#[test]
+fn test_editing_one_identical_word_and_deleting_the_other() {
+    // Change the second "ok" to "ek" and delete the first, in two edits
+    let mut session = Session::open(TWO_OKS);
+    session.compile(".p ok ek maþr", false).unwrap();
+    let delete_first = TextChange { from_a: 3, to_a: 6, from_b: 3, to_b: 3 };
+    let xml = session.compile_with(".p ek maþr", delete_first, false).unwrap();
+    assert!(!xml.contains(r#"me:msa="xCC""#), "the conjunction was deleted: {xml}");
+    assert!(xml.contains(r#"me:msa="xAV""#), "the adverb was edited: {xml}");
+    assert!(xml.contains("<me:facs>ek</me:facs>"), "{xml}");
+}
+
+#[test]
+fn test_out_of_step_guidance_falls_back_to_comparison() {
+    let mut session = Session::open(TWO_OKS);
+    let guidance = Guidance { base_revision: 999, changes: vec![TextChange { from_a: 0, to_a: 9999, from_b: 0, to_b: 0 }] };
+    let (patches, _) = session.patcher.compute(".p ok ok maður", Some(&guidance)).unwrap();
+    let changed = patches.iter().filter(|p| !matches!(p, PatchOperation::Keep { .. })).count();
+    assert_eq!(changed, 1);
+}
+
+#[test]
+fn test_menota_file_guided_edits_reimport_as_edited() {
+    let Some(xml) = load_holmperg() else { return };
+    let mut session = Session::open(&xml);
+    let start = xml.find("<body").unwrap();
+    let end = xml.find("</body>").unwrap() + "</body>".len();
+
+    // Deterministic pseudo-random word edits: delete, duplicate, change
+    let mut state: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut next = |n: usize| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state >> 33) as usize % n
+    };
+    let mut dsl = session.dsl.clone();
+    for round in 0..8 {
+        let words: Vec<(usize, &str)> = dsl
+            .match_indices(|c: char| c.is_whitespace())
+            .map(|(i, _)| i + 1)
+            .filter_map(|i| {
+                let word = dsl[i..].split_whitespace().next()?;
+                (word.chars().all(char::is_alphabetic) && dsl[i..].starts_with(word)).then_some((i, word))
+            })
+            .collect();
+        let (at, word) = words[next(words.len())];
+        let edited = match round % 3 {
+            0 => format!("{}{}", &dsl[..at], &dsl[at + word.len()..]),
+            1 => format!("{}{} {}", &dsl[..at], word, &dsl[at..]),
+            _ => format!("{}{}x{}", &dsl[..at], word, &dsl[at + word.len()..]),
+        };
+        let body = session.compile(&edited, false).unwrap();
+        let rewritten = format!("{}{}{}", &xml[..start], body, &xml[end..]);
+        let reread = parse(&rewritten).unwrap().dsl;
+        let tokens = crate::importer::tei::patching::dsl_tokens;
+        assert_eq!(tokens(&reread).unwrap(), tokens(&edited).unwrap(), "round {round}");
+        dsl = edited;
+    }
+}
+
+#[test]
+fn test_guided_character_edits_always_reimport_as_edited() {
+    const PIECES: &[&str] = &["a", "þ", " ", ".", ",", "ok", ":middot:", "\n", "~", ".p "];
+    let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = |n: usize| {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        (state.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33) as usize % n
+    };
+    let mut session = Session::open(TWO_OKS);
+    let (mut compiled, mut failed) = (0, 0);
+    for _ in 0..400 {
+        let dsl = session.dsl.clone();
+        let chars: Vec<usize> = dsl.char_indices().map(|(i, _)| i).chain([dsl.len()]).collect();
+        let at = chars[next(chars.len())];
+        let edited = if next(2) == 0 && at < dsl.len() {
+            // Delete one character
+            let len = dsl[at..].chars().next().unwrap().len_utf8();
+            format!("{}{}", &dsl[..at], &dsl[at + len..])
+        } else {
+            format!("{}{}{}", &dsl[..at], PIECES[next(PIECES.len())], &dsl[at..])
+        };
+        match session.compile(&edited, false) {
+            Ok(body) => {
+                compiled += 1;
+                let reread = parse(&format!(r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text>{body}</text></TEI>"#))
+                    .unwrap()
+                    .dsl;
+                let tokens = crate::importer::tei::patching::dsl_tokens;
+                let (got, want) = (tokens(&reread).unwrap(), tokens(&edited).unwrap());
+                if got != want {
+                    let i = got.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(got.len().min(want.len()));
+                    panic!(
+                        "after editing to {edited:?}, token {i}: got {:?}, want {:?}",
+                        &got[i.saturating_sub(2)..(i + 3).min(got.len())],
+                        &want[i.saturating_sub(2)..(i + 3).min(want.len())],
+                    );
+                }
+            }
+            // Invalid DSL, or a paragraph edit that can't be placed: nothing changes
+            Err(_) => {
+                failed += 1;
+                assert_eq!(session.dsl, dsl);
+            }
+        }
+    }
+    assert!(compiled > 300, "{compiled} compiled, {failed} rejected");
+}
+#[test]
+fn test_word_space_between_entities_survives_import() {
+    // One <w> whose written words meet at entities: `&et; &thorn;a`
+    for dsl in ["a:thorn:~:middot:", ":et:~:thorn:a"] {
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+        let xml = Compiler::new().with_config(config).compile(dsl).unwrap();
+        let back = parse(&format!(r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body>{xml}</body></text></TEI>"#)).unwrap().dsl;
+        assert_eq!(back, dsl, "{xml}");
+    }
 }

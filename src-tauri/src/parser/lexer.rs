@@ -7,8 +7,9 @@
 //! span-annotated syntax tree and recovers from errors; this module lowers that
 //! tree to nodes and turns the first syntax error into an `Err`.
 
-use super::ast::Document;
+use super::ast::{Document, Node};
 use super::syntax;
+use std::ops::Range;
 
 /// Parses DSL input into a [`Document`].
 ///
@@ -47,5 +48,19 @@ impl<'a> Lexer<'a> {
         Ok(Document {
             nodes: syntax::lower(&tree.nodes, self.input),
         })
+    }
+
+    /// Like [`parse`](Self::parse), with each node's source byte range.
+    ///
+    /// # Errors
+    ///
+    /// As [`parse`](Self::parse).
+    pub fn parse_spanned(&mut self) -> Result<Vec<(Node, Range<usize>)>, String> {
+        let tree = syntax::parse(self.input);
+        if let Some(error) = tree.diagnostics.first() {
+            return Err(error.describe(self.input));
+        }
+        let nodes = syntax::lower(&tree.nodes, self.input);
+        Ok(nodes.into_iter().zip(tree.nodes.iter().map(|n| n.span.clone())).collect())
     }
 }

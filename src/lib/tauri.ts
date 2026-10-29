@@ -240,9 +240,25 @@ export async function setImportedDocument(
   });
 }
 
+/** An editor change: `from_a..to_a` of the previous DSL became `from_b..to_b` (UTF-16 offsets). */
+export interface TextChange {
+  from_a: number;
+  to_a: number;
+  from_b: number;
+  to_b: number;
+}
+
+/** The editor's changes since the compile of revision `baseRevision`. */
+export interface CompileGuidance {
+  baseRevision: number;
+  changes: TextChange[];
+}
+
 /** Result of {@link compileImported}. */
 export interface ImportedCompileResult {
   xml: string;
+  /** Identifies this compile's DSL, for {@link CompileGuidance} */
+  revision: number;
   /**
    * Words (by number) edited in the DSL whose lemma, analysis and normalized
    * form were kept from the original and should be reviewed
@@ -254,6 +270,7 @@ export interface ImportedCompileResult {
 export async function compileImported(
   editedDsl: string,
   options?: CompileImportedOptions,
+  guidance?: CompileGuidance,
 ): Promise<ImportedCompileResult> {
   return invoke("compile_imported", {
     editedDsl,
@@ -261,6 +278,7 @@ export async function compileImported(
     normalizerJson: options?.normalizerJson ?? null,
     entityMappingsJson: options?.entityMappingsJson ?? null,
     customMappings: options?.customMappings ?? null,
+    guidance: guidance ?? null,
   });
 }
 

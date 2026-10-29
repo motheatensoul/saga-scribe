@@ -1253,3 +1253,18 @@ fn test_lone_punctuation_entity_is_punctuation() {
     assert_eq!(xml.matches("<w>").count(), 2, "{xml}");
     assert!(!xml.contains("<pc>"), "{xml}");
 }
+
+#[test]
+fn test_tokens_know_their_source_ranges() {
+    let dsl = "//4 maþr .abbr[k:bar:]{konungr}, hel~//5 lo :middot: .p upp~haf";
+    let nodes = Lexer::new(dsl).parse_spanned().unwrap();
+    let tokens = WordTokenizer::new().tokenize_spanned(nodes);
+    let texts: Vec<&str> = tokens.iter().map(|(_, span)| &dsl[span.clone()]).collect();
+    assert_eq!(
+        texts,
+        ["//4", "maþr", ".abbr[k:bar:]{konungr}", ",", "hel~//5 lo", ":middot:", ".p", "upp~haf"]
+    );
+    // Same tokens as the plain pipeline
+    let plain = WordTokenizer::new().tokenize(Lexer::new(dsl).parse().unwrap().nodes);
+    assert_eq!(tokens.into_iter().map(|(n, _)| n).collect::<Vec<_>>(), plain);
+}

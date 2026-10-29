@@ -1556,6 +1556,7 @@
                     </div>
                     <Editor
                         bind:this={editorComponent}
+                        onchanges={(changes) => importedStore.recordChanges(changes)}
                         onchange={handleEditorChange}
                     />
                 </div>

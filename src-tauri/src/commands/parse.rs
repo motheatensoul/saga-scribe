@@ -1,6 +1,6 @@
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
-use crate::importer::tei::patching::{compiler_config_for, compute_patches, render_body};
+use crate::importer::tei::patching::{compiler_config_for, render_body, Guidance, Patcher};
 use crate::importer::tei::segments::ImportedDocument;
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping};
@@ -114,6 +114,8 @@ pub struct ImportedSource {
     original_body_xml: String,
     preamble: String,
     postamble: String,
+    /// Which word is which across edits; built on the first compile
+    patcher: Option<Patcher>,
 }
 
 /// Sets (or, with no manifest, clears) the imported document used by [`compile_imported`].
@@ -133,6 +135,7 @@ pub async fn set_imported_document(
                     original_body_xml: original_body_xml.unwrap_or_default(),
                     preamble: preamble.unwrap_or_default(),
                     postamble: postamble.unwrap_or_default(),
+                    patcher: None,
                 })
             })
             .await
@@ -162,14 +165,15 @@ pub async fn compile_imported(
     normalizer_json: Option<String>,
     entity_mappings_json: Option<String>,
     custom_mappings: Option<HashMap<String, String>>,
+    guidance: Option<Guidance>,
 ) -> Result<ImportedCompile, String> {
     let session = session.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let guard = session
+        let mut guard = session
             .0
             .lock()
             .map_err(|_| "Imported document state is poisoned")?;
-        let source = guard.as_ref().ok_or("No imported document is loaded")?;
+        let source = guard.as_mut().ok_or("No imported document is loaded")?;
 
         // Load entities if provided
         let mut registry = EntityRegistry::new();
@@ -204,12 +208,12 @@ pub async fn compile_imported(
             compiler = compiler.with_dictionary(dict);
         }
 
-        // Compute patches between original segments and edited DSL
-        let patches = compute_patches(
-            &source.document.segments,
-            source.document.dsl_rules,
-            &edited_dsl,
-        )?;
+        // Compute patches between original segments and edited DSL, using the
+        // editor's changes to keep track of which word is which
+        let patcher = source.patcher.get_or_insert_with(|| {
+            Patcher::new(&source.document.segments, source.document.dsl_rules)
+        });
+        let (patches, state) = patcher.compute(&edited_dsl, guidance.as_ref())?;
 
         // Apply patches to the original body XML
         let body = render_body(
@@ -219,8 +223,15 @@ pub async fn compile_imported(
             &mut compiler,
         )?;
 
+        // Only a successful compile becomes the basis for the next one
+        let patcher = source.patcher.get_or_insert_with(|| {
+            Patcher::new(&source.document.segments, source.document.dsl_rules)
+        });
+        patcher.commit(state);
+
         // Combine with preamble (everything before body) and postamble (everything after)
         Ok(ImportedCompile {
+            revision: patcher.revision(),
             edited_words: body.edited_word_indices(),
             xml: format!("{}{}{}", source.preamble, body.xml, source.postamble),
         })
@@ -235,6 +246,9 @@ pub async fn compile_imported(
 pub struct ImportedCompile {
     /// The full document
     pub xml: String,
+    /// Identifies this compile's DSL; send it back as [`Guidance::base_revision`]
+    /// with the editor's changes since
+    pub revision: u64,
     /// Words (by number, in document order) edited in the DSL whose lemma, msa
     /// and normalized form were kept from the original and should be reviewed
     pub edited_words: Vec<u32>,
