@@ -289,8 +289,8 @@ impl<'a> Parser<'a> {
                 } else if rest.starts_with("~//") {
                     flush_text!(start);
                     self.pos += 3;
-                    // Unlike a plain `//`, the number runs to the next whitespace
-                    let number = self.consume_until_whitespace();
+                    // Only digits, so "hel~//5lo" keeps "lo" as the rest of the word
+                    let number = self.consume_while(|c| c.is_ascii_digit());
                     let number = (!number.is_empty()).then_some(number);
                     Some((3, Ok(vec![
                         SyntaxNode { kind: SyntaxKind::WordContinuation, span: start..start + 1 },

@@ -1150,3 +1150,51 @@ fn test_compiler_menota_character_annotation_out_of_bounds() {
     // Should contain <c type="initial">H</c> - tag must be closed!
     assert!(result.contains(r#"<c type="initial">H</c>"#));
 }
+
+fn word_wrapping_compiler(multi_level: bool, auto_line_numbers: bool) -> Compiler<'static> {
+    Compiler::new().with_config(CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers,
+        multi_level,
+        wrap_pages: false,
+    })
+}
+
+#[test]
+fn test_lexer_word_continuation_number_is_digits_only() {
+    // The importer writes in-word breaks without a space: "to~//5þings"
+    let doc = Lexer::new("hel~//5lo").parse().unwrap();
+    assert_eq!(doc.nodes.len(), 4);
+    assert!(matches!(&doc.nodes[2], Node::LineBreak(Some(n)) if n == "5"));
+    assert!(matches!(&doc.nodes[3], Node::Text(t) if t == "lo"));
+}
+
+#[test]
+fn test_compile_word_continuation_single_level() {
+    for dsl in ["one hel~//5lo two", "one hel~//5 lo two"] {
+        let xml = word_wrapping_compiler(false, false).compile(dsl).unwrap();
+        assert!(xml.contains("<w>hel<lb n=\"5\"/>lo</w>"), "{dsl}: {xml}");
+        assert_eq!(xml.matches("<w>").count(), 3, "{dsl}: {xml}");
+    }
+}
+
+#[test]
+fn test_compile_word_continuation_multi_level() {
+    let xml = word_wrapping_compiler(true, false)
+        .compile("one hel~//5lo two")
+        .unwrap();
+    // MENOTA: the break sits inside facs/dipl, and after the normalized form
+    assert!(xml.contains("<me:facs>hel<lb n=\"5\"/>lo</me:facs>"), "{xml}");
+    assert!(xml.contains("<me:dipl>hel<lb n=\"5\"/>lo</me:dipl>"), "{xml}");
+    assert!(xml.contains("<me:norm>hello<lb n=\"5\"/></me:norm>"), "{xml}");
+    assert_eq!(xml.matches("<w>").count(), 3, "{xml}");
+}
+
+#[test]
+fn test_compile_word_continuation_auto_numbers() {
+    let xml = word_wrapping_compiler(false, true)
+        .compile("// one hel~//lo // two")
+        .unwrap();
+    assert!(xml.contains("<w>hel<lb n=\"2\"/>lo</w>"), "{xml}");
+    assert!(xml.contains("<lb n=\"3\"/>"), "{xml}");
+}

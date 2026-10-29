@@ -200,7 +200,13 @@ impl<'a> LegacyLexer<'a> {
             if remaining.starts_with("~//") {
                 self.flush_text(&mut doc, &mut text_buf);
                 self.pos += 3;
-                let line_num = self.consume_until_whitespace();
+                // Mirrors the current lexer: only digits (the original read to
+                // the next whitespace, swallowing the rest of the word)
+                let line_num: String = remaining[3..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
+                self.pos += line_num.len();
                 let line_num = if line_num.is_empty() {
                     None
                 } else {

@@ -190,7 +190,7 @@ Example: `.abbr[d.]{deus}` produces an abbreviation mark for "d." expanding to "
 
 ```
 |            Explicit word boundary
-~//          Word continues across line break
+~//5         Word continues across line break (to line 5): hel~//5lo
 ~///1v       Word continues across page break
 ```
 

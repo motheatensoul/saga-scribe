@@ -102,7 +102,7 @@
             desc: "Explicit word boundary",
         },
         {
-            syntax: "~//",
+            syntax: "~//5",
             output: "(continuation + lb)",
             desc: "Word continues across line",
         },

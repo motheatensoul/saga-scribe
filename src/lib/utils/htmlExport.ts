@@ -67,6 +67,15 @@ export function generateStandaloneHtml(
             user-select: none;
         }
 
+        .word-break-mark {
+            color: #888;
+        }
+
+        .paragraph-mark {
+            color: #aaa;
+            margin-right: 0.25rem;
+        }
+
         .linebreak {
             display: block;
         }

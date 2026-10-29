@@ -282,9 +282,13 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_word_single(&mut self, children: &[Node]) -> String {
+        let children = self.number_word_breaks(children);
         let mut content = String::new();
-        for child in children {
-            content.push_str(&self.node_to_xml(child));
+        for child in &children {
+            match self.word_break_tag(child) {
+                Some(tag) => content.push_str(&tag),
+                None => content.push_str(&self.node_to_xml(child)),
+            }
         }
         if content.is_empty() {
             String::new()
@@ -311,6 +315,7 @@ impl<'a> Compiler<'a> {
     ///
     /// Also injects character-level `<c>` tags from paleographic annotations.
     fn compile_word_multi_level(&mut self, children: &[Node]) -> String {
+        let children = &self.number_word_breaks(children);
         let facs = self.nodes_to_facs(children);
         let dipl = self.nodes_to_diplomatic(children);
 
@@ -320,7 +325,7 @@ impl<'a> Compiler<'a> {
 
         // Check if we have a user-provided normalized form (by index)
         let norm = if let Some(stored_norm) = self.get_stored_normalized_by_index(current_index) {
-            self.escape_xml(&stored_norm)
+            self.escape_xml(&stored_norm) + &self.word_breaks_xml(children)
         } else {
             // Fall back to auto-generated normalization
             self.nodes_to_normalized(children)
@@ -717,7 +722,7 @@ impl<'a> Compiler<'a> {
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(text)),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in facsimile
-            Node::LineBreak(_) | Node::PageBreak(_) => String::new(), // Handled outside word
+            Node::LineBreak(_) | Node::PageBreak(_) => self.word_break_tag(node).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -779,7 +784,7 @@ impl<'a> Compiler<'a> {
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(text)),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in diplomatic
-            Node::LineBreak(_) | Node::PageBreak(_) => String::new(),
+            Node::LineBreak(_) | Node::PageBreak(_) => self.word_break_tag(node).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -796,7 +801,45 @@ impl<'a> Compiler<'a> {
         for node in nodes {
             output.push_str(&self.node_to_normalized(node));
         }
+        // Breaks inside a word go after the normalized form, as in MENOTA
+        output.push_str(&self.word_breaks_xml(nodes));
         output
+    }
+
+    /// Gives unnumbered line breaks inside a word their automatic number, and
+    /// advances the line counter past every line break, as `node_to_xml` does.
+    fn number_word_breaks(&mut self, children: &[Node]) -> Vec<Node> {
+        children
+            .iter()
+            .map(|child| match child {
+                Node::LineBreak(n) => {
+                    self.line_number += 1;
+                    match n {
+                        None if self.config.auto_line_numbers => {
+                            Node::LineBreak(Some(self.line_number.to_string()))
+                        }
+                        _ => child.clone(),
+                    }
+                }
+                _ => child.clone(),
+            })
+            .collect()
+    }
+
+    /// The tag for a line or page break inside a word: no trailing newline (it
+    /// would become part of the word's text) and no paragraph wrapping.
+    fn word_break_tag(&self, node: &Node) -> Option<String> {
+        match node {
+            Node::LineBreak(Some(n)) => Some(format!("<lb n=\"{}\"/>", self.escape_xml(n))),
+            Node::LineBreak(None) => Some("<lb/>".to_string()),
+            Node::PageBreak(n) => Some(format!("<pb n=\"{}\"/>", self.escape_xml(n))),
+            _ => None,
+        }
+    }
+
+    /// All breaks among a word's children, in order.
+    fn word_breaks_xml(&self, children: &[Node]) -> String {
+        children.iter().filter_map(|child| self.word_break_tag(child)).collect()
     }
 
     // Telling clippy to shut it
@@ -865,6 +908,7 @@ impl<'a> Compiler<'a> {
             }
             Node::Head(_) => String::new(),
             Node::CompoundJoin => String::new(),
+            // Appended after the word by `nodes_to_normalized`
             Node::LineBreak(_) | Node::PageBreak(_) => String::new(),
             _ => String::new(),
         }

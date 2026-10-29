@@ -78,6 +78,9 @@ impl WordTokenizer {
         let mut state = State::BetweenWords;
         // Flag set by WordContinuation node to indicate next break should be included
         let mut continuation_active = false;
+        // Set after an explicit `~//`: whitespace right after the break (as in
+        // `hel~//5 lo`) doesn't end the word
+        let mut skip_leading_whitespace = false;
 
         for node in nodes {
             match &node {
@@ -106,6 +109,9 @@ impl WordTokenizer {
                         // Case 1: Explicit continuation via ~ marker
                         current_word.push(node);
                         continuation_active = false;
+                        state = State::InWord;
+                        skip_leading_whitespace = true;
+                        continue;
                     } else {
                         // Case 2: Check heuristic - if we're in a word and last char is a letter,
                         // include the break in the word (manuscript words often span lines)
@@ -136,6 +142,11 @@ impl WordTokenizer {
 
                 // Text nodes - split on whitespace and punctuation
                 Node::Text(text) => {
+                    let text = if skip_leading_whitespace {
+                        text.trim_start()
+                    } else {
+                        text
+                    };
                     self.process_text(
                         text,
                         &mut result,
@@ -191,6 +202,7 @@ impl WordTokenizer {
                     continuation_active = false;
                 }
             }
+            skip_leading_whitespace = false;
         }
 
         // Flush remaining word

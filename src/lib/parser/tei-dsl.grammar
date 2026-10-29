@@ -86,13 +86,14 @@ BraceContent { braceContent }
   // Word continuation + page/line break (must be before regular breaks)
   // Note: line break patterns must NOT match a third / to avoid conflict with page breaks
   wordContinuationPageBreak { "~///" ![ \t\n\r]* }
-  wordContinuationLineBreak { "~//" ![/ \t\n\r]* }
+  // Line numbers are digits only, as in the compiler: "hel~//5lo"
+  wordContinuationLineBreak { "~//" @digit* }
 
   // Page break: /// followed by page number (non-whitespace)
   pageBreak { "///" ![ \t\n\r]* }
 
   // Line break: // optionally followed by line number (but not a third /)
-  lineBreak { "//" ![/ \t\n\r]* }
+  lineBreak { "//" @digit* }
 
 // Abbreviation keyword
 abbrKeyword { ".abbr" }

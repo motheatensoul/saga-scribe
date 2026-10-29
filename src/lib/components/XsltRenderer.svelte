@@ -147,10 +147,15 @@
         const YIELD_EVERY = 500;
 
         void (async () => {
+            // A word broken across lines has a box per line; the later ones
+            // (continuations) belong to the same word
+            let wordIndex = -1;
             for (let index = 0; index < wordElements.length; index++) {
                 if (currentVersion !== enhanceVersion) return;
                 const element = wordElements[index];
-                const wordIndex = index;
+                if (element.dataset.wordContinuation === undefined || wordIndex < 0) {
+                    wordIndex++;
+                }
                 element.dataset.wordIndex = `${wordIndex}`;
                 const diplomatic = element.dataset.diplomatic || element.textContent || '';
 
@@ -261,6 +266,19 @@
         border-color: var(--color-warning);
         background-color: color-mix(in oklch, var(--color-warning) 15%, transparent);
         opacity: 1;
+    }
+
+    /* Hyphen at the end of a line that breaks a word */
+    .xslt-rendered :global(.word-break-mark) {
+        opacity: 0.5;
+        user-select: none;
+    }
+
+    /* Start of a paragraph; paragraphs run inline, as lines decide the layout */
+    .xslt-rendered :global(.paragraph-mark) {
+        opacity: 0.35;
+        margin-right: 0.25rem;
+        user-select: none;
     }
 
     /* Character elements (<c>) - ensure Junicode font for PUA characters */

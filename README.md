@@ -43,7 +43,7 @@ A desktop application for scholarly manuscript transcription, producing TEI-XML 
 | `?{text}?`               | `<unclear>text</unclear>`                                    | Unclear reading                       |
 | `:name:`                 | `&name;`                                                     | Entity reference (XML entity)         |
 | `\|`                     | (word boundary)                                              | Explicit word boundary                |
-| `~//`                    | (continuation + lb)                                          | Word continues across line break      |
+| `~//n`                   | (continuation + lb)                                          | Word continues across line break (`hel~//5lo`) |
 | `~///n`                  | (continuation + pb)                                          | Word continues across page break      |
 
 ## Installation
