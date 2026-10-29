@@ -87,6 +87,12 @@ export type Segment =
       xml: string;
     }
   | {
+      /** A paragraph's start tag, shown as `.p` in the DSL */
+      type: "paragraph";
+      id: number;
+      xml: string;
+    }
+  | {
       type: "word";
       id: number;
       original_xml: string;

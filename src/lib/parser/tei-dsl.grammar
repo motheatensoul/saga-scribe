@@ -8,6 +8,7 @@ element {
   WordContinuationLineBreak |
   PageBreak |
   LineBreak |
+  ParagraphBreak |
   Head |
   Abbreviation |
   SuppliedBlock |
@@ -30,6 +31,9 @@ WordContinuationLineBreak { wordContinuationLineBreak }
 
 PageBreak { pageBreak }
 LineBreak { lineBreak }
+
+// .p (standalone) starts a new paragraph
+ParagraphBreak { paragraphBreak }
 
 // .head{heading text}
 Head { headKeyword BraceContent }
@@ -144,6 +148,10 @@ normKeyword { ".norm" }
   // Entity reference :name:
   entity { ":" $[a-zA-Z0-9_]+ ":" }
 
+  // Paragraph break: ".p" followed by whitespace or the end. (Tokens can't
+  // look behind, so unlike the compiler this also matches "word.p ".)
+  paragraphBreak { ".p" (@whitespace | @eof) }
+
   // Word boundary
   wordBoundary { "|" }
 
@@ -168,6 +176,7 @@ normKeyword { ".norm" }
     wordContinuationLineBreak,
     pageBreak,
     lineBreak,
+    paragraphBreak,
     gap,
     abbrKeyword,
     headKeyword,

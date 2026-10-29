@@ -37,6 +37,7 @@ Saga-Scribe can import transcriptions from other formats, converting them to DSL
 3. The importer extracts text content from the `<body>` element
 4. Line breaks (`<lb/>`) are converted to `//` syntax
 5. Page breaks (`<pb/>`) are converted to `///` syntax with folio numbers
+6. Each paragraph (`<p>`) starts with `.p`. Add a `.p` to split a paragraph, remove one to join two. A split has to fall between elements such as sentences (`<s>`), not inside one
 
 **Note**: Complex TEI markup is simplified during import. Review the result and add DSL markup as needed.
 
@@ -163,7 +164,11 @@ The Domain-Specific Language (DSL) uses short notation that compiles to TEI-XML.
 //           Line break (auto-numbered if enabled)
 //5          Line break with explicit number
 ///1v        Page break with folio number
+.p           New paragraph (on its own, between spaces: "word.p" stays text)
 ```
+
+A paragraph can start anywhere, also mid-line: `//4 ſina . .p þer vitið …`. The
+pilcrow ¶ itself is a character the scribe wrote (`:para:`), not a paragraph break.
 
 ### Editorial Marks
 

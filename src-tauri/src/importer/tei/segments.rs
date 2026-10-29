@@ -8,7 +8,8 @@
 //!
 //! The segment approach divides a TEI document into discrete units:
 //! - **Editable segments**: Words, punctuation, line/page breaks (can be modified)
-//! - **Structural segments**: Div, p, s elements (preserved verbatim)
+//! - **Paragraph segments**: `<p>` start tags, editable as `.p` in the DSL
+//! - **Structural segments**: Other elements' tags (div, s, …), preserved verbatim
 //! - **Whitespace segments**: Formatting between elements (preserved)
 //!
 //! Each segment has a unique ID, allowing the patching system to track which
@@ -29,6 +30,15 @@ pub enum Segment {
     Structural {
         id: usize,
         xml: String, // Exact XML fragment: "<div type=\"chapter\" n=\"1\">"
+    },
+
+    /// The start tag of a paragraph (`<p>`), shown as `.p` in the DSL so
+    /// paragraphs can be split and merged. Its end tag is a `Structural`
+    /// segment. Projects imported before 0.6.0 store `<p>` as `Structural`.
+    #[serde(rename = "paragraph")]
+    Paragraph {
+        id: usize,
+        xml: String, // Exact start tag: "<p rend=\"indent\">"
     },
 
     /// A word element with editable content
@@ -79,6 +89,7 @@ impl Segment {
     pub fn id(&self) -> usize {
         match self {
             Segment::Structural { id, .. } => *id,
+            Segment::Paragraph { id, .. } => *id,
             Segment::Word { id, .. } => *id,
             Segment::Punctuation { id, .. } => *id,
             Segment::LineBreak { id, .. } => *id,
@@ -91,7 +102,8 @@ impl Segment {
 
 /// Byte ranges of segments within the original `<body>` source, indexed by segment ID.
 ///
-/// Only editable segments (words, punctuation, breaks) carry a span. The whole
+/// Editable segments (words, punctuation, breaks) and the tags of structural
+/// elements carry a span. The whole
 /// map is absent when the source could not be aligned with the parsed DOM.
 pub type SourceSpans = Vec<Option<(usize, usize)>>;
 

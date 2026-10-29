@@ -58,6 +58,7 @@
             desc: "Line break with number",
         },
         { syntax: "///1v", output: '<pb n="1v"/>', desc: "Page break" },
+        { syntax: ".p", output: "</p><p>", desc: "New paragraph (standalone)" },
         {
             syntax: ".abbr[d.]{deus}",
             output: "<choice><abbr>d.</abbr><expan>deus</expan></choice>",

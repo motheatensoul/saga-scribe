@@ -75,6 +75,17 @@ impl<'a> LegacyLexer<'a> {
                 continue;
             }
 
+            // Mirrors the current lexer: a standalone `.p` is a paragraph break
+            if remaining.starts_with(".p")
+                && self.input[..self.pos].chars().next_back().is_none_or(char::is_whitespace)
+                && remaining[2..].chars().next().is_none_or(char::is_whitespace)
+            {
+                self.flush_text(&mut doc, &mut text_buf);
+                self.pos += 2;
+                doc.nodes.push(Node::ParagraphBreak);
+                continue;
+            }
+
             // Supplied block: .supplied{text}
             if remaining.starts_with(".supplied{") {
                 self.flush_text(&mut doc, &mut text_buf);

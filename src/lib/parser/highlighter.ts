@@ -46,6 +46,7 @@ const parserWithMetadata = parser.configure({
       // Breaks and continuations
       PageBreak: tags.processingInstruction,
       LineBreak: tags.processingInstruction,
+      ParagraphBreak: tags.processingInstruction,
       WordContinuationPageBreak: tags.separator,
       WordContinuationLineBreak: tags.separator,
 

@@ -104,6 +104,7 @@ saga-scribe/
 | `//` | `<lb/>` | Line break |
 | `//n` | `<lb n="n"/>` | Numbered line break |
 | `///n` | `<pb n="n"/>` | Page break |
+| `.p` | `</p><p>` | New paragraph (standalone token; `¶` itself is the MENOTA character `:para:`) |
 | `.abbr[a]{b}` | `<choice><abbr>a</abbr><expan>b</expan></choice>` | Abbreviation |
 | `[...]` | `<gap/>` | Gap |
 | `[...<txt>]` | `<gap/><supplied>txt</supplied>` | Gap + Supplied |

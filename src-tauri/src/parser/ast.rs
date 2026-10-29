@@ -56,6 +56,8 @@ pub enum Node {
     CompoundJoin,
     /// Explicit word boundary marker: |
     WordBoundary,
+    /// Paragraph break: `.p` (closes the open paragraph, starts a new one)
+    ParagraphBreak,
     /// Word container (groups nodes into a single word)
     Word(Vec<Node>),
     /// Punctuation container (groups punctuation nodes)

@@ -681,7 +681,7 @@ mod tests {
 </TEI>"#;
 
         let result = parse(xml).unwrap();
-        assert_eq!(result.dsl.trim(), "Test content");
+        assert_eq!(result.dsl.trim(), ".p Test content");
 
         let metadata = result.metadata.unwrap();
         assert_eq!(metadata.title_stmt.title, Some("Njáls saga".to_string()));
@@ -726,7 +726,7 @@ mod tests {
 </TEI>"#;
 
         let result = parse(xml).unwrap();
-        assert_eq!(result.dsl.trim(), "Just body content");
+        assert_eq!(result.dsl.trim(), ".p Just body content");
         assert!(result.metadata.is_none());
     }
 

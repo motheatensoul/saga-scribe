@@ -119,7 +119,7 @@ fn test_import_del_add() {
 fn test_import_complex() {
     let xml = "<TEI><text><body><p>Line 1<lb/>Line 2</p></body></text></TEI>";
     let result = parse(xml).unwrap();
-    assert_eq!(result.dsl, "Line 1\n// Line 2");
+    assert_eq!(result.dsl, ".p Line 1\n// Line 2");
 }
 
 #[test]
@@ -995,7 +995,7 @@ fn imported_roundtrip(xml: &str, edit: impl Fn(&str) -> String) -> Result<(Strin
     let original_body = import.original_body_xml.expect("body");
     let patches = compute_patches(&doc.segments, &edit(&import.dsl))?;
     let mut compiler = Compiler::new().with_config(compiler_config_for(&doc));
-    let body = render_body(&doc, Some(&original_body), &patches, &mut compiler);
+    let body = render_body(&doc, Some(&original_body), &patches, &mut compiler)?;
     Ok((original_body, body))
 }
 
@@ -1136,4 +1136,90 @@ fn test_multi_word_w_edit_stays_one_word() {
     assert!(body.contains("<me:facs>þa at</me:facs>"), "{}", body);
     assert_eq!(body.matches("<w").count(), 2, "{}", body);
     assert!(body.contains(r#"lemma="þó at""#));
+}
+
+// ============================================================================
+// PARAGRAPH BREAKS (.p)
+// ============================================================================
+
+#[test]
+fn test_paragraph_split_inserts_tags_in_place() {
+    // DSL: ".p \n//3 maþr geck. .p ok"
+    let (original, body) =
+        imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("maþr geck", "maþr .p geck")).unwrap();
+    let expected = original.replacen("</w> <w lemma", "</w></p>\n<p> <w lemma", 1);
+    assert_eq!(body, expected);
+}
+
+#[test]
+fn test_paragraph_merge_removes_tags_keeps_separator() {
+    let (original, body) =
+        imported_roundtrip(MENOTA_SAMPLE, |d| d.replace("geck. .p ok", "geck. ok")).unwrap();
+    let expected = original.replacen("</p>\n<p><w>", "\n<w>", 1);
+    assert_eq!(body, expected);
+}
+
+#[test]
+fn test_paragraph_whitespace_around_marker_changes_nothing() {
+    let (original, body) =
+        imported_roundtrip(MENOTA_SAMPLE, |d| d.replace(" .p ok", "\n\n  .p\n   ok")).unwrap();
+    assert_eq!(original, body);
+}
+
+#[test]
+fn test_paragraph_merge_of_plain_text_keeps_words_apart() {
+    let xml = "<TEI><text><body><p>one two</p><p>three</p></body></text></TEI>";
+    let (_, body) = imported_roundtrip(xml, |d| d.replace(" .p three", " three")).unwrap();
+    assert_eq!(body, "<body><p>one two\nthree</p></body>");
+}
+
+#[test]
+fn test_paragraph_split_inside_inline_element_is_an_error() {
+    let xml = "<TEI><text><body><p>a <hi>b c</hi> d</p></body></text></TEI>";
+    let result = imported_roundtrip(xml, |d| d.replace("b c", "b .p c"));
+    let error = result.expect_err("a split inside <hi> would break the XML");
+    assert!(error.contains("inside <hi>"), "{error}");
+}
+
+#[test]
+fn test_removing_first_paragraph_break_is_an_error() {
+    let result = imported_roundtrip(MENOTA_SAMPLE, |d| d.replacen(".p", "", 1));
+    let error = result.expect_err("the first paragraph has no paragraph to merge into");
+    assert!(error.contains("first paragraph"), "{error}");
+}
+
+#[test]
+fn test_menota_file_paragraph_edits_reimport_as_edited() {
+    let Some(xml) = load_holmperg() else { return };
+    let import = parse(&xml).unwrap();
+    let dsl = &import.dsl;
+
+    // Merge the 3rd paragraph into the 2nd, and split one later on
+    let third = dsl.match_indices(" .p ").nth(2).unwrap().0;
+    let mut edited = format!("{}{}", &dsl[..third], &dsl[third + 3..]);
+    // Split after the first sentence end (". " closes an <s>) that allows it;
+    // mid-sentence splits are refused, as <s> can't be split
+    let mut result = None;
+    for (at, _) in edited.match_indices(". ").skip(5).take(50) {
+        let mut candidate = edited.clone();
+        candidate.insert_str(at + 1, " .p");
+        if let Ok(rendered) = imported_roundtrip(&xml, |_| candidate.clone()) {
+            result = Some((candidate, rendered));
+            break;
+        }
+    }
+    let (edited, (_, body)) = result.expect("a sentence boundary that can be split");
+    let start = xml.find("<body").unwrap();
+    let end = xml.find("</body>").unwrap() + "</body>".len();
+    let rewritten = format!("{}{}{}", &xml[..start], body, &xml[end..]);
+
+    // The new file reads back as exactly the edited DSL (modulo whitespace)
+    let reread = parse(&rewritten).unwrap().dsl;
+    let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert_eq!(words(&reread), words(&edited));
+    // Nothing but paragraph tags (and whitespace) changed
+    let without_paragraphs =
+        |s: &str| s.replace("</p>", "").replace("<p>", "").split_whitespace().collect::<String>();
+    assert_eq!(without_paragraphs(&rewritten), without_paragraphs(&xml));
+    assert_ne!(rewritten, xml);
 }

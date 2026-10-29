@@ -30,13 +30,14 @@
 //! | 1.3 | Added segments.json and original_body.xml for round-trip |
 //! | 1.4 | Added original_preamble.xml and original_postamble.xml |
 //! | 1.5 | segments.json is always the full manifest (incl. `is_menota`, source spans) |
+//! | 1.6 | Paragraph start tags are `paragraph` segments (`.p` in the DSL); spans cover all tags |
 //!
 //! All writes are atomic: data is written to a temporary file next to the target
 //! and renamed over it, so a crash mid-save never leaves a truncated file.
 
 use crate::annotations::AnnotationSet;
 use crate::importer::tei::recompute_spans;
-use crate::importer::tei::segments::ImportedDocument;
+use crate::importer::tei::segments::{ImportedDocument, Segment};
 use crate::metadata::Metadata;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -317,7 +318,7 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     // Create and write manifest.json
     let now = chrono_lite_now();
     let manifest = ProjectManifest {
-        version: "1.5".to_string(),
+        version: "1.6".to_string(),
         template_id,
         created: now.clone(),
         modified: now,
@@ -383,10 +384,11 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         Err(_) => None,
     };
 
-    // Projects saved before v1.5 have no source spans; derive them from the
+    // Projects saved before v1.5 have no source spans, and before v1.6 none
+    // for element tags (needed to split paragraphs); derive them from the
     // stored original XML so edits can be spliced in byte-for-byte.
     if let (Some(doc), Some(body)) = (imported_document.as_mut(), original_body_xml.as_deref()) {
-        if doc.spans.is_none() {
+        if !has_tag_spans(doc) {
             doc.spans = recompute_spans(
                 original_preamble.as_deref().unwrap_or_default(),
                 body,
@@ -476,9 +478,47 @@ fn is_leap_year(year: i64) -> bool {
     (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
 }
 
+/// Whether the manifest has source spans for every element tag (comments
+/// never have one).
+fn has_tag_spans(doc: &ImportedDocument) -> bool {
+    let Some(spans) = &doc.spans else { return false };
+    doc.segments.iter().all(|segment| match segment {
+        Segment::Structural { xml, .. } if !xml.starts_with("<!--") => {
+            spans.get(segment.id()).copied().flatten().is_some()
+        }
+        Segment::Paragraph { .. } => spans.get(segment.id()).copied().flatten().is_some(),
+        _ => true,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_projects_without_tag_spans_get_them_recomputed() {
+        let xml = "<TEI><text><body><p><s>a b</s> <s>c</s></p></body></text></TEI>";
+        let import = crate::importer::tei::parse(xml).unwrap();
+        let mut doc = import.imported_document.unwrap();
+        assert!(has_tag_spans(&doc));
+
+        // As saved by 0.6.0 pre-releases (format 1.5): spans for words only
+        let tags: Vec<usize> = doc
+            .segments
+            .iter()
+            .filter(|s| matches!(s, Segment::Structural { .. } | Segment::Paragraph { .. }))
+            .map(Segment::id)
+            .collect();
+        for id in tags {
+            doc.spans.as_mut().unwrap()[id] = None;
+        }
+        assert!(!has_tag_spans(&doc));
+
+        let body = import.original_body_xml.unwrap();
+        let (pre, post) = xml.split_once(&body).unwrap();
+        doc.spans = recompute_spans(pre, &body, post, &doc.segments);
+        assert!(has_tag_spans(&doc));
+    }
 
     #[test]
     fn test_parse_imported_document_accepts_full_manifest() {
@@ -528,7 +568,7 @@ mod tests {
 
         assert_eq!(project.source, "//1 maþr");
         assert_eq!(project.output, "<TEI/>");
-        assert_eq!(project.manifest.version, "1.5");
+        assert_eq!(project.manifest.version, "1.6");
         assert_eq!(project.manifest.template_id, "menota");
         assert!(project.imported_document.unwrap().is_menota);
         assert_eq!(project.original_body_xml.as_deref(), Some("<body></body>"));

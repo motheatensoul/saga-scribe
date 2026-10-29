@@ -54,6 +54,9 @@ pub enum PatchOperation {
     Delete { segment_id: usize },
 }
 
+/// The DSL token for a paragraph break.
+const PARAGRAPH: &str = ".p";
+
 /// Largest middle region (original × edited tokens) diffed with an exact LCS table.
 const LCS_CELL_LIMIT: usize = 4_000_000;
 
@@ -296,6 +299,7 @@ fn segment_token_text(seg: &Segment) -> Option<String> {
             Some(num) => format!("///{}", num),
             None => "///".to_string(),
         }),
+        Segment::Paragraph { .. } => Some(PARAGRAPH.to_string()),
         _ => None,
     }
 }
@@ -314,6 +318,7 @@ fn parse_dsl_to_tokens(dsl: &str) -> Result<Vec<String>, String> {
                     | Node::Head(_)
                     | Node::SuppliedBlock(_)
                     | Node::Norm(_)
+                    | Node::ParagraphBreak
             )
         })
         .map(node_to_dsl)
@@ -362,6 +367,7 @@ fn node_to_dsl(node: &Node) -> String {
         Node::WordContinuation => "~".to_string(),
         Node::CompoundJoin => "~".to_string(),
         Node::WordBoundary => "|".to_string(),
+        Node::ParagraphBreak => PARAGRAPH.to_string(),
         Node::Word(nodes) | Node::Punctuation(nodes) => nodes.iter().map(node_to_dsl).collect(),
     }
 }
@@ -582,29 +588,250 @@ pub fn compiler_config_for(doc: &ImportedDocument) -> CompilerConfig {
 /// - Source spans available: splices changes into `original_body`.
 /// - Otherwise: falls back to rebuilding the body from segments, which preserves
 ///   structure but not the exact original formatting.
+///
+/// # Errors
+///
+/// Returns an error if a `.p` edit can't be applied without breaking the XML
+/// (see [`check_paragraph_edits`]).
 pub fn render_body(
     doc: &ImportedDocument,
     original_body: Option<&str>,
     patches: &[PatchOperation],
     compiler: &mut Compiler,
-) -> String {
+) -> Result<String, String> {
     let unchanged = patches
         .iter()
         .all(|p| matches!(p, PatchOperation::Keep { .. }));
 
     if let Some(body) = original_body {
         if unchanged {
-            return body.to_string();
-        }
-        if let Some(spans) = &doc.spans {
-            if let Some(xml) = splice_into_source(body, &doc.segments, spans, patches, compiler) {
-                return xml;
-            }
-            log::warn!("Source spans inconsistent with patches; falling back to reconstruction");
+            return Ok(body.to_string());
         }
     }
 
-    apply_patches_and_reconstruct(&doc.segments, patches, compiler)
+    let patches = separate_paragraph_edits(&doc.segments, patches);
+    check_paragraph_edits(&doc.segments, &patches)?;
+
+    if let (Some(body), Some(spans)) = (original_body, &doc.spans) {
+        if let Some(xml) = splice_into_source(body, &doc.segments, spans, &patches, compiler) {
+            return Ok(xml);
+        }
+        log::warn!("Source spans inconsistent with patches; falling back to reconstruction");
+    }
+
+    // Rebuilding inserts at segment boundaries only, which may not be where
+    // the split belongs (after closing tags); merges are still fine
+    if patches
+        .iter()
+        .any(|p| matches!(p, PatchOperation::Insert { dsl } if dsl == PARAGRAPH))
+    {
+        return Err(
+            "Paragraphs can't be split in this file: its layout couldn't be mapped to the original source"
+                .to_string(),
+        );
+    }
+    Ok(apply_patches_and_reconstruct(&doc.segments, &patches, compiler))
+}
+
+/// Rewrites patches so that paragraph breaks are only ever kept, deleted or
+/// inserted on their own: a paragraph start tag is never "modified" into a
+/// word, and a word is never "modified" into a paragraph break.
+fn separate_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) -> Vec<PatchOperation> {
+    let paragraphs: std::collections::HashSet<usize> = segments
+        .iter()
+        .filter(|s| matches!(s, Segment::Paragraph { .. }))
+        .map(Segment::id)
+        .collect();
+
+    let mut out = Vec::with_capacity(patches.len());
+    for patch in patches {
+        let PatchOperation::Modify { segment_id, new_dsl } = patch else {
+            out.push(patch.clone());
+            continue;
+        };
+        let is_paragraph = paragraphs.contains(segment_id);
+        let tokens = parse_dsl_to_tokens(new_dsl).unwrap_or_else(|_| vec![new_dsl.clone()]);
+        if !is_paragraph && !tokens.iter().any(|t| t == PARAGRAPH) {
+            out.push(patch.clone());
+            continue;
+        }
+        let insert = |dsl: &String| PatchOperation::Insert { dsl: dsl.clone() };
+
+        if is_paragraph {
+            // The first `.p` keeps the original tag; everything else is new
+            match tokens.iter().position(|t| t == PARAGRAPH) {
+                Some(k) => {
+                    out.extend(tokens[..k].iter().map(insert));
+                    out.push(PatchOperation::Keep { segment_id: *segment_id });
+                    out.extend(tokens[k + 1..].iter().map(insert));
+                }
+                None => {
+                    out.push(PatchOperation::Delete { segment_id: *segment_id });
+                    out.extend(tokens.iter().map(insert));
+                }
+            }
+        } else {
+            // Breaks before the first other token go before the segment, its
+            // first run of other tokens modifies it, the rest follows
+            let lead = tokens.iter().take_while(|t| *t == PARAGRAPH).count();
+            let run = tokens[lead..].iter().take_while(|t| *t != PARAGRAPH).count();
+            out.extend(tokens[..lead].iter().map(insert));
+            if run == 0 {
+                out.push(PatchOperation::Delete { segment_id: *segment_id });
+            } else {
+                out.push(PatchOperation::Modify {
+                    segment_id: *segment_id,
+                    new_dsl: tokens[lead..lead + run].join(" "),
+                });
+            }
+            out.extend(tokens[lead + run..].iter().map(insert));
+        }
+    }
+    out
+}
+
+/// Where paragraph breaks can be inserted or removed, from the document's
+/// element nesting.
+struct ParagraphStructure<'a> {
+    /// Position of each segment in document order, by ID
+    position: HashMap<usize, usize>,
+    /// The innermost open element after each segment (by position)
+    innermost_after: Vec<Option<&'a str>>,
+}
+
+impl<'a> ParagraphStructure<'a> {
+    fn new(segments: &'a [Segment]) -> Self {
+        let mut stack: Vec<&str> = Vec::new();
+        let mut innermost_after = Vec::with_capacity(segments.len());
+        for segment in segments {
+            match segment {
+                Segment::Paragraph { .. } => stack.push("p"),
+                Segment::Structural { xml, .. } => {
+                    if xml.starts_with("</") {
+                        stack.pop();
+                    } else if !xml.starts_with("<!") && !xml.starts_with("<?") && !xml.ends_with("/>") {
+                        let name = xml[1..]
+                            .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                            .next()
+                            .unwrap_or_default();
+                        stack.push(name.rsplit(':').next().unwrap_or(name));
+                    }
+                }
+                _ => {}
+            }
+            innermost_after.push(stack.last().copied());
+        }
+        let position = segments.iter().enumerate().map(|(i, s)| (s.id(), i)).collect();
+        Self { position, innermost_after }
+    }
+
+    /// Where a paragraph break after segment `id` goes: right after it if that
+    /// is directly inside a paragraph, else after the end tags that follow it
+    /// (`maþr</s>` splits after `</s>`). Returns the segment whose end is the
+    /// split point, or the innermost element if there is none.
+    fn split_point_after(&self, segments: &[Segment], id: usize) -> Result<usize, Option<&'a str>> {
+        let Some(&at) = self.position.get(&id) else { return Err(None) };
+        if self.innermost_after[at] == Some("p") {
+            return Ok(id);
+        }
+        for (j, segment) in segments.iter().enumerate().skip(at + 1) {
+            match segment {
+                Segment::Whitespace { .. } => {}
+                Segment::Structural { xml, .. } if xml.starts_with("</") => {
+                    if self.innermost_after[j] == Some("p") {
+                        return Ok(segment.id());
+                    }
+                }
+                _ => break,
+            }
+        }
+        Err(self.innermost_after[at])
+    }
+
+    /// The `</p>` segment that closes the paragraph before paragraph `id`, if
+    /// only whitespace lies between them.
+    fn preceding_close<'s>(&self, segments: &'s [Segment], id: usize) -> Option<&'s Segment> {
+        let at = *self.position.get(&id)?;
+        segments[..at]
+            .iter()
+            .rev()
+            .find(|s| !matches!(s, Segment::Whitespace { .. }))
+            .filter(|s| matches!(s, Segment::Structural { xml, .. } if xml == "</p>" || xml.ends_with(":p>")))
+    }
+}
+
+/// What stays between two merged paragraphs: the whitespace that separated
+/// their tags, or a line break if there was none (words must stay apart).
+fn separator(between: &str) -> &str {
+    if between.is_empty() { "\n" } else { between }
+}
+
+/// The DSL of a segment, for naming it in error messages.
+fn describe_segment(segment: Option<&Segment>) -> String {
+    match segment.and_then(segment_token_text) {
+        Some(text) => format!("\"{}\"", text.trim()),
+        None => "the start".to_string(),
+    }
+}
+
+/// Checks that every inserted `.p` falls directly inside a paragraph (so it
+/// can split it) and that every removed `.p` directly follows another
+/// paragraph (so the two can be merged).
+///
+/// # Errors
+///
+/// Describes the first `.p` edit that can't be applied.
+fn check_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) -> Result<(), String> {
+    let touches_paragraphs = patches.iter().any(|p| match p {
+        PatchOperation::Insert { dsl } => dsl == PARAGRAPH,
+        PatchOperation::Delete { segment_id } => segments
+            .iter()
+            .any(|s| s.id() == *segment_id && matches!(s, Segment::Paragraph { .. })),
+        _ => false,
+    });
+    if !touches_paragraphs {
+        return Ok(());
+    }
+
+    let structure = ParagraphStructure::new(segments);
+    let by_id: HashMap<usize, &Segment> = segments.iter().map(|s| (s.id(), s)).collect();
+    let mut anchor: Option<usize> = None;
+    for patch in patches {
+        match patch {
+            PatchOperation::Insert { dsl } if dsl == PARAGRAPH => {
+                let Some(after) = anchor else {
+                    return Err("A paragraph break (.p) can't come before the first imported paragraph".to_string());
+                };
+                if let Err(inside) = structure.split_point_after(segments, after) {
+                    let place = match inside {
+                        Some(name) => format!("inside <{}>", name),
+                        None => "outside any paragraph".to_string(),
+                    };
+                    return Err(format!(
+                        "The paragraph break (.p) after {} can't be placed: that point is {}, not directly in a paragraph",
+                        describe_segment(by_id.get(&after).copied()),
+                        place
+                    ));
+                }
+            }
+            PatchOperation::Insert { .. } => {}
+            PatchOperation::Keep { segment_id }
+            | PatchOperation::Modify { segment_id, .. }
+            | PatchOperation::Delete { segment_id } => {
+                if matches!(patch, PatchOperation::Delete { .. })
+                    && matches!(by_id.get(segment_id), Some(Segment::Paragraph { .. }))
+                    && structure.preceding_close(segments, *segment_id).is_none()
+                {
+                    return Err(format!(
+                        "The paragraph break (.p) after {} can't be removed: it starts the first paragraph of its section",
+                        describe_segment(anchor.and_then(|id| by_id.get(&id).copied()))
+                    ));
+                }
+                anchor = Some(*segment_id);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Applies patches by replacing only the source bytes of affected segments.
@@ -619,23 +846,39 @@ fn splice_into_source(
     compiler: &mut Compiler,
 ) -> Option<String> {
     let by_id: HashMap<usize, &Segment> = segments.iter().map(|s| (s.id(), s)).collect();
+    let structure = ParagraphStructure::new(segments);
 
     let mut out = String::with_capacity(body.len() + 1024);
     let mut copied_to = 0;
     // End of the most recent segment touched by a patch; insertions go here.
     let mut anchor: Option<usize> = None;
+    let mut anchor_segment: Option<usize> = None;
     // Insertions before the first segment, waiting for a position.
     let mut pending: Vec<String> = Vec::new();
 
     for patch in patches {
         match patch {
             PatchOperation::Insert { dsl } => {
-                let fragment = render_insert(dsl, compiler);
+                // Splits the paragraph (checked by `check_paragraph_edits`)
+                let split = dsl == PARAGRAPH;
+                let fragment = if split {
+                    "</p>\n<p>".to_string()
+                } else {
+                    render_insert(dsl, compiler)
+                };
+                if split {
+                    let after = anchor_segment
+                        .and_then(|id| structure.split_point_after(segments, id).ok())?;
+                    // Later insertions follow the split, inside the new paragraph
+                    anchor = Some((*spans.get(after)?)?.1);
+                }
                 match anchor {
                     Some(at) => {
                         out.push_str(body.get(copied_to..at)?);
                         copied_to = at;
-                        out.push('\n');
+                        if !split {
+                            out.push('\n');
+                        }
                         out.push_str(fragment.trim_end());
                     }
                     None => pending.push(fragment),
@@ -668,12 +911,25 @@ fn splice_into_source(
                         copied_to = end;
                     }
                     PatchOperation::Delete { .. } => {
-                        out.push_str(body.get(copied_to..start)?);
+                        if let Some(Segment::Paragraph { .. }) = by_id.get(segment_id) {
+                            // Merge with the previous paragraph: drop its `</p>`
+                            // and this start tag, keeping what separates them
+                            let close = structure.preceding_close(segments, *segment_id)?;
+                            let (close_start, close_end) = (*spans.get(close.id())?)?;
+                            if close_start < copied_to || close_end > start {
+                                return None;
+                            }
+                            out.push_str(body.get(copied_to..close_start)?);
+                            out.push_str(separator(body.get(close_end..start)?));
+                        } else {
+                            out.push_str(body.get(copied_to..start)?);
+                        }
                         copied_to = end;
                     }
                     _ => {}
                 }
                 anchor = Some(end);
+                anchor_segment = Some(*segment_id);
             }
         }
     }
@@ -817,6 +1073,7 @@ pub fn apply_patches_and_reconstruct(
                 | Segment::Punctuation { .. }
                 | Segment::LineBreak { .. }
                 | Segment::PageBreak { .. }
+                | Segment::Paragraph { .. }
         ) {
             let seg_id = seg.id();
             let mut handled = false;
@@ -824,6 +1081,10 @@ pub fn apply_patches_and_reconstruct(
             // Interleave leading insertions
             while let Some(patch) = patches.get(current_patch_idx) {
                 match patch {
+                    PatchOperation::Insert { dsl } if dsl == PARAGRAPH => {
+                        xml.push_str("</p>\n<p>");
+                        current_patch_idx += 1;
+                    }
                     PatchOperation::Insert { dsl } => {
                         xml.push_str(&render_insert(dsl, compiler));
                         current_patch_idx += 1;
@@ -841,6 +1102,16 @@ pub fn apply_patches_and_reconstruct(
                             }
                             PatchOperation::Modify { new_dsl, .. } => {
                                 xml.push_str(&render_modify(seg, None, new_dsl, compiler));
+                            }
+                            PatchOperation::Delete { .. } if matches!(seg, Segment::Paragraph { .. }) => {
+                                // Merge with the previous paragraph: drop its `</p>`
+                                if let Some(close) = xml.rfind("</p>") {
+                                    if xml[close + 4..].trim().is_empty() {
+                                        let between = xml.split_off(close + 4);
+                                        xml.truncate(close);
+                                        xml.push_str(separator(&between));
+                                    }
+                                }
                             }
                             _ => {}
                         }
@@ -863,7 +1134,11 @@ pub fn apply_patches_and_reconstruct(
     // 2. Consume any trailing insertions
     for patch in &patches[current_patch_idx.min(patches.len())..] {
         if let PatchOperation::Insert { dsl } = patch {
-            xml.push_str(&render_insert(dsl, compiler));
+            if dsl == PARAGRAPH {
+                xml.push_str("</p>\n<p>");
+            } else {
+                xml.push_str(&render_insert(dsl, compiler));
+            }
         }
     }
 
@@ -872,7 +1147,7 @@ pub fn apply_patches_and_reconstruct(
 
 fn serialize_original_segment(seg: &Segment) -> String {
     match seg {
-        Segment::Structural { xml, .. } => xml.clone(),
+        Segment::Structural { xml, .. } | Segment::Paragraph { xml, .. } => xml.clone(),
         Segment::Word { original_xml, .. } => original_xml.clone(),
         Segment::Punctuation { original_xml, .. } => original_xml.clone(),
         Segment::LineBreak { attributes, .. } => format_tag("lb", attributes),

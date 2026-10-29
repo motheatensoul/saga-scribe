@@ -1198,3 +1198,44 @@ fn test_compile_word_continuation_auto_numbers() {
     assert!(xml.contains("<w>hel<lb n=\"2\"/>lo</w>"), "{xml}");
     assert!(xml.contains("<lb n=\"3\"/>"), "{xml}");
 }
+
+#[test]
+fn test_lexer_paragraph_break_only_standalone() {
+    let doc = Lexer::new(".p a .p\nb word.p .prolog .p.").parse().unwrap();
+    let breaks = doc.nodes.iter().filter(|n| matches!(n, Node::ParagraphBreak)).count();
+    assert_eq!(breaks, 2, "{:?}", doc.nodes);
+    let text: String = doc
+        .nodes
+        .iter()
+        .filter_map(|n| match n {
+            Node::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(text.contains("word.p .prolog .p."), "{text}");
+}
+
+#[test]
+fn test_compile_paragraphs_without_page_wrapping() {
+    let xml = word_wrapping_compiler(false, false).compile(".p a b .p c").unwrap();
+    assert_eq!(xml.matches("<p>").count(), 2, "{xml}");
+    assert_eq!(xml.matches("</p>").count(), 2, "{xml}");
+    assert!(xml.trim_end().ends_with("</p>"), "{xml}");
+    let first = xml.find("<w>c</w>").unwrap();
+    assert!(xml[..first].contains("</p>\n<p>"), "c starts the second paragraph: {xml}");
+}
+
+#[test]
+fn test_compile_paragraphs_with_page_wrapping() {
+    let mut compiler = Compiler::new().with_config(CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: false,
+        wrap_pages: true,
+    });
+    // `.p` right after a page break uses the paragraph the page opened
+    let xml = compiler.compile("///1r .p a .p b ///1v c").unwrap();
+    assert_eq!(xml.matches("<p>").count(), 3, "{xml}");
+    assert_eq!(xml.matches("</p>").count(), 3, "{xml}");
+    assert!(!xml.contains("<p>\n</p>"), "no empty paragraph: {xml}");
+}

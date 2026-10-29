@@ -32,6 +32,7 @@ A desktop application for scholarly manuscript transcription, producing TEI-XML 
 | `//`                     | `<lb/>` or `<lb n="auto"/>`                                  | Line break (auto-numbered if enabled) |
 | `//n`                    | `<lb n="n"/>`                                                | Line break with explicit number       |
 | `///n`                   | `<pb n="n"/>`                                                | Page break (n = page number)          |
+| `.p`                     | `</p><p>`                                                    | New paragraph (on its own, between spaces) |
 | `.abbr[abbr]{expansion}` | `<choice><abbr>abbr</abbr><expan>expansion</expan></choice>` | Abbreviation                          |
 | `[...]` or `[...n]`      | `<gap reason="illegible" quantity="n" unit="chars"/>`        | Gap/lacuna                            |
 | `[...<text>]`            | `<gap/><supplied>text</supplied>`                            | Gap with supplied reading             |

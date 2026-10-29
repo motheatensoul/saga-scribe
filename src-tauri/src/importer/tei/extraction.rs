@@ -423,11 +423,16 @@ impl Extractor {
 
     fn emit_structural(&mut self, node: &Node, segments: &mut Vec<Segment>) {
         let qname = helpers::qualified_name(node);
-        self.track(|c| c.open_tag(&qname));
-        segments.push(Segment::Structural {
-            id: self.next_id(),
-            xml: self.open_tag(node),
-        });
+        // Tags carry spans, so `.p` edits can split and merge paragraphs
+        let open_span = self.track(|c| c.open_tag(&qname));
+        let id = self.next_id();
+        let xml = self.open_tag(node);
+        let open = if helpers::local_name(node) == "p" {
+            Segment::Paragraph { id, xml }
+        } else {
+            Segment::Structural { id, xml }
+        };
+        self.push_spanned(segments, open, open_span);
 
         let mut child = node.get_first_child();
         while let Some(c) = child {
@@ -435,11 +440,12 @@ impl Extractor {
             child = c.get_next_sibling();
         }
 
-        segments.push(Segment::Structural {
+        let close_span = self.track(|c| c.close_tag(&qname));
+        let close = Segment::Structural {
             id: self.next_id(),
             xml: format!("</{}>", qname),
-        });
-        self.track(|c| c.close_tag(&qname));
+        };
+        self.push_spanned(segments, close, close_span);
     }
 
     fn has_element_children(node: &Node) -> bool {
@@ -1270,6 +1276,15 @@ pub fn segments_to_dsl(segments: &[Segment]) -> String {
             }
             Segment::HandShift { .. } => {
                 // HandShift is preserved structurally, not shown in DSL
+            }
+            Segment::Paragraph { .. } => {
+                // Standalone token: always set off by spaces
+                if !dsl.is_empty() && !dsl.ends_with(char::is_whitespace) {
+                    dsl.push(' ');
+                }
+                dsl.push_str(".p ");
+                last_was_linebreak = false;
+                pending_space = false;
             }
             Segment::Structural { .. } => {
                 // Skip structural elements in DSL output

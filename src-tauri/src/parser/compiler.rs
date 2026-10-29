@@ -99,7 +99,7 @@ pub struct Compiler<'a> {
     line_number: u32,
     /// Running word index counter (reset per compilation)
     word_index: u32,
-    /// Tracks whether we're inside a page `<p>` wrapper (for wrap_pages mode)
+    /// Whether a `<p>` is open: opened by a page break (wrap_pages mode) or by `.p`
     in_page_paragraph: bool,
 }
 
@@ -176,12 +176,30 @@ impl<'a> Compiler<'a> {
         self.in_page_paragraph = false;
 
         let mut output = String::new();
+        // Where the open paragraph's content starts, to spot an empty one
+        let mut paragraph_start = 0;
         for node in &nodes {
-            output.push_str(&self.node_to_xml(node));
+            match node {
+                Node::ParagraphBreak => {
+                    if !self.in_page_paragraph {
+                        output.push_str("<p>\n");
+                        self.in_page_paragraph = true;
+                    } else if !output[paragraph_start..].trim().is_empty() {
+                        output.push_str("</p>\n<p>\n");
+                    }
+                    // else: a paragraph just opened (e.g. by a page break) is used as is
+                    paragraph_start = output.len();
+                }
+                Node::PageBreak(_) => {
+                    output.push_str(&self.node_to_xml(node));
+                    paragraph_start = output.len();
+                }
+                _ => output.push_str(&self.node_to_xml(node)),
+            }
         }
 
-        // Close any open page paragraph at the end
-        if self.config.wrap_pages && self.in_page_paragraph {
+        // Close the paragraph still open at the end
+        if self.in_page_paragraph {
             output.push_str("</p>\n");
         }
 
@@ -191,6 +209,9 @@ impl<'a> Compiler<'a> {
     fn node_to_xml(&mut self, node: &Node) -> String {
         match node {
             Node::Text(text) => self.escape_xml(text),
+            // Paragraphs are opened and closed by `compile`; inside fragments
+            // (block content, inserted words) a break has no meaning
+            Node::ParagraphBreak => String::new(),
             Node::LineBreak(n) => {
                 self.line_number += 1;
                 match n {

@@ -47,21 +47,24 @@ impl SourceCursor {
     }
 
     /// Consumes the start tag of a structural element whose children the
-    /// extractor will visit individually.
-    pub fn open_tag(&mut self, qname: &str) -> Option<()> {
+    /// extractor will visit individually, and returns the tag's byte range.
+    pub fn open_tag(&mut self, qname: &str) -> Option<Range<usize>> {
+        let start = self.pos;
         let (tag_end, self_closing) = self.match_start_tag(qname)?;
         self.pos = tag_end;
         self.self_closing.push(self_closing);
-        Some(())
+        Some(start..tag_end)
     }
 
-    /// Consumes the end tag matching the most recent [`open_tag`](Self::open_tag).
-    pub fn close_tag(&mut self, qname: &str) -> Option<()> {
+    /// Consumes the end tag matching the most recent [`open_tag`](Self::open_tag)
+    /// and returns its byte range (empty for an empty-element tag).
+    pub fn close_tag(&mut self, qname: &str) -> Option<Range<usize>> {
+        let start = self.pos;
         if self.self_closing.pop()? {
-            return Some(());
+            return Some(start..start);
         }
         self.pos = self.match_end_tag(self.pos, qname)?;
-        Some(())
+        Some(start..self.pos)
     }
 
     /// Consumes a text node and returns the source offset of every character

@@ -58,6 +58,8 @@ fn test_matches_legacy_on_known_cases() {
         ".supplied{x -{y}- z} .norm{a} .norm{",
         ".head{a -{b}} trailing",
         "mixed þ ð æ ǫ ꝛ \u{E8B7} //3 end",
+        ".p start .p\nmid .p end .p",
+        "word.p .prolog .p. a.p b .head{.p} //4 .p //5",
     ];
     for case in cases {
         assert_equivalent(case);
@@ -83,6 +85,7 @@ fn test_matches_legacy_on_fuzzed_input() {
         "//", "///", "~", "|", ":", "et", "a", "þ", " ", "\n", "1", "3v", "-", "+", "?", "^",
         "{", "}", "[", "]", "<", ">", "-{", "}-", "+{", "}+", "?{", "}?", "^{", "[...", "<<",
         ".abbr[", ".head{", ".supplied{", ".norm{", ".", "~//", "~///", ":et:", "ꝛ",
+        ".p", "p",
     ];
     let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
     let mut next = |n: usize| {

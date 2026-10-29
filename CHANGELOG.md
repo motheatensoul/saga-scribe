@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Direct PDF export** (Linux, Windows): choose where to save, and the PDF is written without the print dialog, from a hidden window so the editor stays responsive. macOS keeps the print dialog ("Save as PDF")
+- **Paragraphs in the DSL**: `.p` starts a new paragraph, also mid-line. Imported files show each `<p>` as `.p`, so paragraphs can be split and joined; only the paragraph tags change in the file, and a split that would break the XML (e.g. inside a sentence `<s>`) is reported instead. (The pilcrow ¶ stays the MENOTA character `:para:`.)
 - **Typeset PDFs**: pages are laid out with [Vivliostyle](https://vivliostyle.org/) (CSS Paged Media), giving fixed page margins, page numbers, and no headings or single lines stranded at a page edge
 - **Bundled Junicode in PDFs**, so MUFI characters print even where the font isn't installed
 - **Syntax errors in the editor**: every DSL syntax error is underlined where it occurs, not just the first; compile errors name the line and column
@@ -21,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Imported files are never modified by reading them**: unedited content is written back byte-for-byte, and edits only replace the bytes of what was edited
-- **Project file format 1.5**: `segments.json` always holds the full manifest (with MENOTA flag and source spans); 1.4 projects still open
+- **Project file format 1.6**: `segments.json` always holds the full manifest (with MENOTA flag and source spans for every tag); 1.4 and 1.5 projects still open. Files imported before this version don't show `.p` until re-imported
 - **Non-MENOTA imports** keep their own encoding style (plain `<w>` or plain text) instead of gaining MENOTA markup on edited words
 - **DSL parser**: rebuilt on a hierarchical syntax tree with source positions and error recovery (internal foundation for the round-trip work); output is unchanged
 - **Syntax errors inside `.head{}`, `.supplied{}` and `.norm{}`** are reported, instead of compiling to an XML comment

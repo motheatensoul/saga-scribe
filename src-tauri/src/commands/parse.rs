@@ -213,7 +213,7 @@ pub async fn compile_imported(
             Some(&source.original_body_xml),
             &patches,
             &mut compiler,
-        );
+        )?;
 
         // Combine with preamble (everything before body) and postamble (everything after)
         Ok(format!("{}{}{}", source.preamble, body, source.postamble))

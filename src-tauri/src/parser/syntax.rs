@@ -73,6 +73,8 @@ pub enum SyntaxKind {
     CompoundJoin,
     /// `|`
     WordBoundary,
+    /// `.p`, standalone: starts a new paragraph
+    ParagraphBreak,
 }
 
 /// A syntax error found while parsing.
@@ -151,6 +153,7 @@ pub fn lower(nodes: &[SyntaxNode], source: &str) -> Vec<Node> {
             SyntaxKind::WordContinuation => Node::WordContinuation,
             SyntaxKind::CompoundJoin => Node::CompoundJoin,
             SyntaxKind::WordBoundary => Node::WordBoundary,
+            SyntaxKind::ParagraphBreak => Node::ParagraphBreak,
         })
         .collect()
 }
@@ -180,6 +183,14 @@ impl<'a> Parser<'a> {
 
     fn rest(&self) -> &'a str {
         &self.src[self.pos..self.end]
+    }
+
+    /// Whether the `len` bytes at `start` form a word of their own: whitespace
+    /// (or the edge of the input) on both sides, so "word.p" stays text.
+    fn is_standalone(&self, start: usize, len: usize) -> bool {
+        let before = self.src[..start].chars().next_back();
+        let after = self.src[start + len..self.end].chars().next();
+        before.is_none_or(char::is_whitespace) && after.is_none_or(char::is_whitespace)
     }
 
     /// Parses constructs until the end of the range, checking prefixes in the
@@ -216,6 +227,10 @@ impl<'a> Parser<'a> {
                     let number = self.consume_while(|c| c.is_ascii_digit());
                     let number = (!number.is_empty()).then_some(number);
                     Some((2, Ok(vec![self.node(SyntaxKind::LineBreak { number }, start)])))
+                } else if rest.starts_with(".p") && self.is_standalone(start, 2) {
+                    flush_text!(start);
+                    self.pos += 2;
+                    Some((2, Ok(vec![self.node(SyntaxKind::ParagraphBreak, start)])))
                 } else if rest.starts_with(".supplied{") {
                     flush_text!(start);
                     Some((10, self.block(start, 10, |content, children| SyntaxKind::SuppliedBlock { content, children })))
