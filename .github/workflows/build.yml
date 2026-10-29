@@ -3,6 +3,17 @@ name: Build
 on:
   push:
     branches: [main]
+  # Manual runs (e.g. to check a dev branch on every platform before merging).
+  # They only build unless "publish" is set, so the nightly release isn't replaced.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the build as the nightly release
+        type: boolean
+        default: false
+
+env:
+  PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
 
 jobs:
   test-tauri:
@@ -25,10 +36,10 @@ jobs:
       - name: setup bun
         uses: oven-sh/setup-bun@v2
 
-      - name: install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
         with:
-          targets: ${{ (matrix.platform == 'macos-14' || matrix.platform == 'macos-13') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          cache-key: ${{ matrix.platform }}${{ matrix.args }}
 
       - name: install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-latest'
@@ -42,44 +53,9 @@ jobs:
           brew install libxml2
           echo "PKG_CONFIG_PATH=$(brew --prefix libxml2)/lib/pkgconfig" >> $GITHUB_ENV
 
-      - name: install dependencies (windows only)
+      - name: Install libxml2 (windows only)
         if: matrix.platform == 'windows-latest'
-        run: |
-          vcpkg integrate install
-          vcpkg install libxml2:x64-windows-static-md
-          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" >> $env:GITHUB_ENV
-          $vcpkgInstalled = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md"
-          echo "LIBXML2_DIR=$vcpkgInstalled" >> $env:GITHUB_ENV
-          # Set linker search paths for MSVC
-          echo "LIB=$vcpkgInstalled\lib;$env:LIB" >> $env:GITHUB_ENV
-          echo "INCLUDE=$vcpkgInstalled\include;$vcpkgInstalled\include\libxml2;$env:INCLUDE" >> $env:GITHUB_ENV
-          # Also set for pkg-config style discovery
-          echo "LIBXML2_INCLUDE_DIR=$vcpkgInstalled\include\libxml2" >> $env:GITHUB_ENV
-          echo "LIBXML2_LIB_DIR=$vcpkgInstalled\lib" >> $env:GITHUB_ENV
-          # Create xml2.lib alias if libxml2.lib exists (some crates expect this name)
-          $libxml2Lib = "$vcpkgInstalled\lib\libxml2.lib"
-          $xml2Lib = "$vcpkgInstalled\lib\xml2.lib"
-          if ((Test-Path $libxml2Lib) -and -not (Test-Path $xml2Lib)) {
-            Copy-Item $libxml2Lib $xml2Lib
-            Write-Host "Created xml2.lib alias"
-          }
-          # Find Windows SDK and MSVC paths for bindgen/clang
-          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          $msvcPath = Get-ChildItem "$vsPath\VC\Tools\MSVC" | Sort-Object Name -Descending | Select-Object -First 1
-          $msvcInclude = "$($msvcPath.FullName)\include"
-          # Find Windows SDK
-          $sdkVersion = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object Name -Descending | Select-Object -First 1
-          $sdkInclude = "C:\Program Files (x86)\Windows Kits\10\Include\$($sdkVersion.Name)\ucrt"
-          # Set bindgen clang args to find system headers
-          $clangArgs = "-I`"$msvcInclude`" -I`"$sdkInclude`" -I`"$vcpkgInstalled\include`" -I`"$vcpkgInstalled\include\libxml2`""
-          echo "BINDGEN_EXTRA_CLANG_ARGS=$clangArgs" >> $env:GITHUB_ENV
-          Write-Host "MSVC include: $msvcInclude"
-          Write-Host "SDK include: $sdkInclude"
-          Write-Host "Clang args: $clangArgs"
-          # List what was installed for debugging
-          Write-Host "Installed libraries:"
-          Get-ChildItem "$vcpkgInstalled\lib\*.lib" | ForEach-Object { Write-Host $_.Name }
-        shell: pwsh
+        uses: ./.github/actions/setup-libxml2-windows
 
       - name: install frontend dependencies
         run: bun install
@@ -88,7 +64,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         with:
-          tagName: nightly # the action automatically replaces \_\_VERSION\_\_ with the app version.
+          # Without a tag name the action only builds (manual runs without "publish")
+          tagName: ${{ env.PUBLISH == 'true' && 'nightly' || '' }}
           releaseName: 'Saga-Scribe Nightly'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: false
@@ -154,6 +131,7 @@ jobs:
           cache-key: flatpak-builder-${{ github.sha }}
 
       - name: Upload Flatpak to Nightly Release
+        if: env.PUBLISH == 'true'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: nightly

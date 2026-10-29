@@ -128,7 +128,8 @@ The user's file is privileged. Reading it must never change it:
 - Regression tests: `test_menota_file_unchanged_is_byte_identical` and friends in `src-tauri/src/importer/tests.rs`.
 
 ## Development Notes
-- **Toolchain:** Rust is pinned in `rust-toolchain.toml`; the crate MSRV is `rust-version` in `src-tauri/Cargo.toml`.
+- **Toolchain:** Rust is pinned in `rust-toolchain.toml` (CI reads it too, via `.github/actions/setup-rust`); the crate MSRV is `rust-version` in `src-tauri/Cargo.toml`.
+- **CI:** PRs to `main` run `test.yml`; pushes to `main` run the full multi-platform `build.yml` and publish the nightly release. Dev branches don't build automatically: to check every platform before merging, run "Build" manually on the branch (`gh workflow run build.yml --ref <branch>`), which builds without publishing. Windows libxml2 setup lives in `.github/actions/setup-libxml2-windows` (shared by build and release).
 - **SvelteKit 3:** configuration lives in `vite.config.ts` (`sveltekit({...})`); there is no `svelte.config.js`. The `$lib` alias is configured there.
 - **XSLT output:** always pass through `sanitizeXsltHtml()` (`src/lib/utils/xslt.ts`, which also holds the shared preview/export pipeline) before rendering or exporting; the app runs under a strict CSP (`src-tauri/tauri.conf.json`).
 - **Cargo Command Quirk:** `cd src-tauri && cargo ...` fails. Use `cd src-tauri; cargo ...`.
