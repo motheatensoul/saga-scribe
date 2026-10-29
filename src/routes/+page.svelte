@@ -1,5 +1,6 @@
 <script lang="ts">
     import { onMount, tick } from "svelte";
+    import { get } from "svelte/store";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open } from "@tauri-apps/plugin-dialog";
     import { saveAs } from "$lib/utils/saveDialog";
@@ -24,6 +25,9 @@
     import { validationStore } from "$lib/stores/validation";
     import * as metadataStore from "$lib/stores/metadata.svelte";
     import { importedStore } from "$lib/stores/imported.svelte";
+    import { compileSession } from "$lib/stores/compileSession";
+    import { renumberWord } from "$lib/stores/renumber";
+    import { lemmatizationHistory } from "$lib/stores/lemmatizationHistory";
     import { preservationStore } from "$lib/stores/preservation.svelte";
     import type { Metadata } from "$lib/types/metadata";
     import { isMetadataEmpty } from "$lib/types/metadata";
@@ -478,23 +482,25 @@
         const template = $templateStore.active;
         if (!template) return null;
 
-        // Use session store for lemma mappings - keyed by word INDEX
-        // $lemmaMappings already provides the right format
-        const compileLemmaMappings = $lemmaMappings.mappings;
-
-        // Get full annotation set for non-lemma annotations
-        const annotationSet = annotationStore.getSet();
-        const hasAnnotations = annotationSet.annotations.length > 0;
-
-        const importOptions = {
+        const entityOptions = {
             entitiesJson: entitiesJson ?? undefined,
             normalizerJson: normalizerJson ?? undefined,
             entityMappingsJson: entityMappingsJson ?? undefined,
             customMappings: $entityStore.customMappings,
         };
+        // Lemmas and annotations are numbered by the previous compile, and
+        // renumbered after each one (compileSession), so they are read only
+        // when it's this compile's turn
+        const lemmaMappingsJson = () => {
+            const mappings = get(lemmaMappings).mappings;
+            return Object.keys(mappings).length > 0 ? JSON.stringify(mappings) : undefined;
+        };
 
         if (importedStore.isImportedMode) {
-            return importedStore.compile(content, importOptions);
+            return importedStore.compile(content, () => ({
+                ...entityOptions,
+                lemmaMappingsJson: lemmaMappingsJson(),
+            }));
         }
 
         // Use dynamic metadata header if metadata exists, otherwise use template header
@@ -511,28 +517,39 @@
             }
         }
 
-        const options = {
-            wordWrap: template.wordWrap,
-            autoLineNumbers: template.autoLineNumbers,
-            multiLevel: template.multiLevel,
-            wrapPages: template.wrapPages,
-            ...importOptions,
-            lemmaMappingsJson:
-                Object.keys(compileLemmaMappings).length > 0
-                    ? JSON.stringify(compileLemmaMappings)
-                    : undefined,
-            annotationsJson: hasAnnotations
-                ? JSON.stringify(annotationSet)
-                : undefined,
-        };
-
-        return await compileDsl(
-            content,
-            header,
-            template.footer,
-            options,
-        );
+        const result = await compileSession.run(content, (guidance) => {
+            const annotationSet = annotationStore.getSet();
+            return compileDsl(
+                content,
+                header,
+                template.footer,
+                {
+                    wordWrap: template.wordWrap,
+                    autoLineNumbers: template.autoLineNumbers,
+                    multiLevel: template.multiLevel,
+                    wrapPages: template.wrapPages,
+                    ...entityOptions,
+                    lemmaMappingsJson: lemmaMappingsJson(),
+                    annotationsJson:
+                        annotationSet.annotations.length > 0 ? JSON.stringify(annotationSet) : undefined,
+                },
+                guidance,
+            );
+        });
+        return result.xml;
     }
+
+    // Words inserted or deleted: everything stored by word number moves along
+    compileSession.onRenumbering = (map) => {
+        annotationStore.renumber(map);
+        lemmatizationHistory.renumber(map);
+        const move = (index: number) => renumberWord(map, index) ?? -1;
+        if (selectedWordIndex >= 0) selectedWordIndex = move(selectedWordIndex);
+        if (spanEndWordIndex !== null) {
+            const end = move(spanEndWordIndex);
+            spanEndWordIndex = end >= 0 ? end : null;
+        }
+    };
 
     /** Idle time after the last compile before the output is validated. */
     const VALIDATION_DELAY_MS = 1000;
@@ -631,15 +648,17 @@
     let warnedAnnotationsNotExported = false;
 
     /**
-     * Imported-mode output is spliced from the original XML and does not yet
-     * include annotations made in the editor. Say so once per session.
+     * Imported-mode output is spliced from the original XML: confirmed lemmas
+     * are written into it, other annotations (notes, semantic, paleographic)
+     * would add markup the file doesn't have, so they stay in the project.
+     * Say so once per session.
      */
     function warnIfAnnotationsNotExported() {
         if (!importedStore.isImportedMode || warnedAnnotationsNotExported) return;
         warnedAnnotationsNotExported = true;
         errorStore.warning(
             "Annotations",
-            "Annotations on an imported TEI file are kept in the project but are not yet written to its XML output.",
+            "On an imported TEI file, lemmas are written into the file; notes and other annotations are kept in the project only.",
         );
     }
 
@@ -648,7 +667,6 @@
         lemma?: string,
         msa?: string,
     ) {
-        warnIfAnnotationsNotExported();
         // Wait for Svelte reactivity to propagate store updates
         await tick();
         // Trigger immediate recompile to update TEI output with new lemma
@@ -1556,7 +1574,7 @@
                     </div>
                     <Editor
                         bind:this={editorComponent}
-                        onchanges={(changes) => importedStore.recordChanges(changes)}
+                        onchanges={(changes) => compileSession.record(changes)}
                         onchange={handleEditorChange}
                     />
                 </div>

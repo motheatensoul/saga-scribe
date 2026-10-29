@@ -33,6 +33,10 @@ use crate::normalizer::LevelDictionary;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// A word of a compiled document: the ID of the DSL token it comes from (see
+/// [`crate::identity`]) and its position among that token's words.
+pub type WordKey = (u64, u32);
+
 /// Configuration options for the DSL compiler.
 ///
 /// Controls output format, word wrapping, and multi-level MENOTA support.
@@ -99,6 +103,16 @@ pub struct Compiler<'a> {
     line_number: u32,
     /// Running word index counter (reset per compilation)
     word_index: u32,
+    /// Token IDs (see [`crate::identity`]) of the DSL being compiled, by token
+    token_ids: Option<Vec<u64>>,
+    /// Each word's number in the previous compile, by word key: annotations
+    /// (numbered by the previous compile) are looked up through it
+    previous_numbers: Option<HashMap<WordKey, u32>>,
+    /// The key of every `<w>` written, in document order
+    word_keys: Vec<WordKey>,
+    /// The token being compiled, and how many of its words were written
+    current_token: u64,
+    token_words: u32,
     /// Whether a `<p>` is open: opened by a page break (wrap_pages mode) or by `.p`
     in_page_paragraph: bool,
 }
@@ -113,8 +127,56 @@ impl<'a> Compiler<'a> {
             config: CompilerConfig::default(),
             line_number: 0,
             word_index: 0,
+            token_ids: None,
+            previous_numbers: None,
+            word_keys: Vec::new(),
+            current_token: 0,
+            token_words: 0,
             in_page_paragraph: false,
         }
+    }
+
+    /// Keys the words written by the token they come from (`token_ids`, one
+    /// per token of the DSL, see [`crate::identity`]). With
+    /// `previous_numbers`, annotations and lemma mappings are taken to be
+    /// numbered by the previous compile and follow their words; without,
+    /// they are numbered by this one.
+    pub fn with_word_identity(
+        mut self,
+        token_ids: Vec<u64>,
+        previous_numbers: Option<HashMap<WordKey, u32>>,
+    ) -> Self {
+        self.token_ids = Some(token_ids);
+        self.previous_numbers = previous_numbers;
+        self
+    }
+
+    /// The key of every `<w>` of the last compile, in document order.
+    pub fn word_keys(&self) -> &[WordKey] {
+        &self.word_keys
+    }
+
+    /// Numbers the next word written, returning the number its annotations
+    /// are stored under (`u32::MAX` for a word that is new since the
+    /// previous compile).
+    fn claim_word(&mut self) -> u32 {
+        let key = (self.current_token, self.token_words);
+        self.token_words += 1;
+        self.word_keys.push(key);
+        let number = self.word_index;
+        self.word_index += 1;
+        match &self.previous_numbers {
+            Some(previous) => previous.get(&key).copied().unwrap_or(u32::MAX),
+            None => number,
+        }
+    }
+
+    /// Takes back the last [`claim_word`](Self::claim_word), for a word that
+    /// turned out empty and is not written.
+    fn unclaim_word(&mut self) {
+        self.word_keys.pop();
+        self.word_index -= 1;
+        self.token_words -= 1;
     }
 
     pub fn with_entities(mut self, registry: &'a EntityRegistry) -> Self {
@@ -173,12 +235,24 @@ impl<'a> Compiler<'a> {
         // Reset counters for each compilation
         self.line_number = 0;
         self.word_index = 0;
+        self.word_keys.clear();
         self.in_page_paragraph = false;
+        let mut token_ordinal = 0usize;
 
         let mut output = String::new();
         // Where the open paragraph's content starts, to spot an empty one
         let mut paragraph_start = 0;
         for node in &nodes {
+            // Words are keyed by the token they come from (as tracked for
+            // this DSL); only word-wrapped compiles tokenize the same way
+            if crate::identity::is_token(node) {
+                self.current_token = match (&self.token_ids, self.config.word_wrap) {
+                    (Some(ids), true) => ids.get(token_ordinal).copied().unwrap_or(u64::MAX),
+                    _ => token_ordinal as u64,
+                };
+                self.token_words = 0;
+                token_ordinal += 1;
+            }
             match node {
                 Node::ParagraphBreak => {
                     if !self.in_page_paragraph {
@@ -312,9 +386,7 @@ impl<'a> Compiler<'a> {
         if content.is_empty() {
             String::new()
         } else {
-            // Get current word index and increment
-            let current_index = self.word_index;
-            self.word_index += 1;
+            let current_index = self.claim_word();
 
             // Lookup by word INDEX (only confirmed instances have mappings)
             let lemma_attrs = self.get_lemma_attributes_by_index(current_index);
@@ -338,9 +410,7 @@ impl<'a> Compiler<'a> {
         let facs = self.nodes_to_facs(children);
         let dipl = self.nodes_to_diplomatic(children);
 
-        // Get current word index and increment
-        let current_index = self.word_index;
-        self.word_index += 1;
+        let current_index = self.claim_word();
 
         // Check if we have a user-provided normalized form (by index)
         let norm = if let Some(stored_norm) = self.get_stored_normalized_by_index(current_index) {
@@ -351,6 +421,7 @@ impl<'a> Compiler<'a> {
         };
 
         if facs.is_empty() && dipl.is_empty() && norm.is_empty() {
+            self.unclaim_word();
             String::new()
         } else {
             // Lookup by word INDEX (only confirmed instances have mappings)
@@ -1082,6 +1153,9 @@ impl<'a> Compiler<'a> {
                 Node::Word(children) => {
                     let norm = self.nodes_to_normalized(children);
                     if !norm.is_empty() {
+                        // Numbered like any other word (not annotated: there
+                        // is only a normalized form)
+                        self.claim_word();
                         output.push_str(&format!(
                             "<w>\n  <choice>\n    <me:facs></me:facs>\n    <me:dipl></me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</w>\n",
                             norm
@@ -1126,8 +1200,7 @@ impl<'a> Compiler<'a> {
     /// - The patching module to compile newly inserted content
     /// - Block elements like `.head{content}` and `.supplied{content}`
     ///
-    /// Unlike the main `compile()` method, this doesn't track word indices
-    /// for annotation purposes.
+    /// Its words are numbered and annotated like the main `compile()`'s.
     pub fn compile_fragment_from_dsl(&mut self, dsl: &str) -> String {
         // Parse the DSL fragment
         let mut lexer = Lexer::new(dsl);
@@ -1144,26 +1217,15 @@ impl<'a> Compiler<'a> {
         let mut output = String::new();
         for node in &nodes {
             match node {
+                // Words are numbered (and annotated) like any other word
                 Node::Word(children) if !self.config.multi_level => {
-                    let content = self.nodes_to_xml(children);
-                    if !content.is_empty() {
-                        output.push_str(&format!("<w>{}</w>\n", content));
-                    }
+                    output.push_str(&self.compile_word(children));
                 }
                 Node::Punctuation(children) if !self.config.multi_level => {
                     output.push_str(&format!("<pc>{}</pc>\n", self.nodes_to_xml(children)));
                 }
                 Node::Word(children) => {
-                    let facs = self.nodes_to_facs(children);
-                    let dipl = self.nodes_to_diplomatic(children);
-                    let norm = self.nodes_to_normalized(children);
-
-                    if !facs.is_empty() || !dipl.is_empty() || !norm.is_empty() {
-                        output.push_str(&format!(
-                            "<w>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</w>\n",
-                            facs, dipl, norm
-                        ));
-                    }
+                    output.push_str(&self.compile_word(children));
                 }
                 Node::Punctuation(children) => {
                     let facs = self.nodes_to_facs(children);

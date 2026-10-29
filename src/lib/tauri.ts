@@ -195,7 +195,8 @@ export async function compileDsl(
   templateHeader: string,
   templateFooter: string,
   options?: CompileOptions,
-): Promise<string> {
+  guidance?: CompileGuidance,
+): Promise<CompileResult> {
   return invoke("compile_dsl", {
     input,
     templateHeader,
@@ -210,6 +211,7 @@ export async function compileDsl(
     customMappings: options?.customMappings ?? null,
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     annotationsJson: options?.annotationsJson ?? null,
+    guidance: guidance ?? null,
   });
 }
 
@@ -218,6 +220,8 @@ export interface CompileImportedOptions {
   normalizerJson?: string;
   entityMappingsJson?: string;
   customMappings?: Record<string, string>;
+  /** Confirmed lemmas by word number (written into the file's words) */
+  lemmaMappingsJson?: string;
 }
 
 /**
@@ -254,11 +258,17 @@ export interface CompileGuidance {
   changes: TextChange[];
 }
 
-/** Result of {@link compileImported}. */
-export interface ImportedCompileResult {
+/** Result of {@link compileDsl} and {@link compileImported}. */
+export interface CompileResult {
   xml: string;
   /** Identifies this compile's DSL, for {@link CompileGuidance} */
   revision: number;
+  /**
+   * Where the previous compile's words went: for each of its word numbers,
+   * the number now (null: deleted); absent if no word moved. Annotations
+   * are numbered by the previous compile (and sent so) until renumbered.
+   */
+  renumbering?: (number | null)[] | null;
   /**
    * Words (by number) edited in the DSL whose lemma, analysis and normalized
    * form were kept from the original and should be reviewed
@@ -271,13 +281,14 @@ export async function compileImported(
   editedDsl: string,
   options?: CompileImportedOptions,
   guidance?: CompileGuidance,
-): Promise<ImportedCompileResult> {
+): Promise<CompileResult> {
   return invoke("compile_imported", {
     editedDsl,
     entitiesJson: options?.entitiesJson ?? null,
     normalizerJson: options?.normalizerJson ?? null,
     entityMappingsJson: options?.entityMappingsJson ?? null,
     customMappings: options?.customMappings ?? null,
+    lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     guidance: guidance ?? null,
   });
 }

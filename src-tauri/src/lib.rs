@@ -1,6 +1,7 @@
 mod annotations;
 mod commands;
 mod dictionary;
+mod identity;
 pub mod entities;
 mod importer;
 pub mod metadata;
@@ -23,6 +24,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(OnpState(Mutex::new(None)))
         .manage(commands::parse::ImportedSession::default())
+        .manage(commands::parse::NativeSession::default())
         .manage(commands::pdf::PdfExportState::default())
         .setup(|app| {
             // Spawn validation actor

@@ -1,9 +1,10 @@
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
-use crate::importer::tei::patching::{compiler_config_for, render_body, Guidance, Patcher};
+use crate::identity::{numbers_by_key, renumbering, Guidance, Renumbering, Tracked};
+use crate::importer::tei::patching::{compiler_config_for, render_body, write_lemmas, Patcher};
 use crate::importer::tei::segments::ImportedDocument;
 use crate::normalizer::LevelDictionary;
-use crate::parser::{Compiler, CompilerConfig, LemmaMapping};
+use crate::parser::{Compiler, CompilerConfig, LemmaMapping, WordKey};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::State;
@@ -28,7 +29,10 @@ pub async fn compile_dsl(
     custom_mappings: Option<HashMap<String, String>>,
     lemma_mappings_json: Option<String>,
     annotations_json: Option<String>,
-) -> Result<String, String> {
+    guidance: Option<Guidance>,
+    session: State<'_, NativeSession>,
+) -> Result<CompileOutput, String> {
+    let session = session.inner().clone();
     // Move all the work to a blocking thread pool to avoid blocking the UI
     tauri::async_runtime::spawn_blocking(move || {
         // Load entities if provided
@@ -93,11 +97,54 @@ pub async fn compile_dsl(
             compiler = compiler.with_dictionary(dict);
         }
 
-        let body = compiler.compile(&input)?;
-        Ok(format!("{}\n{}\n{}", template_header, body, template_footer))
+        let mut state = session.0.lock().map_err(|_| "Compile state is poisoned")?;
+        let (body, revision, renumbered) =
+            compile_tracking_words(compiler, &input, guidance.as_ref(), &mut state)?;
+
+        Ok(CompileOutput {
+            xml: format!("{}\n{}\n{}", template_header, body, template_footer),
+            revision,
+            renumbering: renumbered,
+            edited_words: Vec::new(),
+        })
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
+}
+
+/// The last native-mode compile: which token and word is which, so the next
+/// compile can tell where words went.
+#[derive(Default, Clone)]
+pub struct NativeSession(Arc<Mutex<Option<NativeState>>>);
+
+pub struct NativeState {
+    tracked: Tracked,
+    /// The key of every word, in document order
+    words: Vec<WordKey>,
+}
+
+/// Compiles `input`, keeping track of which word is which (see
+/// [`crate::identity`]): the compiler's annotations and lemma mappings are
+/// numbered by the previous compile in `state` and follow their words.
+/// Without `guidance` the document is taken to be new: no previous compile.
+/// Returns the body, its revision and the renumbering of the previous words.
+pub(crate) fn compile_tracking_words(
+    compiler: Compiler,
+    input: &str,
+    guidance: Option<&Guidance>,
+    state: &mut Option<NativeState>,
+) -> Result<(String, u64, Option<Renumbering>), String> {
+    let previous = state.as_ref().filter(|_| guidance.is_some());
+    let tracked = Tracked::track(previous.map(|p| &p.tracked), guidance, input, 0)?;
+    let previous_numbers = previous.map(|p| numbers_by_key(&p.words));
+    let mut compiler = compiler.with_word_identity(tracked.ids.clone(), previous_numbers);
+
+    let body = compiler.compile(input)?;
+    let words = compiler.word_keys().to_vec();
+    let renumbered = previous.and_then(|p| renumbering(&p.words, &words));
+    let revision = tracked.revision;
+    *state = Some(NativeState { tracked, words });
+    Ok((body, revision, renumbered))
 }
 
 /// The imported document being edited, held in the backend.
@@ -116,6 +163,14 @@ pub struct ImportedSource {
     postamble: String,
     /// Which word is which across edits; built on the first compile
     patcher: Option<Patcher>,
+    /// The key of every word of the last compile, in document order
+    words: Option<Vec<WordKey>>,
+}
+
+impl ImportedSource {
+    pub fn new(document: ImportedDocument, original_body_xml: String, preamble: String, postamble: String) -> Self {
+        Self { document, original_body_xml, preamble, postamble, patcher: None, words: None }
+    }
 }
 
 /// Sets (or, with no manifest, clears) the imported document used by [`compile_imported`].
@@ -130,12 +185,13 @@ pub async fn set_imported_document(
     let source = match segments_json {
         Some(json) => Some(
             tauri::async_runtime::spawn_blocking(move || {
-                ImportedDocument::from_json(&json).map(|document| ImportedSource {
-                    document,
-                    original_body_xml: original_body_xml.unwrap_or_default(),
-                    preamble: preamble.unwrap_or_default(),
-                    postamble: postamble.unwrap_or_default(),
-                    patcher: None,
+                ImportedDocument::from_json(&json).map(|document| {
+                    ImportedSource::new(
+                        document,
+                        original_body_xml.unwrap_or_default(),
+                        preamble.unwrap_or_default(),
+                        postamble.unwrap_or_default(),
+                    )
                 })
             })
             .await
@@ -157,6 +213,7 @@ pub async fn set_imported_document(
 ///
 /// Returns an error if no imported document is loaded or the edited DSL does
 /// not parse; callers must keep the previous output rather than writing anything.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command(async, rename_all = "camelCase")]
 pub async fn compile_imported(
     session: State<'_, ImportedSession>,
@@ -165,10 +222,17 @@ pub async fn compile_imported(
     normalizer_json: Option<String>,
     entity_mappings_json: Option<String>,
     custom_mappings: Option<HashMap<String, String>>,
+    lemma_mappings_json: Option<String>,
     guidance: Option<Guidance>,
-) -> Result<ImportedCompile, String> {
+) -> Result<CompileOutput, String> {
     let session = session.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        // Confirmed lemmas, numbered by the previous compile (see CompileOutput)
+        let lemmas: HashMap<u32, LemmaMapping> = match lemma_mappings_json {
+            Some(json) => serde_json::from_str(&json)
+                .map_err(|e| format!("Failed to parse lemma mappings: {}", e))?,
+            None => HashMap::new(),
+        };
         let mut guard = session
             .0
             .lock()
@@ -208,47 +272,84 @@ pub async fn compile_imported(
             compiler = compiler.with_dictionary(dict);
         }
 
-        // Compute patches between original segments and edited DSL, using the
-        // editor's changes to keep track of which word is which
-        let patcher = source.patcher.get_or_insert_with(|| {
-            Patcher::new(&source.document.segments, source.document.dsl_rules)
-        });
-        let (patches, state) = patcher.compute(&edited_dsl, guidance.as_ref())?;
-
-        // Apply patches to the original body XML
-        let body = render_body(
-            &source.document,
-            Some(&source.original_body_xml),
-            &patches,
-            &mut compiler,
-        )?;
-
-        // Only a successful compile becomes the basis for the next one
-        let patcher = source.patcher.get_or_insert_with(|| {
-            Patcher::new(&source.document.segments, source.document.dsl_rules)
-        });
-        patcher.commit(state);
-
-        // Combine with preamble (everything before body) and postamble (everything after)
-        Ok(ImportedCompile {
-            revision: patcher.revision(),
-            edited_words: body.edited_word_indices(),
-            xml: format!("{}{}{}", source.preamble, body.xml, source.postamble),
-        })
+        compile_imported_source(source, &mut compiler, &edited_dsl, guidance.as_ref(), lemmas)
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
 }
 
-/// The result of [`compile_imported`].
+/// Compiles edited DSL into the imported document `source` (see
+/// [`compile_imported`]): splices the edits into the original, keeps track of
+/// which word is which, and writes confirmed `lemmas` (numbered by the
+/// previous compile) into the words.
+pub(crate) fn compile_imported_source(
+    source: &mut ImportedSource,
+    compiler: &mut Compiler,
+    edited_dsl: &str,
+    guidance: Option<&Guidance>,
+    lemmas: HashMap<u32, LemmaMapping>,
+) -> Result<CompileOutput, String> {
+    // Compute patches between original segments and edited DSL, using the
+    // editor's changes to keep track of which word is which
+    let patcher = source.patcher.get_or_insert_with(|| {
+        Patcher::new(&source.document.segments, source.document.dsl_rules)
+    });
+    let (patches, state) = patcher.compute(edited_dsl, guidance)?;
+
+    // Apply patches to the original body XML
+    let body = render_body(
+        &source.document,
+        Some(&source.original_body_xml),
+        &patches,
+        compiler,
+    )?;
+
+    // Which word is which: lemmas follow their words (no guidance: the
+    // document was just loaded, numbered as it is now)
+    let patcher = source.patcher.get_or_insert_with(|| {
+        Patcher::new(&source.document.segments, source.document.dsl_rules)
+    });
+    let words = patcher.word_keys(&source.document, &body, &state);
+    let previous = source.words.as_ref().filter(|_| guidance.is_some());
+    let renumbered = previous.and_then(|previous| renumbering(previous, &words));
+    let lemmas = match previous {
+        Some(previous) => {
+            let now = numbers_by_key(&words);
+            lemmas
+                .into_iter()
+                .filter_map(|(n, lemma)| Some((*now.get(previous.get(n as usize)?)?, lemma)))
+                .collect()
+        }
+        None => lemmas,
+    };
+    let body_xml = write_lemmas(&body, &lemmas, source.document.is_menota);
+
+    // Only a successful compile becomes the basis for the next one
+    patcher.commit(state);
+    source.words = Some(words);
+
+    // Combine with preamble (everything before body) and postamble (everything after)
+    Ok(CompileOutput {
+        revision: patcher.revision(),
+        renumbering: renumbered,
+        edited_words: body.edited_word_indices(),
+        xml: format!("{}{}{}", source.preamble, body_xml, source.postamble),
+    })
+}
+
+/// The result of [`compile_dsl`] and [`compile_imported`].
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ImportedCompile {
+pub struct CompileOutput {
     /// The full document
     pub xml: String,
     /// Identifies this compile's DSL; send it back as [`Guidance::base_revision`]
     /// with the editor's changes since
     pub revision: u64,
+    /// Where the previous compile's words went: for each word number of the
+    /// previous compile, its number now (`null` if deleted); absent if no
+    /// word moved. Annotations stored by word number must be renumbered so.
+    pub renumbering: Option<Renumbering>,
     /// Words (by number, in document order) edited in the DSL whose lemma, msa
     /// and normalized form were kept from the original and should be reviewed
     pub edited_words: Vec<u32>,
@@ -313,5 +414,188 @@ mod tests {
     #[test]
     fn test_dsl_diagnostics_empty_for_valid_input() {
         assert!(dsl_diagnostics(".head{//1 a :et:} -{x}-").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod word_identity_tests {
+    use super::*;
+    use crate::identity::TextChange;
+
+    /// Compiles `dsl` word-wrapped with lemmas `lemmas` (numbered as the
+    /// frontend holds them), as the native compile command does.
+    fn compile(
+        state: &mut Option<NativeState>,
+        dsl: &str,
+        guidance: Option<Guidance>,
+        lemmas: &[(u32, &str)],
+    ) -> (String, Option<Renumbering>) {
+        let mappings: HashMap<u32, LemmaMapping> = lemmas
+            .iter()
+            .map(|(n, lemma)| (*n, LemmaMapping { lemma: lemma.to_string(), msa: String::new(), normalized: None }))
+            .collect();
+        let compiler = Compiler::new()
+            .with_config(CompilerConfig { word_wrap: true, ..Default::default() })
+            .with_lemma_mappings(mappings);
+        let (body, _, renumbered) = compile_tracking_words(compiler, dsl, guidance.as_ref(), state).unwrap();
+        (body, renumbered)
+    }
+
+    /// Whether `word` is written with lemma `lemma`.
+    fn has_lemma(body: &str, lemma: &str, word: &str) -> bool {
+        body.contains(&format!(r#"<w lemma="{lemma}" me:msa="">{word}</w>"#))
+    }
+
+    /// Guidance for one edit since the last compile in `state`.
+    fn edit(state: &Option<NativeState>, from_a: usize, to_a: usize, inserted: usize) -> Option<Guidance> {
+        let base_revision = state.as_ref().unwrap().tracked.revision;
+        Some(Guidance {
+            base_revision,
+            changes: vec![TextChange { from_a, to_a, from_b: from_a, to_b: from_a + inserted }],
+        })
+    }
+
+    #[test]
+    fn test_lemma_follows_its_word_when_a_word_is_inserted_before_it() {
+        let mut state = None;
+        let (body, renumbered) = compile(&mut state, "a b c", None, &[(1, "bee")]);
+        assert!(has_lemma(&body, "bee", "b"), "{body}");
+        assert_eq!(renumbered, None);
+
+        // "x " inserted at the start; the frontend still numbers b as 1
+        let guidance = edit(&state, 0, 0, 2);
+        let (body, renumbered) = compile(&mut state, "x a b c", guidance, &[(1, "bee")]);
+        assert!(has_lemma(&body, "bee", "b"), "{body}");
+        assert!(!has_lemma(&body, "bee", "a"), "{body}");
+        assert_eq!(renumbered, Some(vec![Some(1), Some(2), Some(3)]));
+    }
+
+    #[test]
+    fn test_deleted_word_is_reported_gone_and_its_lemma_lands_nowhere() {
+        let mut state = None;
+        compile(&mut state, "a b c", None, &[(1, "bee")]);
+        // "b " deleted
+        let guidance = edit(&state, 2, 4, 0);
+        let (body, renumbered) = compile(&mut state, "a c", guidance, &[(1, "bee")]);
+        assert!(!body.contains("bee"), "{body}");
+        assert_eq!(renumbered, Some(vec![Some(0), None, Some(1)]));
+    }
+
+    #[test]
+    fn test_without_guidance_a_document_is_new() {
+        let mut state = None;
+        compile(&mut state, "a b c", None, &[]);
+        // Another document: numbered by itself, nothing renumbered
+        let (body, renumbered) = compile(&mut state, "x y", None, &[(1, "why")]);
+        assert!(has_lemma(&body, "why", "y"), "{body}");
+        assert_eq!(renumbered, None);
+    }
+
+    #[test]
+    fn test_words_in_headings_are_numbered_like_the_previews() {
+        // The previews count every <w>: x=0, a=1, b=2 (in the heading), y=3
+        let mut state = None;
+        let (body, _) = compile(&mut state, "x .head{a b} y", None, &[(2, "bee"), (3, "why")]);
+        assert!(has_lemma(&body, "bee", "b"), "{body}");
+        assert!(has_lemma(&body, "why", "y"), "{body}");
+    }
+
+    #[test]
+    fn test_out_of_step_guidance_still_follows_words() {
+        let mut state = None;
+        compile(&mut state, "a b c", None, &[(1, "bee")]);
+        let stale = Some(Guidance { base_revision: 99, changes: vec![] });
+        let (body, renumbered) = compile(&mut state, "x a b c", stale, &[(1, "bee")]);
+        assert!(has_lemma(&body, "bee", "b"), "{body}");
+        assert_eq!(renumbered, Some(vec![Some(1), Some(2), Some(3)]));
+    }
+}
+
+#[cfg(test)]
+mod imported_identity_tests {
+    use super::*;
+    use crate::identity::TextChange;
+
+    const TWO_OKS: &str = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="ok" me:msa="xCC"><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w> <w><choice><me:facs>maþr</me:facs><me:dipl>maþr</me:dipl><me:norm>maðr</me:norm></choice></w></p></body></text></TEI>"#;
+
+    fn open(xml: &str) -> (ImportedSource, String) {
+        let import = crate::importer::tei::parse(xml).unwrap();
+        let source = ImportedSource::new(
+            import.imported_document.unwrap(),
+            import.original_body_xml.unwrap(),
+            import.original_preamble.unwrap_or_default(),
+            import.original_postamble.unwrap_or_default(),
+        );
+        (source, import.dsl)
+    }
+
+    fn compile(
+        source: &mut ImportedSource,
+        dsl: &str,
+        guidance: Option<Guidance>,
+        lemmas: &[(u32, &str, &str)],
+    ) -> CompileOutput {
+        let mut compiler = Compiler::new().with_config(compiler_config_for(&source.document));
+        let lemmas = lemmas
+            .iter()
+            .map(|(n, lemma, msa)| (*n, LemmaMapping { lemma: lemma.to_string(), msa: msa.to_string(), normalized: None }))
+            .collect();
+        compile_imported_source(source, &mut compiler, dsl, guidance.as_ref(), lemmas).unwrap()
+    }
+
+    #[test]
+    fn test_lemmas_already_in_the_file_change_nothing() {
+        let (mut source, dsl) = open(TWO_OKS);
+        let out = compile(&mut source, &dsl, None, &[(0, "ok", "xCC")]);
+        assert_eq!(out.xml, TWO_OKS);
+    }
+
+    #[test]
+    fn test_confirmed_lemma_is_written_into_the_start_tag_only() {
+        let (mut source, dsl) = open(TWO_OKS);
+        let out = compile(&mut source, &dsl, None, &[(0, "ok", "xCC"), (1, "maðr", "xNC")]);
+        assert_eq!(out.xml, TWO_OKS.replacen("<w><choice><me:facs>maþr", r#"<w lemma="maðr" me:msa="xNC"><choice><me:facs>maþr"#, 1));
+    }
+
+    #[test]
+    fn test_lemma_follows_its_word_through_an_insertion() {
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[]);
+        // DSL ".p ok maþr": insert "ek " before "maþr"; the lemma is still
+        // numbered as word 1 (maþr) by the previous compile
+        let at = dsl.find("maþr").unwrap();
+        let edited = format!("{}ek {}", &dsl[..at], &dsl[at..]);
+        let guidance = Guidance {
+            base_revision: source.patcher.as_ref().unwrap().revision(),
+            changes: vec![TextChange { from_a: at, to_a: at, from_b: at, to_b: at + 3 }],
+        };
+        let out = compile(&mut source, &edited, Some(guidance), &[(1, "maðr", "xNC")]);
+        assert!(out.xml.contains(r#"<w lemma="maðr" me:msa="xNC"><choice><me:facs>maþr"#), "{}", out.xml);
+        assert_eq!(out.renumbering, Some(vec![Some(0), Some(2)]));
+    }
+
+    #[test]
+    fn test_menota_file_with_its_own_lemmas_stays_byte_identical() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/HolmPerg-34-4to-MLL.xml");
+        let Ok(xml) = std::fs::read_to_string(path) else { return };
+        let (mut source, dsl) = open(&xml);
+
+        // The lemmas the app loads on import: every <w> with lemma and msa
+        let body = source.original_body_xml.clone();
+        let words: Vec<usize> = body.match_indices("<w").map(|(i, _)| i).filter(|&i| body[i + 2..].starts_with([' ', '>'])).collect();
+        let lemmas: Vec<(u32, String, String)> = words
+            .iter()
+            .enumerate()
+            .filter_map(|(n, &at)| {
+                let tag = &body[at..at + crate::importer::tei::source_map::tag_length(&body[at..])?];
+                let attr = crate::importer::tei::source_map::tag_attribute;
+                Some((n as u32, attr(tag, "lemma")?, attr(tag, "me:msa").or_else(|| attr(tag, "msa"))?))
+            })
+            .collect();
+        assert!(lemmas.len() > 40_000, "{}", lemmas.len());
+        let lemmas: Vec<(u32, &str, &str)> = lemmas.iter().map(|(n, l, m)| (*n, l.as_str(), m.as_str())).collect();
+
+        let out = compile(&mut source, &dsl, None, &lemmas);
+        assert!(out.xml == xml, "the file's own lemmas changed it");
     }
 }

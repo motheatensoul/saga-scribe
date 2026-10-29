@@ -59,6 +59,8 @@ export class EditHistory {
      * or null if they aren't fully known.
      */
     changesFor(id: number): TextChange[] | null {
+        // Forgotten (another document was loaded since it was made)
+        if (!this.windows.some((window) => window.id === id)) return null;
         let composed: ChangeSet | null = null;
         for (const window of this.windows) {
             if (!window.changes) return null;

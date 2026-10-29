@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import type { SessionLemmaMapping } from './dictionary';
+import { renumberWord, type Renumbering } from './renumber';
 
 export interface LemmaAction {
     type: 'confirm' | 'unconfirm';
@@ -93,6 +94,17 @@ function createLemmatizationHistoryStore() {
                 maxHistory: max,
                 undoStack: state.undoStack.slice(-max),
             })),
+
+        /** Moves every action to its word's new number; drops those whose word is gone. */
+        renumber: (map: Renumbering) =>
+            update((state) => {
+                const move = (actions: LemmaAction[]) =>
+                    actions.flatMap((action) => {
+                        const wordIndex = renumberWord(map, action.wordIndex);
+                        return wordIndex === undefined ? [] : [{ ...action, wordIndex }];
+                    });
+                return { ...state, undoStack: move(state.undoStack), redoStack: move(state.redoStack) };
+            }),
     };
 }
 

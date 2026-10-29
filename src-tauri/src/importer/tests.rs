@@ -1,9 +1,10 @@
 use super::tei::parse;
 use crate::importer::tei::helpers;
 use crate::importer::tei::patching::{
-    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body, Guidance,
-    PatchOperation, Patcher, RenderedBody, TextChange,
+    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body,
+    PatchOperation, Patcher, RenderedBody,
 };
+use crate::identity::{Guidance, TextChange};
 use crate::importer::tei::segments::Segment;
 use crate::parser::{Compiler, CompilerConfig, Lexer};
 use libxml::tree::NodeType;

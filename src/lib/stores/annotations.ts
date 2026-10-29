@@ -11,6 +11,7 @@ import type {
     AnnotationValue,
     AnnotationMetadata,
 } from "$lib/types/annotations";
+import { renumberAnnotation, renumberSet, type Renumbering } from "./renumber";
 import {
     createEmptyAnnotationSet,
     createLemmaAnnotation,
@@ -115,6 +116,21 @@ function createAnnotationHistoryStore() {
                 maxHistory: max,
                 undoStack: state.undoStack.slice(-max),
             })),
+
+        /** Moves every action to its words' new numbers; drops those whose word is gone. */
+        renumber: (map: Renumbering) =>
+            update((state) => {
+                const move = (actions: AnnotationAction[]) =>
+                    actions.flatMap((action) => {
+                        const annotation = renumberAnnotation(action.annotation, map);
+                        if (!annotation) return [];
+                        const previousAnnotation = action.previousAnnotation
+                            ? renumberAnnotation(action.previousAnnotation, map)
+                            : action.previousAnnotation;
+                        return [{ ...action, annotation, previousAnnotation }];
+                    });
+                return { ...state, undoStack: move(state.undoStack), redoStack: move(state.redoStack) };
+            }),
     };
 }
 
@@ -421,6 +437,11 @@ function createAnnotationStore() {
         loadSet,
         getSet,
         clear,
+        /** Moves every annotation (and its undo history) to its word's new number. */
+        renumber: (map: Renumbering) => {
+            update((state) => ({ set: renumberSet(state.set, map) }));
+            annotationHistory.renumber(map);
+        },
 
         // Backward-compatible lemma methods
         confirmLemma,

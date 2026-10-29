@@ -87,7 +87,7 @@ mod differential_tests;
 #[cfg(test)]
 mod tests;
 
-pub use compiler::{Compiler, CompilerConfig, LemmaMapping};
+pub use compiler::{Compiler, CompilerConfig, LemmaMapping, WordKey};
 
 // Re-export for use by importer/patching
 pub use ast::Node;
