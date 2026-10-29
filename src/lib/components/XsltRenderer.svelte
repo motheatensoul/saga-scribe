@@ -3,6 +3,7 @@
     import { entityStore } from '$lib/stores/entities';
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
     import { importedStore } from '$lib/stores/imported.svelte';
+    import { isPageLocal, renderPages, splitPages } from '$lib/rendered/xsltPages';
 
     let {
         content = '',
@@ -20,6 +21,17 @@
     let renderedHtml = $state('');
     let error = $state<string | null>(null);
     let xslProcessor = $state<XSLTProcessor | null>(null);
+    /** Whether the stylesheet may be applied one page at a time (see xsltPages.ts) */
+    let pageLocal = false;
+    /** Rendering page by page: the pages live in `pagesEl`, `renderedHtml` is unused */
+    let pageMode = $state(false);
+    /** Bumped whenever the rendered pages change, so word styling runs again */
+    let pagesVersion = $state(0);
+    let pagesEl: HTMLDivElement;
+    /** Each rendered page's source document and element, in order */
+    let pages: { source: string; element: HTMLElement }[] = [];
+    /** Page HTML by source document, for the current stylesheet and entities */
+    let pageCache = new Map<string, string>();
     let isTransforming = $state(false);
     let containerEl: HTMLDivElement;
     let enhanceVersion = 0;
@@ -36,6 +48,8 @@
         xslProcessor = null;
         renderedHtml = '';
         error = null;
+        showPages([], []);
+        pageCache = new Map();
 
         if (!currentPath) {
             error = 'No stylesheet selected';
@@ -46,6 +60,7 @@
             try {
                 const xslText = await loadStylesheetText(currentPath);
                 if (version !== loadVersion) return;
+                pageLocal = isPageLocal(xslText);
                 xslProcessor = createXsltProcessor(xslText);
             } catch (e) {
                 if (version !== loadVersion) return;
@@ -65,6 +80,7 @@
 
         if (!processor || !xmlContent.trim()) {
             renderedHtml = '';
+            showPages([], []);
             renderedFrom = null;
             isTransforming = false;
             return;
@@ -76,8 +92,8 @@
             return;
         }
 
-        // XSLT is a whole-document program, so it can't be re-run for just the
-        // edited part. Instead it only runs while visible, and only when its inputs changed.
+        // Only while visible, and only when the inputs changed. A page-local
+        // stylesheet only re-runs on the pages that changed.
         if (!active) return;
         if (
             renderedFrom?.processor === processor &&
@@ -95,11 +111,27 @@
         const controller = new AbortController();
         (async () => {
             try {
-                const html = await runXsltTransform(processor, xmlContent, entities, {
-                    bodyOnly: true,
-                    signal: controller.signal,
-                });
-                renderedHtml = html;
+                const paged = pageLocal ? splitPages(xmlContent) : null;
+                if (paged) {
+                    // Cached pages only fit the same stylesheet and entities
+                    const cache =
+                        renderedFrom?.processor === processor && renderedFrom.entities === entities
+                            ? pageCache
+                            : new Map<string, string>();
+                    const result = await renderPages(processor, paged, entities, cache, controller.signal);
+                    pageCache = result.cache;
+                    showPages(paged.pieces, result.html);
+                    renderedHtml = '';
+                } else {
+                    // Whole-document transform: the stylesheet computes its own parameters
+                    processor.removeParameter(null, 'lineBased');
+                    const html = await runXsltTransform(processor, xmlContent, entities, {
+                        bodyOnly: true,
+                        signal: controller.signal,
+                    });
+                    showPages([], []);
+                    renderedHtml = html;
+                }
                 renderedFrom = { processor, content: xmlContent, entities };
                 error = null;
                 isTransforming = false;
@@ -108,12 +140,47 @@
                 error = e instanceof Error ? e.message : `Transform error: ${e}`;
                 console.error(error);
                 renderedHtml = '';
+                showPages([], []);
                 isTransforming = false;
             }
         })();
 
         return () => controller.abort();
     });
+
+    /**
+     * Shows rendered pages, touching only those whose source changed: a page
+     * with the same source keeps its element (and the browser its layout).
+     */
+    function showPages(sources: string[], html: string[]) {
+        if (!pagesEl) return;
+        if (sources.length === pages.length) {
+            sources.forEach((source, i) => {
+                if (pages[i].source !== source) {
+                    pages[i].element.innerHTML = html[i];
+                    pages[i].source = source;
+                }
+            });
+        } else {
+            // Pages added or removed: reuse unchanged pages' elements
+            const unused = new Map<string, HTMLElement[]>();
+            for (const page of pages) {
+                unused.set(page.source, [...(unused.get(page.source) ?? []), page.element]);
+            }
+            pages = sources.map((source, i) => {
+                let element = unused.get(source)?.shift();
+                if (!element) {
+                    element = document.createElement('div');
+                    element.className = 'xslt-page';
+                    element.innerHTML = html[i];
+                }
+                return { source, element };
+            });
+            pagesEl.replaceChildren(...pages.map((page) => page.element));
+        }
+        pageMode = sources.length > 0;
+        pagesVersion++;
+    }
 
     // Set up delegated word click handlers
     $effect(() => {
@@ -137,7 +204,8 @@
 
     // Add word styling in chunks to avoid blocking
     $effect(() => {
-        if (!containerEl || !renderedHtml) return;
+        void pagesVersion;
+        if (!containerEl || (!renderedHtml && !pageMode)) return;
 
         const currentVersion = ++enhanceVersion;
         const wordElements = Array.from(
@@ -195,6 +263,8 @@
             <span class="loading loading-spinner loading-md"></span>
             <span class="ml-2">Loading stylesheet...</span>
         </div>
+    {:else if pageMode}
+        <!-- The pages are in pagesEl below -->
     {:else if isTransforming && !renderedHtml}
         <div class="flex items-center justify-center h-32">
             <!-- SVG spinner for reliable animation during heavy processing -->
@@ -213,6 +283,8 @@
     {:else}
         {@html renderedHtml}
     {/if}
+    <!-- Page by page rendering, managed by showPages() -->
+    <div bind:this={pagesEl}></div>
 </div>
 
 <style>
