@@ -1,5 +1,4 @@
 use super::types::{ValidationError, ValidationResult};
-use libxml::parser::Parser;
 use libxml::schemas::{SchemaParserContext, SchemaValidationContext};
 use std::path::Path;
 
@@ -48,9 +47,7 @@ impl XsdValidator {
         xml_content: &str,
         schema_name: &str,
     ) -> Result<ValidationResult, String> {
-        let xml_doc = Parser::default()
-            .parse_string(xml_content)
-            .map_err(|e| format!("Failed to parse XML: {}", e))?;
+        let xml_doc = crate::xml::parse(xml_content)?;
 
         // Discard anything left over from a previous run of this context
         schema_ctx.drain_errors();
@@ -80,10 +77,7 @@ impl XsdValidator {
         schema_name: &str,
     ) -> Result<ValidationResult, String> {
         // Parse the XML document
-        let parser = Parser::default();
-        let xml_doc = parser
-            .parse_string(xml_content)
-            .map_err(|e| format!("Failed to parse XML: {}", e))?;
+        let xml_doc = crate::xml::parse(xml_content)?;
 
         // Load and parse the schema from string
         let mut schema_parser = SchemaParserContext::from_buffer(schema_content);
@@ -120,6 +114,7 @@ impl XsdValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libxml::parser::Parser;
     use std::path::PathBuf;
 
     fn get_test_schema_path() -> Option<PathBuf> {

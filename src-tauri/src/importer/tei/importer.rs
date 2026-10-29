@@ -23,7 +23,6 @@ use crate::metadata::{
 use crate::importer::tei::extraction::Extractor;
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::{ImportedDocument, Segment, SourceSpans, DSL_RULES};
-use libxml::parser::{Parser, ParserOptions};
 use libxml::tree::{Document, Node, NodeType};
 
 /// Result of parsing a TEI-XML file.
@@ -128,17 +127,9 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
     })
 }
 
-/// Parses XML without network access (external DTDs/entities are never fetched).
+/// Parses XML without network access, with its entities declared (see [`crate::xml`]).
 fn parse_document(xml_content: &str) -> Result<Document, String> {
-    Parser::default()
-        .parse_string_with_options(
-            xml_content,
-            ParserOptions {
-                no_net: true,
-                ..Default::default()
-            },
-        )
-        .map_err(|e| format!("Failed to parse XML: {}", e))
+    crate::xml::parse(xml_content)
 }
 
 /// Recomputes source spans for a manifest that was saved without them.
@@ -640,6 +631,13 @@ fn find_body(node: &Node) -> Option<Node> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_entity_without_doctype_survives_import() {
+        // As exported by Saga-Scribe before 0.6.0: no DOCTYPE
+        let xml = "<TEI xmlns:me=\"http://www.menota.org/ns/1.0\"><text><body><p><w><choice><me:facs>&thorn;a</me:facs><me:dipl>þa</me:dipl><me:norm>þá</me:norm></choice></w></p></body></text></TEI>";
+        assert_eq!(parse(xml).unwrap().dsl, ".p :thorn:a");
+    }
 
     #[test]
     fn test_extract_metadata_from_tei() {

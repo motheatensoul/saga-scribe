@@ -10,6 +10,7 @@ mod settings;
 mod stylesheet;
 mod template;
 mod validator;
+mod xml;
 
 use commands::dictionary::OnpState;
 use std::sync::Mutex;

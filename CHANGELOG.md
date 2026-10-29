@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A dangling or doubled `~`** (`upp~ haf`, `upp~~haf`) no longer compiles to stray spaces inside a word
 - **Abbreviations in MENOTA output**: entities inside `.abbr[…]` were written as literal text (`k:bar:` instead of `k&bar;`), and reading such a file back lost the expansion
 - **PDF margins**: page margins were ignored, so text ran to the edge of the page
+- **Characters lost on import with older libxml2** (Ubuntu 24.04, i.e. the .deb): undeclared entities such as `&thorn;` were dropped, from text and from attributes like `lemma`. Every entity a document uses is now declared before parsing, so import and validation behave the same on every libxml2 version, and never access the network
+- **MENOTA exports declare their entities**: the Menota template and the generated header carry Menota's DOCTYPE (the external entity list, as Menota files have), so exported files using `&thorn;` and the like are well-formed XML
 - **Flatpak couldn't start**: it packaged a binary built on Ubuntu, linked against `libxml2.so.2`, which the GNOME runtime doesn't have (it ships libxml2 2.14+). The Flatpak is now compiled inside the GNOME SDK against the runtime's own libraries, which also get the runtime's security updates
 - **Export menu** stopped responding after cancelling a file dialog
 - **Save and export dialogs** add the file extension (`.teis`, `.xml`, `.html`, `.pdf`, `.json`) when a name is typed without one

@@ -297,6 +297,11 @@ impl Metadata {
         // XML declaration and TEI root
         xml.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
         xml.push('\n');
+        // MENOTA text uses entities (`&thorn;`), which must be declared
+        if include_menota_ns {
+            xml.push_str(crate::entities::MENOTA_DOCTYPE);
+            xml.push('\n');
+        }
 
         if include_menota_ns {
             xml.push_str(
@@ -799,6 +804,13 @@ fn escape_xml(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_menota_header_declares_entities() {
+        let header = Metadata::new().to_tei_header(true);
+        assert!(header.contains(crate::entities::MENOTA_DOCTYPE), "{header}");
+        assert!(!Metadata::new().to_tei_header(false).contains("<!DOCTYPE"));
+    }
 
     #[test]
     fn test_empty_metadata() {

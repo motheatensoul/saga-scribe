@@ -6,7 +6,6 @@ use crate::importer::tei::patching::{
 };
 use crate::importer::tei::segments::Segment;
 use crate::parser::{Compiler, CompilerConfig, Lexer};
-use libxml::parser::Parser;
 use libxml::tree::NodeType;
 
 // ============================================================================
@@ -599,10 +598,8 @@ fn test_import_am_ex_markers() {
 }
 
 fn normalize_xml(xml: &str) -> String {
-    let parser = Parser::default();
-    let doc = parser
-        .parse_string(xml)
-        .expect("Should parse XML for normalization");
+    // Entities declared as the importer does, so they survive on both sides
+    let doc = crate::xml::parse(xml).expect("Should parse XML for normalization");
     let root = doc.get_root_element().expect("Should have root element");
     serialize_node_sorted(&root)
 }
@@ -1450,7 +1447,7 @@ fn test_editing_one_identical_word_and_deleting_the_other() {
 
 #[test]
 fn test_out_of_step_guidance_falls_back_to_comparison() {
-    let mut session = Session::open(TWO_OKS);
+    let session = Session::open(TWO_OKS);
     let guidance = Guidance { base_revision: 999, changes: vec![TextChange { from_a: 0, to_a: 9999, from_b: 0, to_b: 0 }] };
     let (patches, _) = session.patcher.compute(".p ok ok maður", Some(&guidance)).unwrap();
     let changed = patches.iter().filter(|p| !matches!(p, PatchOperation::Keep { .. })).count();
