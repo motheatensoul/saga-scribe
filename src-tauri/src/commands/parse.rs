@@ -598,4 +598,57 @@ mod imported_identity_tests {
         let out = compile(&mut source, &dsl, None, &lemmas);
         assert!(out.xml == xml, "the file's own lemmas changed it");
     }
+
+    /// Replaces `old` with `new` in the DSL, as one editor change.
+    fn replace_word(source: &mut ImportedSource, dsl: &str, old: &str, new: &str, lemmas: &[(u32, &str, &str)]) -> CompileOutput {
+        let at = dsl.find(old).unwrap();
+        let edited = format!("{}{}{}", &dsl[..at], new, &dsl[at + old.len()..]);
+        let units = |s: &str| s.encode_utf16().count();
+        let from = units(&dsl[..at]);
+        let guidance = Guidance {
+            base_revision: source.patcher.as_ref().unwrap().revision(),
+            changes: vec![TextChange { from_a: from, to_a: from + units(old), from_b: from, to_b: from + units(new) }],
+        };
+        compile(source, &edited, Some(guidance), lemmas)
+    }
+
+    #[test]
+    fn test_another_word_in_place_of_one_is_a_new_word() {
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[(0, "ok", "xCC")]);
+        // "ok" (lemma ok) replaced with "geck": nothing of "ok" carries over
+        let out = replace_word(&mut source, &dsl, "ok", "geck", &[(0, "ok", "xCC")]);
+        assert!(out.xml.contains("<w>\n  <choice>\n    <me:facs>geck</me:facs>"), "{}", out.xml);
+        assert!(out.xml.contains("<me:norm>geck</me:norm>"), "{}", out.xml);
+        assert!(!out.xml.contains(r#"lemma="ok""#), "{}", out.xml);
+        assert!(out.edited_words.is_empty());
+        // The old word (and so its lemma) is gone
+        assert_eq!(out.renumbering, Some(vec![None, Some(1)]));
+    }
+
+    #[test]
+    fn test_an_edited_word_keeps_its_lemma() {
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[(0, "ok", "xCC")]);
+        let out = replace_word(&mut source, &dsl, "ok", "ek", &[(0, "ok", "xCC")]);
+        assert!(out.xml.contains(r#"<w lemma="ok" me:msa="xCC">"#), "{}", out.xml);
+        assert_eq!(out.edited_words, vec![0]);
+        assert_eq!(out.renumbering, None);
+    }
+
+    #[test]
+    fn test_removed_lemma_is_removed_from_the_file() {
+        let (mut source, dsl) = open(TWO_OKS);
+        // An empty lemma: removed by the user
+        let out = compile(&mut source, &dsl, None, &[(0, "", ""), (1, "", "")]);
+        assert_eq!(out.xml, TWO_OKS.replacen(r#"<w lemma="ok" me:msa="xCC">"#, "<w>", 1));
+    }
+
+    #[test]
+    fn test_reordered_analysis_leaves_the_file_alone() {
+        let xml = TWO_OKS.replacen(r#"me:msa="xCC""#, r#"me:msa="xNC gM nS""#, 1);
+        let (mut source, dsl) = open(&xml);
+        let out = compile(&mut source, &dsl, None, &[(0, "ok", "nS xNC gM")]);
+        assert_eq!(out.xml, xml);
+    }
 }

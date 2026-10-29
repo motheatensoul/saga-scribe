@@ -15,6 +15,9 @@ import { renumberAnnotation, renumberSet, type Renumbering } from "./renumber";
 import {
     createEmptyAnnotationSet,
     createLemmaAnnotation,
+    createRemovedLemma,
+    getLemmaWrites,
+    isRemovedLemma,
     getAnnotationsForWord,
     getAnnotationsByType,
     getLemmaMap,
@@ -330,11 +333,24 @@ function createAnnotationStore() {
     }
 
     /**
-     * Remove a lemma confirmation (backward compatible)
+     * Remove a word's lemma. On an imported file (`keepRemoval`) the removal
+     * is kept as an empty lemma, so that it is written into the file.
      */
-    function unconfirmLemma(wordIndex: number, recordHistory = true): void {
-        const lemmaId = `lemma-${wordIndex}`;
-        removeAnnotation(lemmaId, recordHistory);
+    function unconfirmLemma(wordIndex: number, recordHistory = true, keepRemoval = false): void {
+        if (keepRemoval) {
+            addAnnotation(createRemovedLemma(wordIndex), recordHistory);
+        } else {
+            removeAnnotation(`lemma-${wordIndex}`, recordHistory);
+        }
+    }
+
+    /** Lemmas to write into an imported file (see `getLemmaWrites`). */
+    function getLemmaWritesNow(): ReturnType<typeof getLemmaWrites> {
+        let result: ReturnType<typeof getLemmaWrites> = {};
+        subscribe((state) => {
+            result = getLemmaWrites(state.set);
+        })();
+        return result;
     }
 
     /**
@@ -436,6 +452,7 @@ function createAnnotationStore() {
         hasAnnotationType,
         loadSet,
         getSet,
+        getLemmaWrites: getLemmaWritesNow,
         clear,
         /** Moves every annotation (and its undo history) to its word's new number. */
         renumber: (map: Renumbering) => {
@@ -507,6 +524,7 @@ export const annotationCounts = derived(annotationStore, ($store) => {
         custom: 0,
     };
     for (const ann of $store.set.annotations) {
+        if (isRemovedLemma(ann)) continue;
         counts[ann.type]++;
     }
     return counts;
@@ -517,33 +535,20 @@ export const annotationCounts = derived(annotationStore, ($store) => {
  */
 export const totalAnnotations = derived(
     annotationStore,
-    ($store) => $store.set.annotations.length,
+    ($store) => $store.set.annotations.filter((a) => !isRemovedLemma(a)).length,
 );
 
 /**
  * Backward-compatible: mappings record (legacy format)
  * This is used by components that expect the old sessionLemmaStore format
  */
-export const lemmaMappings = derived(annotationStore, ($store) => {
-    const mappings: Record<
+export const lemmaMappings = derived(annotationStore, ($store) => ({
+    // Removed lemmas (see createRemovedLemma) count as none
+    mappings: Object.fromEntries(getLemmaMap($store.set)) as Record<
         number,
         { lemma: string; msa: string; normalized?: string }
-    > = {};
-    for (const ann of $store.set.annotations) {
-        if (
-            ann.type === "lemma" &&
-            ann.target.type === "word" &&
-            ann.value.kind === "lemma"
-        ) {
-            mappings[ann.target.wordIndex] = {
-                lemma: ann.value.lemma,
-                msa: ann.value.msa,
-                normalized: ann.value.normalized,
-            };
-        }
-    }
-    return { mappings };
-});
+    >,
+}));
 
 // ============================================================================
 // Re-export type helpers

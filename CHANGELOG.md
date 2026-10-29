@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Annotations moved to the wrong words** when words were inserted or deleted before them: lemmas and annotations are stored by word number, which shifted. The backend now keeps track of which word is which across edits (as imported mode did since 0.6), reports how word numbers moved after each compile, and the app moves lemmas, annotations, their undo history and the selection along
+- **Another word typed in place of a deleted one inherited the old word's lemma and normalized form** (in imported files, the normalized form stuck even when the old word was typed back). Only an edit of a word (differing in at most half its letters, like a typo fix) keeps its lemma, analysis and normalized form; another word in its place is a new word, written in the same place
+- **Removing a lemma**: the word panel has "Remove lemma from this word"; its ✕ on known analyses removes the analysis from the dictionary (now labelled so), which left the word's lemma in place. On imported files, removing a lemma removes `lemma` and `me:msa` from the word in the file (and is kept in the project, undoable)
+- **Undo and redo** of lemmas were never enabled: the toolbar followed a history nothing was recorded in
+- **Analyses with their tags in another order** (`xNC gM nS` and `gM xNC nS`) counted as different analyses; they are the same, in the dictionary and when writing lemmas into imported files
+- **ONP unreachable**: when an entry's details can't be fetched (offline, or onp.ku.dk down), the word panel says so instead of waiting indefinitely; the analysis can still be entered
 - **Lemmas after a heading were off by the heading's words**: words inside `.head{}`, `.supplied{}` and `.norm{}` weren't counted when lemmas and annotations were applied, though the previews count them
 
 ## [0.6.1] - 2026-10-29

@@ -59,6 +59,10 @@ pub enum PatchOperation {
         /// The edited token it now is (index into the edited DSL's tokens)
         #[serde(default)]
         token: Option<usize>,
+        /// Another word typed in its place, not the word edited: compiled
+        /// afresh (in the same place), without the old word's data
+        #[serde(default)]
+        fresh: bool,
     },
     #[serde(rename = "insert")]
     Insert {
@@ -170,7 +174,7 @@ impl Patcher {
                 let mut edits = Vec::with_capacity(a.len().max(b.len()));
                 diff_range(&a, &b, 0, 0, &mut edits);
                 let mut origin = vec![None; tokens.len()];
-                for (j, i) in matched_tokens(&edits, 0) {
+                for (j, i) in matched_tokens(&edits, 0, &a, &b) {
                     origin[j] = Some(i);
                 }
                 origin
@@ -191,7 +195,7 @@ impl Patcher {
             .collect();
 
         let edits = edits_from_origin(&origin, &tokens, &self.original.tokens);
-        let patches = pair_modifications(self.original.to_segment_ops(&edits, &tokens));
+        let patches = replace_in_place(self.original.to_segment_ops(&edits, &tokens));
         let state = Tracked::with_ids(previous, edited_dsl, tokens, spans, &known, original_count as u64);
         Ok((patches, state))
     }
@@ -475,6 +479,7 @@ impl OriginalTokens {
                         segment_id,
                         new_dsl: new_tokens.join(" "),
                         token,
+                        fresh: false,
                     });
                 }
             }
@@ -532,9 +537,15 @@ fn parse_dsl_nodes(dsl: &str) -> Result<Vec<Node>, String> {
     Ok(WordTokenizer::new().tokenize(doc.nodes))
 }
 
-/// Pairs each run of deletions with the insertions next to it, in order, so that
-/// edited tokens become Modify operations and keep their original attributes.
-fn pair_modifications(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
+// ============================================================================
+// Rendering
+// ============================================================================
+
+/// Turns a deleted segment and a word inserted in its place into one
+/// replacement in the same place (instead of deleting it and inserting the
+/// new word next to it). These are different words, so the replacement is
+/// fresh: it doesn't inherit the old word's lemma or normalized form.
+fn replace_in_place(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
     let mut result = Vec::with_capacity(ops.len());
     let mut deletes = Vec::new();
     let mut inserts = Vec::new();
@@ -544,13 +555,9 @@ fn pair_modifications(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
                  inserts: &mut Vec<(String, Option<usize>)>| {
         let paired = deletes.len().min(inserts.len());
         for (segment_id, (new_dsl, token)) in deletes.drain(..paired).zip(inserts.drain(..paired)) {
-            result.push(PatchOperation::Modify { segment_id, new_dsl, token });
+            result.push(PatchOperation::Modify { segment_id, new_dsl, token, fresh: true });
         }
-        result.extend(
-            deletes
-                .drain(..)
-                .map(|segment_id| PatchOperation::Delete { segment_id }),
-        );
+        result.extend(deletes.drain(..).map(|segment_id| PatchOperation::Delete { segment_id }));
         result.extend(inserts.drain(..).map(|(dsl, token)| PatchOperation::Insert { dsl, token }));
     };
 
@@ -567,10 +574,6 @@ fn pair_modifications(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
     flush(&mut result, &mut deletes, &mut inserts);
     result
 }
-
-// ============================================================================
-// Rendering
-// ============================================================================
 
 /// Compiler settings matching an imported document's own encoding style:
 /// MENOTA three-level words, plain `<w>` words, or unwrapped text.
@@ -675,7 +678,7 @@ fn separate_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) ->
 
     let mut out = Vec::with_capacity(patches.len());
     for patch in patches {
-        let PatchOperation::Modify { segment_id, new_dsl, token } = patch else {
+        let PatchOperation::Modify { segment_id, new_dsl, token, fresh } = patch else {
             out.push(patch.clone());
             continue;
         };
@@ -713,6 +716,7 @@ fn separate_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) ->
                     segment_id: *segment_id,
                     new_dsl: tokens[lead..lead + run].join(" "),
                     token: *token,
+                    fresh: *fresh,
                 });
             }
             out.extend(tokens[lead + run..].iter().map(insert));
@@ -935,8 +939,8 @@ impl Output {
 /// words' start tags, as `lemma` and the analysis as `me:msa` (or `msa`,
 /// whichever the word or document uses). Only values that differ from what
 /// the tag already says (references resolved) are written, so lemmas read
-/// from the file leave it byte-identical. A lemma that was removed is not
-/// removed from the file.
+/// from the file leave it byte-identical. An empty lemma is a lemma the user
+/// removed: the word's lemma and analysis attributes are removed.
 pub fn write_lemmas(rendered: &RenderedBody, lemmas: &HashMap<u32, LemmaMapping>, menota: bool) -> String {
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     for (&number, mapping) in lemmas {
@@ -945,7 +949,16 @@ pub fn write_lemmas(rendered: &RenderedBody, lemmas: &HashMap<u32, LemmaMapping>
         let tag = &rendered.xml[at..at + len];
 
         let mut new_tag = tag.to_string();
-        if !mapping.lemma.is_empty() && tag_attribute(tag, "lemma").as_deref() != Some(mapping.lemma.as_str()) {
+        if mapping.lemma.is_empty() {
+            for name in ["lemma", "me:msa", "msa"] {
+                new_tag = set_tag_attribute(&new_tag, name, None);
+            }
+            if new_tag != tag {
+                edits.push((at, len, new_tag));
+            }
+            continue;
+        }
+        if tag_attribute(tag, "lemma").as_deref() != Some(mapping.lemma.as_str()) {
             new_tag = set_tag_attribute(&new_tag, "lemma", Some(&mapping.lemma));
         }
         let msa_name = if tag_attribute(tag, "me:msa").is_some() {
@@ -955,7 +968,10 @@ pub fn write_lemmas(rendered: &RenderedBody, lemmas: &HashMap<u32, LemmaMapping>
         } else {
             "me:msa"
         };
-        if !mapping.msa.is_empty() && tag_attribute(tag, msa_name).as_deref() != Some(mapping.msa.as_str()) {
+        // The same tags in another order are the same analysis: left as written
+        let same_msa = tag_attribute(tag, msa_name)
+            .is_some_and(|written| crate::dictionary::same_analysis(&written, &mapping.msa));
+        if !mapping.msa.is_empty() && !same_msa {
             new_tag = set_tag_attribute(&new_tag, msa_name, Some(&mapping.msa));
         }
         if new_tag != tag {
@@ -1054,12 +1070,16 @@ fn splice_into_source(
                 }
 
                 match patch {
-                    PatchOperation::Modify { new_dsl, token, .. } => {
+                    PatchOperation::Modify { new_dsl, token, fresh, .. } => {
                         let segment = by_id.get(segment_id)?;
                         let source = body.get(start..end)?;
-                        let replacement = render_modify(segment, Some(source), new_dsl, compiler);
+                        let replacement = if *fresh {
+                            render_insert(new_dsl, compiler)
+                        } else {
+                            render_modify(segment, Some(source), new_dsl, compiler)
+                        };
                         out.copy(body, copied_to..start)?;
-                        if keeps_word_data(segment, new_dsl) {
+                        if !fresh && keeps_word_data(segment, new_dsl) {
                             edited_words.push(out.xml.len());
                         }
                         out.generate(replacement.trim_end(), *token);
@@ -1332,11 +1352,15 @@ fn reconstruct(segments: &[Segment], patches: &[PatchOperation], compiler: &mut 
                             PatchOperation::Keep { .. } => {
                                 out.push(&serialize_original_segment(seg), Origin::Segment(seg_id));
                             }
-                            PatchOperation::Modify { new_dsl, token, .. } => {
-                                if keeps_word_data(seg, new_dsl) {
-                                    edited_words.push(out.xml.len());
+                            PatchOperation::Modify { new_dsl, token, fresh, .. } => {
+                                if *fresh {
+                                    out.generate(&render_insert(new_dsl, compiler), *token);
+                                } else {
+                                    if keeps_word_data(seg, new_dsl) {
+                                        edited_words.push(out.xml.len());
+                                    }
+                                    out.generate(&render_modify(seg, None, new_dsl, compiler), *token);
                                 }
-                                out.generate(&render_modify(seg, None, new_dsl, compiler), *token);
                             }
                             PatchOperation::Delete { .. } if matches!(seg, Segment::Paragraph { .. }) => {
                                 // Merge with the previous paragraph: drop its `</p>`
@@ -1444,28 +1468,6 @@ mod tests {
         let edits = run(&a, &b);
         let changed = edits.iter().filter(|e| !matches!(e, Edit::Keep(_))).count();
         assert_eq!(changed, 3, "expected delete+insert of first word and one insert");
-    }
-
-    #[test]
-    fn test_pair_modifications_pairs_runs_in_order() {
-        let ops = vec![
-            PatchOperation::Delete { segment_id: 1 },
-            PatchOperation::Delete { segment_id: 2 },
-            PatchOperation::Insert { dsl: "x".into(), token: None },
-            PatchOperation::Insert { dsl: "y".into(), token: None },
-            PatchOperation::Insert { dsl: "z".into(), token: None },
-        ];
-        let paired = pair_modifications(ops);
-        let desc: Vec<String> = paired
-            .iter()
-            .map(|p| match p {
-                PatchOperation::Modify { segment_id, new_dsl, .. } => format!("M{}{}", segment_id, new_dsl),
-                PatchOperation::Insert { dsl, .. } => format!("I{}", dsl),
-                PatchOperation::Delete { segment_id } => format!("D{}", segment_id),
-                PatchOperation::Keep { segment_id } => format!("K{}", segment_id),
-            })
-            .collect();
-        assert_eq!(desc, vec!["M1x", "M2y", "Iz"]);
     }
 
     #[test]

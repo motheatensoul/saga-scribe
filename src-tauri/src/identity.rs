@@ -107,7 +107,7 @@ fn compare(previous: &Tracked, tokens: &[String]) -> Vec<Option<u64>> {
     let mut edits = Vec::with_capacity(a.len().max(b.len()));
     diff_range(&a, &b, 0, 0, &mut edits);
     let mut ids = vec![None; tokens.len()];
-    for (j, k) in matched_tokens(&edits, 0) {
+    for (j, k) in matched_tokens(&edits, 0, &a, &b) {
         ids[j] = Some(previous.ids[k]);
     }
     ids
@@ -218,7 +218,7 @@ pub fn carry_ids(
     for &(k, j) in anchors.iter().chain(std::iter::once(&(old.len(), new.len()))) {
         let mut edits = Vec::new();
         diff_range(&old[k0..k], &new[j0..j], k0, j0, &mut edits);
-        for (jj, kk) in matched_tokens(&edits, j0) {
+        for (jj, kk) in matched_tokens(&edits, j0, &old, &new) {
             ids[jj] = Some(previous.ids[kk]);
         }
         if k < old.len() {
@@ -256,14 +256,22 @@ pub(crate) fn utf16_to_bytes(s: &str, offsets: impl Iterator<Item = usize>) -> O
 
 /// The edited tokens of `edits` that are old ones, as (edited, old) index
 /// pairs: kept tokens, edits known to be the same word (`Replace`), and
-/// deleted tokens paired in order with tokens inserted in their place.
-/// `first_new` is the edited index the edits start at.
-pub fn matched_tokens(edits: &[Edit], first_new: usize) -> Vec<(usize, usize)> {
+/// deleted tokens paired in order with tokens inserted in their place if
+/// they are alike (an edited word, see [`alike`]); a different word typed in
+/// place of a deleted one is a new word. `first_new` is the edited index the
+/// edits start at; `old` and `new` are the token texts the indices refer to.
+pub fn matched_tokens(edits: &[Edit], first_new: usize, old: &[&str], new: &[&str]) -> Vec<(usize, usize)> {
     let mut pairs = Vec::new();
     let mut next = first_new;
     let (mut deleted, mut inserted): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
     let flush = |pairs: &mut Vec<(usize, usize)>, deleted: &mut Vec<usize>, inserted: &mut Vec<usize>| {
-        pairs.extend(inserted.iter().copied().zip(deleted.iter().copied()));
+        pairs.extend(
+            inserted
+                .iter()
+                .copied()
+                .zip(deleted.iter().copied())
+                .filter(|&(j, i)| alike(old[i], new[j])),
+        );
         deleted.clear();
         inserted.clear();
     };
@@ -288,6 +296,34 @@ pub fn matched_tokens(edits: &[Edit], first_new: usize) -> Vec<(usize, usize)> {
     }
     flush(&mut pairs, &mut deleted, &mut inserted);
     pairs
+}
+
+/// Whether `new` is `old` edited rather than another word: of the same kind
+/// (word, break, ...) and differing in at most half of its characters
+/// (`maþr` → `maðr`, not `geck` → `ok`).
+pub fn alike(old: &str, new: &str) -> bool {
+    let kind = |t: &str| t.starts_with("//") || t.starts_with(".p") || t.starts_with(".head{") || t.starts_with(".supplied{") || t.starts_with(".norm{");
+    if kind(old) != kind(new) {
+        return false;
+    }
+    let (a, b): (Vec<char>, Vec<char>) = (old.chars().collect(), new.chars().collect());
+    let longest = a.len().max(b.len());
+    edit_distance(&a, &b) * 2 <= longest
+}
+
+/// Levenshtein distance.
+fn edit_distance(a: &[char], b: &[char]) -> usize {
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut diagonal = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let above = row[j + 1];
+            row[j + 1] = (above + 1).min(row[j] + 1).min(diagonal + usize::from(ca != cb));
+            diagonal = above;
+        }
+    }
+    row[b.len()]
 }
 
 /// Whether a tokenized node is one of the tokens the patcher diffs.

@@ -1112,9 +1112,12 @@ fn test_menota_file_distant_edits_preserve_everything_else() {
         depth += token.matches('{').count() as i32 - token.matches('}').count() as i32;
     }
     let first = first.unwrap();
+    // An edit of the word (one letter): it keeps its lemma. (Another word
+    // in its place would be a new word, without the old word's lemma.)
+    let typo: String = first.chars().take(first.chars().count() - 1).chain(['x']).collect();
     let edited = format!(
         "{} extra",
-        import.dsl.replacen(&format!(" {} ", first), " XXX ", 1)
+        import.dsl.replacen(&format!(" {} ", first), &format!(" {} ", typo), 1)
     );
 
     // Exactly two changes: the edited token's segment and the appended word.
@@ -1131,7 +1134,7 @@ fn test_menota_file_distant_edits_preserve_everything_else() {
         body.matches("lemma=").count(),
         "no lemma attributes may be lost"
     );
-    assert!(body.contains("<me:facs>XXX</me:facs>"));
+    assert!(body.contains(&format!("<me:facs>{typo}</me:facs>")), "{typo}");
     assert!(body.contains("<me:facs>extra</me:facs>"));
 }
 

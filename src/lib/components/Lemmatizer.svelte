@@ -15,6 +15,7 @@
     } from '$lib/tauri';
     import { X as CloseButton } from "@lucide/svelte";
     import { importedStore } from '$lib/stores/imported.svelte';
+    import { analysisKey, sameAnalysis } from '$lib/utils/msa';
     import {
         wordClasses,
         cases,
@@ -40,7 +41,8 @@
         diplomatic: string;  // Diplomatic-level form (for lookup)
         wordIndex: number;
         onclose?: () => void;
-        onsave?: (wordIndex: number, lemma: string, msa: string) => void;
+        /** After a lemma was confirmed (lemma, msa) or removed (none) */
+        onsave?: (wordIndex: number, lemma?: string, msa?: string) => void;
     } = $props();
 
     // Search state - use diplomatic form for searching
@@ -54,6 +56,8 @@
     let selectedEntry = $state<OnpEntry | null>(null);
     let fullEntry = $state<OnpFullEntry | null>(null);
     let isLoadingFull = $state(false);
+    /** Why the entry's details from ONP couldn't be loaded (offline, site down) */
+    let fullEntryError = $state<string | null>(null);
 
     // Morphological selections
     let wordClass = $state('');
@@ -188,11 +192,11 @@
         if (sessionConfirmation && existingMappings.length > 0) {
             // Find the matching existing mapping and apply it
             const matching = existingMappings.find(
-                m => m.lemma === sessionConfirmation.lemma && m.analysis === sessionConfirmation.msa
+                m => m.lemma === sessionConfirmation.lemma && sameAnalysis(m.analysis, sessionConfirmation.msa)
             );
             if (matching) {
                 // Mark as selected without triggering onsave again
-                selectedMappingId = `${matching.onp_id}-${matching.analysis}`;
+                selectedMappingId = `${matching.onp_id}-${analysisKey(matching.analysis)}`;
             }
         }
     });
@@ -211,7 +215,7 @@
 
             const merged = new Map<string, InflectedForm>();
             for (const mapping of [...storeMappings, ...persistedMappings]) {
-                merged.set(`${mapping.onp_id}-${mapping.analysis}`, mapping);
+                merged.set(`${mapping.onp_id}-${analysisKey(mapping.analysis)}`, mapping);
             }
             existingMappings = Array.from(merged.values());
         } catch (e) {
@@ -253,6 +257,7 @@
 
         selectedEntry = entry;
         fullEntry = null;
+        fullEntryError = null;
         isLoadingFull = true;
 
         // Try to infer word class from ONP part of speech
@@ -275,6 +280,7 @@
             fullEntry = await fetchOnpFullEntry(entry.id);
         } catch (e) {
             console.error('Failed to fetch full entry:', e);
+            fullEntryError = String(e);
         } finally {
             isLoadingFull = false;
         }
@@ -326,6 +332,12 @@
         }
     }
 
+    /** Removes this word's lemma (kept as a removal on imported files, so it reaches the file). */
+    function handleRemoveLemma() {
+        sessionLemmaStore.unconfirmWithHistory(wordIndex, true, importedStore.isImportedMode);
+        onsave?.(wordIndex);
+    }
+
     async function handleRemoveMapping(mapping: InflectedForm) {
         try {
             // Remove by diplomatic form (the lookup key)
@@ -333,7 +345,7 @@
             inflectionStore.removeMapping(diplomatic, mapping.onp_id, mapping.analysis);
 
             // Clear selection if this was the selected mapping
-            const mappingKey = `${mapping.onp_id}-${mapping.analysis}`;
+            const mappingKey = `${mapping.onp_id}-${analysisKey(mapping.analysis)}`;
             if (selectedMappingId === mappingKey) {
                 selectedMappingId = null;
             }
@@ -347,7 +359,7 @@
     // Apply an existing mapping to populate the form for editing
     function applyMapping(mapping: InflectedForm) {
         // Track which mapping is selected for highlighting
-        selectedMappingId = `${mapping.onp_id}-${mapping.analysis}`;
+        selectedMappingId = `${mapping.onp_id}-${analysisKey(mapping.analysis)}`;
 
         // Set selected entry with basic info from the mapping
         selectedEntry = {
@@ -509,12 +521,25 @@
         </div>
     {/if}
 
+    {#if sessionConfirmation}
+        <div class="flex items-center justify-between gap-2 rounded-lg border border-success/40 p-3">
+            <div class="text-sm">
+                <span class="opacity-70">Lemma of this word:</span>
+                <span class="font-medium">{sessionConfirmation.lemma}</span>
+                <code class="ml-1 text-xs px-1 rounded bg-base-300">{sessionConfirmation.msa}</code>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline btn-error" onclick={handleRemoveLemma}>
+                Remove lemma from this word
+            </button>
+        </div>
+    {/if}
+
     {#if existingMappings.length > 0}
         <div class="bg-base-200 rounded-lg p-3">
-            <h4 class="text-sm font-medium mb-2">Existing mappings (click to use)</h4>
+            <h4 class="text-sm font-medium mb-2">Known analyses of “{diplomatic}” (click to use)</h4>
             <div class="flex flex-col gap-2">
                 {#each existingMappings as mapping}
-                    {@const mappingKey = `${mapping.onp_id}-${mapping.analysis}`}
+                    {@const mappingKey = `${mapping.onp_id}-${analysisKey(mapping.analysis)}`}
                     {@const isSelected = selectedMappingId === mappingKey}
                     <div
                         class="flex items-center gap-2 rounded p-2 transition-colors"
@@ -545,7 +570,8 @@
                             class="btn btn-ghost btn-xs"
                             class:text-primary-content={isSelected}
                             onclick={() => handleRemoveMapping(mapping)}
-                            aria-label="Remove mapping"
+                            aria-label="Forget this analysis of “{diplomatic}”"
+                            title="Forget this analysis of “{diplomatic}” (for all words; this word's lemma stays)"
                         >
                             ✕
                         </button>
@@ -625,6 +651,13 @@
                 <div class="flex items-center py-2">
                     <span class="loading loading-spinner loading-xs"></span>
                     <span class="ml-2 text-sm opacity-70">Loading definition...</span>
+                </div>
+            {:else if fullEntryError}
+                <div role="status" class="alert alert-warning alert-soft text-sm py-2 mb-3">
+                    <span>
+                        {fullEntryError} The definition isn't available; you can still
+                        choose the word class and analysis below.
+                    </span>
                 </div>
             {:else if fullEntry && fullEntry.senses.length > 0}
                 <div class="text-sm opacity-80 max-h-24 overflow-y-auto mb-3">

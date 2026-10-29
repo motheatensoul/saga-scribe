@@ -218,6 +218,33 @@ export function createMenotaPaleographicAnnotation(
     };
 }
 
+/**
+ * A lemma removed from a word of an imported file: kept as an empty lemma so
+ * that the removal reaches the file (which can't tell a removed lemma from
+ * one never confirmed). Shown and counted as no lemma.
+ */
+export function createRemovedLemma(wordIndex: number): Annotation {
+    return createLemmaAnnotation(wordIndex, "", "");
+}
+
+export function isRemovedLemma(annotation: Annotation): boolean {
+    return annotation.type === "lemma" && annotation.value.kind === "lemma" && annotation.value.lemma === "";
+}
+
+/**
+ * Lemmas to write into an imported file, by word number: confirmed ones and
+ * removed ones (empty lemma).
+ */
+export function getLemmaWrites(set: AnnotationSet): Record<number, { lemma: string; msa: string; normalized?: string }> {
+    const writes: Record<number, { lemma: string; msa: string; normalized?: string }> = {};
+    for (const ann of set.annotations) {
+        if (ann.type === "lemma" && ann.target.type === "word" && ann.value.kind === "lemma") {
+            writes[ann.target.wordIndex] = { lemma: ann.value.lemma, msa: ann.value.msa, normalized: ann.value.normalized };
+        }
+    }
+    return writes;
+}
+
 /** Check if a target includes a specific word index */
 export function targetIncludesWord(
     target: AnnotationTarget,
@@ -249,7 +276,7 @@ export function getAnnotationsForWord(
     set: AnnotationSet,
     wordIndex: number,
 ): Annotation[] {
-    return set.annotations.filter((a) => targetIncludesWord(a.target, wordIndex));
+    return set.annotations.filter((a) => targetIncludesWord(a.target, wordIndex) && !isRemovedLemma(a));
 }
 
 /** Get all annotations of a specific type from a set */
@@ -257,7 +284,7 @@ export function getAnnotationsByType(
     set: AnnotationSet,
     type: AnnotationType,
 ): Annotation[] {
-    return set.annotations.filter((a) => a.type === type);
+    return set.annotations.filter((a) => a.type === type && !isRemovedLemma(a));
 }
 
 /** Get lemma annotations as a map (for backward compatibility) */
@@ -272,7 +299,8 @@ export function getLemmaMap(
         if (
             ann.type === "lemma" &&
             ann.target.type === "word" &&
-            ann.value.kind === "lemma"
+            ann.value.kind === "lemma" &&
+            !isRemovedLemma(ann)
         ) {
             map.set(ann.target.wordIndex, {
                 lemma: ann.value.lemma,

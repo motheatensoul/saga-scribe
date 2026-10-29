@@ -2,7 +2,8 @@
     import { editor, fileName } from "$lib/stores/editor";
     import { templateStore } from "$lib/stores/template";
     import { settings } from "$lib/stores/settings";
-    import { canUndo, canRedo } from "$lib/stores/lemmatizationHistory";
+    // Lemma and annotation actions are recorded in the annotation history
+    import { canUndoAnnotation as canUndo, canRedoAnnotation as canRedo } from "$lib/stores/annotations";
 
     //Icons
     import {

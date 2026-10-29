@@ -27,7 +27,7 @@
     import { importedStore } from "$lib/stores/imported.svelte";
     import { compileSession } from "$lib/stores/compileSession";
     import { renumberWord } from "$lib/stores/renumber";
-    import { lemmatizationHistory } from "$lib/stores/lemmatizationHistory";
+    import { analysisKey } from "$lib/utils/msa";
     import { preservationStore } from "$lib/stores/preservation.svelte";
     import type { Metadata } from "$lib/types/metadata";
     import { isMetadataEmpty } from "$lib/types/metadata";
@@ -497,10 +497,14 @@
         };
 
         if (importedStore.isImportedMode) {
-            return importedStore.compile(content, () => ({
-                ...entityOptions,
-                lemmaMappingsJson: lemmaMappingsJson(),
-            }));
+            // Removed lemmas too (empty): they are removed from the file
+            return importedStore.compile(content, () => {
+                const writes = annotationStore.getLemmaWrites();
+                return {
+                    ...entityOptions,
+                    lemmaMappingsJson: Object.keys(writes).length > 0 ? JSON.stringify(writes) : undefined,
+                };
+            });
         }
 
         // Use dynamic metadata header if metadata exists, otherwise use template header
@@ -542,7 +546,6 @@
     // Words inserted or deleted: everything stored by word number moves along
     compileSession.onRenumbering = (map) => {
         annotationStore.renumber(map);
-        lemmatizationHistory.renumber(map);
         const move = (index: number) => renumberWord(map, index) ?? -1;
         if (selectedWordIndex >= 0) selectedWordIndex = move(selectedWordIndex);
         if (spanEndWordIndex !== null) {
@@ -1255,7 +1258,7 @@
                                 const wordform = (nw.diplomatic ?? nw.facsimile ?? "").trim();
                                 if (wordform) {
                                     const partOfSpeech = nw.msa.split(/\s+/)[0] ?? "";
-                                    const key = `${wordform.toLowerCase()}|${nw.lemma}|${nw.msa}`;
+                                    const key = `${wordform.toLowerCase()}|${nw.lemma}|${analysisKey(nw.msa)}`;
                                     if (!inflectionMap.has(key)) {
                                         inflectionMap.set(key, {
                                             onp_id: `imported:${nw.lemma}`,
@@ -1309,7 +1312,7 @@
 
                         if (wordform) {
                             const partOfSpeech = msa.split(/\s+/)[0] ?? "";
-                            const key = `${wordform.toLowerCase()}|${lemma}|${msa}`;
+                            const key = `${wordform.toLowerCase()}|${lemma}|${analysisKey(msa)}`;
                             if (!inflectionMap.has(key)) {
                                 inflectionMap.set(key, {
                                     onp_id: `imported:${lemma}`,
