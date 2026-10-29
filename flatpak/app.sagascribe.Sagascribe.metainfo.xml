@@ -67,6 +67,11 @@
   </keywords>
 
   <releases>
+    <release version="0.6.1" date="2026-10-29">
+      <description>
+        <p>Faster XSLT preview: after an edit, only the changed pages are rendered again.</p>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-10-29">
       <description>
         <p>Safer round-trip editing of imported files, paragraphs, and typeset PDFs.</p>

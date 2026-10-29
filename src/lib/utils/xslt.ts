@@ -81,42 +81,70 @@ export async function runXsltTransform(
     if (bodyOnly) {
         const fragment = sliceTag(prepared, "body") ?? sliceTag(prepared, "text");
         if (fragment) {
-            prepared = `<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0">${fragment}</TEI>`;
+            prepared = `<TEI xmlns="${TEI_NS}" xmlns:me="${MENOTA_NS}">${fragment}</TEI>`;
         }
     }
-
-    // ASCII letters+digits only, so XML/XSLT processing leaves them intact
-    const glyphs: string[] = [];
-    prepared = prepared.replace(/&([a-zA-Z][a-zA-Z0-9]*);/g, (match, name: string) => {
-        if (STANDARD_ENTITIES.has(name)) return match;
-        glyphs.push(entities[name]?.char || `[${name}]`);
-        return `XENT${glyphs.length - 1}X`;
-    });
+    const placeheld = withEntityPlaceholders(prepared, entities);
 
     await stage("parsing");
-    const xmlDoc = new DOMParser().parseFromString(prepared, "application/xml");
-    const parseError = xmlDoc.querySelector("parsererror");
-    if (parseError) {
-        throw new Error(`XML parse error: ${parseError.textContent}`);
-    }
+    const xmlDoc = parseXml(placeheld.xml);
 
     await stage("transforming");
-    const resultDoc = processor.transformToDocument(xmlDoc);
-    if (!resultDoc || !resultDoc.documentElement) {
-        throw new Error("XSLT transformation produced no output");
-    }
-    const html = transformResultToHtml(resultDoc).replace(
-        /XENT(\d+)X/g,
-        (match, index: string) => {
-            const glyph = glyphs[Number(index)];
-            return glyph !== undefined ? escapeHtml(glyph) : match;
-        },
-    );
+    const html = transformParsed(processor, xmlDoc, placeheld.glyphs);
 
     await stage("sanitizing");
     const clean = sanitizeXsltHtml(html);
     signal?.throwIfAborted();
     return clean;
+}
+
+/** Namespaces of TEI and MENOTA elements. */
+export const TEI_NS = "http://www.tei-c.org/ns/1.0";
+export const MENOTA_NS = "http://www.menota.org/ns/1.0";
+
+/**
+ * Transforms a small TEI document (e.g. one page) to sanitized HTML in one
+ * go, for callers that do their own yielding between pieces.
+ */
+export function transformToSafeHtml(processor: XSLTProcessor, xml: string, entities: EntityMap): string {
+    const placeheld = withEntityPlaceholders(xml, entities);
+    const html = transformParsed(processor, parseXml(placeheld.xml), placeheld.glyphs);
+    return sanitizeXsltHtml(html);
+}
+
+/**
+ * Swaps named entities for placeholders of ASCII letters and digits, which
+ * XML parsing and XSLT leave intact; `glyphs[n]` is what `XENTnX` stands for.
+ */
+function withEntityPlaceholders(xml: string, entities: EntityMap): { xml: string; glyphs: string[] } {
+    const glyphs: string[] = [];
+    const replaced = xml.replace(/&([a-zA-Z][a-zA-Z0-9]*);/g, (match, name: string) => {
+        if (STANDARD_ENTITIES.has(name)) return match;
+        glyphs.push(entities[name]?.char || `[${name}]`);
+        return `XENT${glyphs.length - 1}X`;
+    });
+    return { xml: replaced, glyphs };
+}
+
+function parseXml(xml: string): Document {
+    const xmlDoc = new DOMParser().parseFromString(xml, "application/xml");
+    const parseError = xmlDoc.querySelector("parsererror");
+    if (parseError) {
+        throw new Error(`XML parse error: ${parseError.textContent}`);
+    }
+    return xmlDoc;
+}
+
+/** Runs the stylesheet and serializes its result, with entity glyphs restored. */
+function transformParsed(processor: XSLTProcessor, xmlDoc: Document, glyphs: string[]): string {
+    const resultDoc = processor.transformToDocument(xmlDoc);
+    if (!resultDoc || !resultDoc.documentElement) {
+        throw new Error("XSLT transformation produced no output");
+    }
+    return transformResultToHtml(resultDoc).replace(/XENT(\d+)X/g, (match, index: string) => {
+        const glyph = glyphs[Number(index)];
+        return glyph !== undefined ? escapeHtml(glyph) : match;
+    });
 }
 
 function sliceTag(xml: string, tagName: string): string | null {

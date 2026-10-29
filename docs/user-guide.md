@@ -408,6 +408,24 @@ This is useful for:
 
 **Note**: XSLT transformation uses the browser's built-in XSLTProcessor and supports XSLT 1.0.
 
+#### Faster previews for your own stylesheets
+
+Applying a stylesheet to a whole manuscript can take seconds, so the preview
+lags while you type. If your stylesheet's output for an element depends only on
+that element and its ancestors (no `preceding::`/`following::` axes, keys or
+counting across the document), add this line inside `<xsl:stylesheet>`:
+
+```xml
+<?saga-scribe render="page"?>
+```
+
+The preview then applies it one page at a time and, after an edit, only to the
+pages that changed. Each page is a small TEI document of its own: elements that
+continue from the previous page are repeated at its start with
+`saga-continued="true"` (to skip, say, a paragraph mark there), and the
+parameter `lineBased` is `"1"` when the text has line breaks. Exports always
+apply the stylesheet to the whole document. The built-in stylesheet does this.
+
 ## Keyboard Shortcuts
 
 ### Project

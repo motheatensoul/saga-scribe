@@ -10,7 +10,7 @@
 - **Build:** `bun run build`
 - **Type Check:** `bun run check` (Svelte-check)
 - **Lint:** `bun run check` covers most linting needs.
-- **Test:** `bun run test:js` (Vitest, jsdom; `*.test.ts` next to the module under test). Shared fixtures live in `src/lib/rendered/fixtures.ts`. `HOLMPERG=1 bun run test:js` also runs the slow full-manuscript equivalence test.
+- **Test:** `bun run test:js` (Vitest, jsdom; `*.test.ts` next to the module under test). Components can be mounted with Svelte's `mount`/`flushSync`; name such tests `*.svelte.test.ts` so runes like `$state` work in them (see `XsltRenderer.svelte.test.ts`). Effects that write state must not read it back (`untrack`), or Svelte aborts with `effect_update_depth_exceeded`, which SvelteKit shows as a 500 error page. Shared fixtures live in `src/lib/rendered/fixtures.ts`. `HOLMPERG=1 bun run test:js` also runs the slow full-manuscript equivalence test.
 - **All tests:** `bun run test` (frontend + Rust)
 
 ### Backend (Rust)
@@ -139,6 +139,7 @@ The user's file is privileged. Reading it must never change it:
 - **Flatpak:** the app is compiled inside the GNOME SDK (`flatpak/app.sagascribe.Sagascribe.yml`, with the Rust and LLVM SDK extensions), so it links the runtime's libraries; only the frontend is built outside (`bun run build`). Build locally with `flatpak/build-flatpak.sh`. Don't package a binary built on the host or Ubuntu: it links that system's libraries (e.g. `libxml2.so.2`, which GNOME runtimes no longer ship). When moving to a new GNOME runtime, check its SDK's `org.freedesktop.Sdk.Extension` version (`flatpak info --show-location org.gnome.Sdk//N`, `metadata`) and the extensions available for it.
 - **SvelteKit 3:** configuration lives in `vite.config.ts` (`sveltekit({...})`); there is no `svelte.config.js`. The `$lib` alias is configured there.
 - **PDF export:** the main window paginates the export HTML with Vivliostyle in an off-screen iframe (`src/lib/utils/paginate.ts`; hidden windows throttle timers, which makes Vivliostyle ~20x slower) and hands the static pages to the hidden `/print` window, which prints them with zero native margins. Page layout (margins, page numbers) lives in `withPrintStyles()` (`src/lib/utils/pdfExport.ts`). Vivliostyle is AGPL-3.0, compatible with our GPL-3.0-or-later.
+- **XSLT preview by page:** stylesheets declaring `<?saga-scribe render="page"?>` (like `static/xsl/simple.xsl`) are applied one page at a time and only re-run on changed pages (`src/lib/rendered/xsltPages.ts`). Such a stylesheet's output for an element may only depend on the element and its ancestors: when editing `simple.xsl`, don't use `preceding::`/`following::`, keys or document-wide counts (pass document-wide facts as parameters instead, like `lineBased`), or remove the declaration.
 - **XSLT output:** always pass through `sanitizeXsltHtml()` (`src/lib/utils/xslt.ts`, which also holds the shared preview/export pipeline) before rendering or exporting; the app runs under a strict CSP (`src-tauri/tauri.conf.json`).
 - **Cargo Command Quirk:** `cd src-tauri && cargo ...` fails. Use `cd src-tauri; cargo ...`.
 - **Bun:** Always use `bun` instead of `npm`.

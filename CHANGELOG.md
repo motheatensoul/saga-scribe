@@ -5,6 +5,12 @@ All notable changes to Saga-Scribe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-10-29
+
+### Fixed
+
+- **XSLT preview lag**: editing a large manuscript with the XSLT preview open re-ran the stylesheet on the whole document after every pause in typing (over 2 s for HolmPerg, blocking the editor). Stylesheets that declare `<?saga-scribe render="page"?>`, like the built-in one, are now applied one page at a time, and after an edit only to the pages that changed (about 70 ms); other stylesheets render as before
+
 ## [0.6.0] - 2026-10-29
 
 ### Added

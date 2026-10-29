@@ -18,6 +18,13 @@ export default defineConfig({
 		}),
 		tailwindcss()
 	],
+	server: {
+		watch: {
+			// Build output, not sources: the Rust target directory, and local
+			// Flatpak builds (a whole sandbox filesystem, with symlink loops)
+			ignored: ['**/src-tauri/target/**', '**/flatpak-build/**', '**/flatpak-repo/**']
+		}
+	},
 	resolve: {
 		dedupe: [
 			'@codemirror/state',

@@ -7,6 +7,12 @@
 
     <xsl:output method="html" encoding="UTF-8" indent="yes"/>
 
+    <!-- Every template here depends only on an element and its ancestors, so
+         the preview may apply this stylesheet to one page at a time (pages
+         reopen elements continued from the previous page with
+         saga-continued="true"); see src/lib/rendered/xsltPages.ts -->
+    <?saga-scribe render="page"?>
+
     <!-- Root -->
     <xsl:template match="/">
         <div class="prose max-w-none leading-loose">
@@ -41,14 +47,18 @@
 
     <!-- Whether the transcription is line by line: then line breaks (<lb/>)
          decide the layout, and paragraphs, which often start mid-line, run inline -->
-    <xsl:variable name="lineBased" select="boolean(//*[local-name()='body']//*[local-name()='lb'])"/>
+    <!-- A parameter, as a single page can't tell; set by the preview, computed here otherwise -->
+    <xsl:param name="lineBased" select="boolean(//*[local-name()='body']//*[local-name()='lb'])"/>
 
     <xsl:template match="tei:p | p">
         <xsl:choose>
             <xsl:when test="$lineBased and ancestor::*[local-name()='body']">
-                <!-- A pilcrow marks where each paragraph starts -->
+                <!-- A pilcrow marks where each paragraph starts (not where it
+                     continues on the next page) -->
                 <span class="paragraph">
-                    <span class="paragraph-mark" aria-hidden="true">¶</span>
+                    <xsl:if test="not(@saga-continued)">
+                        <span class="paragraph-mark" aria-hidden="true">¶</span>
+                    </xsl:if>
                     <xsl:apply-templates/>
                 </span>
             </xsl:when>
