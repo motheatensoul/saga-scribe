@@ -5,6 +5,38 @@ All notable changes to Saga-Scribe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - Unreleased
+
+### Added
+
+- **Export progress**: HTML and PDF export run behind a progress overlay showing the current step, with a Cancel button
+- **Incremental previews**: Rendered Text re-parses only the pages an edit touches; the XML view applies only the changed range
+- **Security audit for JS dependencies** in CI, also run on dependency PRs
+
+### Changed
+
+- **Imported files are never modified by reading them**: unedited content is written back byte-for-byte, and edits only replace the bytes of what was edited
+- **Project file format 1.5**: `segments.json` always holds the full manifest (with MENOTA flag and source spans); 1.4 projects still open
+- **Non-MENOTA imports** keep their own encoding style (plain `<w>` or plain text) instead of gaining MENOTA markup on edited words
+- **Validation** runs after a short pause in typing instead of on every compile, and parsed schemas are cached
+- **Only the visible preview tab updates**; hidden tabs catch up when shown
+- **Content Security Policy** enabled; XSLT output is sanitized before it is rendered, exported or printed
+- **SvelteKit 3 / Vite 8**, Tauri 2.12, zip 9 and other dependency upgrades; minimum Rust version 1.90, toolchain pinned
+- **Window title and dialogs** use the Saga Scribe name
+
+### Fixed
+
+- **Round-trip data loss**: a DSL syntax error no longer wipes the document body; distant edits in large files no longer rewrite (and drop lemmas from) everything in between
+- **Line/page break edits** in imported mode are applied; inserted words stay in the right paragraph
+- **MENOTA detection** on import
+- **Save/export** refuse to write a failed compile instead of writing the error message
+- **Saved imported projects** reopen in imported mode (segments were saved in a shape that failed to load)
+- **Saves are atomic**: a crash mid-save can no longer truncate a project or export
+- **PDF/HTML export freeze** on large files (minutes spent resolving entity placeholders)
+- **Rendered Text**: `<add>`/`<del>`/`<unclear>` around words showed all three transcription levels and stray line breaks; sic/corr words were missing; the view no longer jumps to page 1 or flashes on every edit
+- **Word numbering** now follows document order everywhere, so lemmas loaded from a file stay on the right words
+- **Security**: XSS via XSLT output, network access during XML parsing, vulnerable `zip`, Svelte, Vite and PostCSS versions
+
 ## [0.5.0] - 2026-01-22
 
 ### Added

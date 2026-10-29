@@ -2,7 +2,7 @@
 
 A desktop application for scholarly manuscript transcription, producing TEI-XML with MENOTA (Medieval Nordic Text Archive) extensions.
 
-**Version:** 0.5.0 (beta)
+**Version:** 0.6.0 (beta)
 
 ## Features
 

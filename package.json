@@ -1,7 +1,7 @@
 {
 	"name": "saga-scribe",
 	"private": true,
-	"version": "0.5.0",
+	"version": "0.6.0",
 	"type": "module",
 	"scripts": {
 		"build:grammar": "lezer-generator src/lib/parser/tei-dsl.grammar -o src/lib/parser/tei-dsl-parser.js",
