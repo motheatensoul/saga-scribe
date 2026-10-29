@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { untrack } from 'svelte';
     import { createXsltProcessor, loadStylesheetText, runXsltTransform } from '$lib/utils/xslt';
     import { entityStore } from '$lib/stores/entities';
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
@@ -178,8 +179,11 @@
             });
             pagesEl.replaceChildren(...pages.map((page) => page.element));
         }
-        pageMode = sources.length > 0;
-        pagesVersion++;
+        // Called from effects: updating this state must not make them depend on it
+        untrack(() => {
+            pageMode = sources.length > 0;
+            pagesVersion++;
+        });
     }
 
     // Set up delegated word click handlers

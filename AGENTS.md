@@ -10,7 +10,7 @@
 - **Build:** `bun run build`
 - **Type Check:** `bun run check` (Svelte-check)
 - **Lint:** `bun run check` covers most linting needs.
-- **Test:** `bun run test:js` (Vitest, jsdom; `*.test.ts` next to the module under test). Shared fixtures live in `src/lib/rendered/fixtures.ts`. `HOLMPERG=1 bun run test:js` also runs the slow full-manuscript equivalence test.
+- **Test:** `bun run test:js` (Vitest, jsdom; `*.test.ts` next to the module under test). Components can be mounted with Svelte's `mount`/`flushSync`; name such tests `*.svelte.test.ts` so runes like `$state` work in them (see `XsltRenderer.svelte.test.ts`). Effects that write state must not read it back (`untrack`), or Svelte aborts with `effect_update_depth_exceeded`, which SvelteKit shows as a 500 error page. Shared fixtures live in `src/lib/rendered/fixtures.ts`. `HOLMPERG=1 bun run test:js` also runs the slow full-manuscript equivalence test.
 - **All tests:** `bun run test` (frontend + Rust)
 
 ### Backend (Rust)
