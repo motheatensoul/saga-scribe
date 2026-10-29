@@ -10,6 +10,8 @@
 - **Build:** `bun run build`
 - **Type Check:** `bun run check` (Svelte-check)
 - **Lint:** `bun run check` covers most linting needs.
+- **Test:** `bun run test:js` (Vitest, jsdom; `*.test.ts` next to the module under test). Shared fixtures live in `src/lib/rendered/fixtures.ts`. `HOLMPERG=1 bun run test:js` also runs the slow full-manuscript equivalence test.
+- **All tests:** `bun run test` (frontend + Rust)
 
 ### Backend (Rust)
 *Note: Run these commands inside `src-tauri/` or use the provided wrapper scripts.*
@@ -111,8 +113,9 @@ saga-scribe/
 | `:name:` | `&name;` | Entity |
 
 ## Testing
-Run Rust tests: `cd src-tauri; cargo test`
-~200 tests cover parser, compiler, importer round-trip, normalizer, and dictionary.
+- Rust: `cd src-tauri; cargo test` (~200 tests: parser incl. differential tests against the original lexer, compiler, importer round-trip, normalizer, dictionary)
+- Frontend: `bun run test:js` (rendered-text parsing, incremental rendering equivalence, XSLT sanitizing, text diff)
+- Note: jsdom has no `XSLTProcessor`; XSLT transforms themselves are not covered by unit tests.
 
 ## Fonts
 Uses **Junicode** (in `static/fonts/`) for MUFI characters.

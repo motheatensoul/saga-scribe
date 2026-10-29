@@ -36,3 +36,6 @@ jobs:
 
       - name: Run Svelte check
         run: bun run check
+
+      - name: Run frontend tests
+        run: bun run test:js

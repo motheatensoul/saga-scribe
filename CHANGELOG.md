@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Export progress**: HTML and PDF export run behind a progress overlay showing the current step, with a Cancel button
 - **Incremental previews**: Rendered Text re-parses only the pages an edit touches; the XML view applies only the changed range
 - **Security audit for JS dependencies** in CI, also run on dependency PRs
+- **Frontend unit tests** (Vitest) run in CI: rendered-text parsing, incremental rendering equivalence, XSLT sanitizing
 
 ### Changed
 
