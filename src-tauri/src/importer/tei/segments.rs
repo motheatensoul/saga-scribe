@@ -122,7 +122,18 @@ pub struct ImportedDocument {
     /// projects saved before spans existed; recomputed on demand).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spans: Option<SourceSpans>,
+    /// The DSL rules the document's DSL was generated with ([`DSL_RULES`]);
+    /// 0 for documents imported before rules were versioned.
+    #[serde(default)]
+    pub dsl_rules: u32,
 }
+
+/// Version of the rules for writing imported XML as DSL. Documents keep the
+/// rules they were imported with, so their stored DSL still matches.
+///
+/// - 0: before 0.6.0
+/// - 1: entity punctuation (`:middot:`) is set off by spaces
+pub const DSL_RULES: u32 = 1;
 
 impl ImportedDocument {
     /// Parses a manifest as stored in segments.json.
@@ -146,6 +157,7 @@ impl ImportedDocument {
             segments,
             is_menota,
             spans: None,
+            dsl_rules: 0,
         })
     }
 }

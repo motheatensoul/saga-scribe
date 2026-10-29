@@ -42,7 +42,8 @@ A desktop application for scholarly manuscript transcription, producing TEI-XML 
 | `+{text}+`               | `<add>text</add>`                                            | Addition                              |
 | `^{text}`                | `<note>text</note>`                                          | Note/annotation                       |
 | `?{text}?`               | `<unclear>text</unclear>`                                    | Unclear reading                       |
-| `:name:`                 | `&name;`                                                     | Entity reference (XML entity)         |
+| `:name:`                 | `&name;`                                                     | Entity reference (XML entity); a punctuation entity alone between spaces is `<pc>` |
+| `upp~haf`                | `<w>upp haf</w>`                                             | One word written as two                |
 | `\|`                     | (word boundary)                                              | Explicit word boundary                |
 | `~//n`                   | (continuation + lb)                                          | Word continues across line break (`hel~//5lo`) |
 | `~///n`                  | (continuation + pb)                                          | Word continues across page break      |

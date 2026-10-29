@@ -15,6 +15,7 @@ export interface ImportedState {
   frontMatter: string;
   backMatter: string;
   isMenota: boolean;
+  dslRules: number;
 }
 
 class ImportedStore {
@@ -27,6 +28,8 @@ class ImportedStore {
   frontMatter = $state("");
   backMatter = $state("");
   isMenota = $state(false);
+  /** DSL rules version the document was imported with; kept so its DSL still matches */
+  dslRules = $state(0);
   /**
    * Words edited since import that kept the original's lemma, analysis and
    * normalized form; updated by every compile
@@ -56,6 +59,7 @@ class ImportedStore {
     this.frontMatter = "";
     this.backMatter = "";
     this.isMenota = false;
+    this.dslRules = 0;
     this.syncBackend(null);
   }
 
@@ -70,6 +74,7 @@ class ImportedStore {
     if (data.frontMatter) this.frontMatter = data.frontMatter;
     if (data.backMatter) this.backMatter = data.backMatter;
     if (data.isMenota !== undefined) this.isMenota = data.isMenota;
+    this.dslRules = data.dslRules ?? 0;
     this.syncBackend({
       segmentsJson: this.buildManifestJson(),
       originalBodyXml: this.originalBodyXml,
@@ -83,6 +88,7 @@ class ImportedStore {
     const manifest: ImportedDocument = {
       segments: this.segments,
       is_menota: this.isMenota,
+      dsl_rules: this.dslRules,
       spans: this.spans,
     };
     return JSON.stringify(manifest);

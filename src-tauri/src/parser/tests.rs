@@ -1239,3 +1239,17 @@ fn test_compile_paragraphs_with_page_wrapping() {
     assert_eq!(xml.matches("</p>").count(), 3, "{xml}");
     assert!(!xml.contains("<p>\n</p>"), "no empty paragraph: {xml}");
 }
+
+#[test]
+fn test_lone_punctuation_entity_is_punctuation() {
+    let mut compiler = word_wrapping_compiler(false, false);
+    let xml = compiler.compile("þa :middot: þo :middot:Q:middot: þa:middot:").unwrap();
+    assert!(xml.contains("<pc>&middot;</pc>"), "{xml}");
+    // Glued to letters, it is part of the word
+    assert!(xml.contains("<w>&middot;Q&middot;</w>"), "{xml}");
+    assert!(xml.contains("<w>þa&middot;</w>"), "{xml}");
+    // A lone entity that is a letter or abbreviation sign is still a word
+    let xml = compiler.compile(":etslash: :inodot:").unwrap();
+    assert_eq!(xml.matches("<w>").count(), 2, "{xml}");
+    assert!(!xml.contains("<pc>"), "{xml}");
+}

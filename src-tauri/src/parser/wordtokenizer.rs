@@ -210,7 +210,24 @@ impl WordTokenizer {
             result.push(Node::Word(current_word));
         }
 
-        result
+        result.into_iter().map(Self::entity_punctuation).collect()
+    }
+
+    /// A word made only of punctuation entities (`:middot:` between spaces)
+    /// is punctuation. Glued to letters (`þa:middot:`, `:middot:Q:middot:`)
+    /// an entity stays part of the word.
+    fn entity_punctuation(node: Node) -> Node {
+        match node {
+            Node::Word(children)
+                if !children.is_empty()
+                    && children
+                        .iter()
+                        .all(|c| matches!(c, Node::Entity(name) if crate::entities::is_punctuation_entity(name))) =>
+            {
+                Node::Punctuation(children)
+            }
+            other => other,
+        }
     }
 
     /// Process a text node, splitting on whitespace and punctuation

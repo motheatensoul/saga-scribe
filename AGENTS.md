@@ -126,6 +126,8 @@ The user's file is privileged. Reading it must never change it:
 - Unedited content is emitted byte-for-byte: the importer records source spans (`src-tauri/src/importer/tei/source_map.rs`) and the patcher splices edits into the original bytes (`patching.rs`).
 - Whitespace-only or otherwise non-semantic DSL changes must produce no XML change.
 - Invalid DSL is an error, never an empty document; save/export refuse to write a failed compile.
+- The XML and the DSL generated from it read as the same tokens, one to one (`test_menota_file_xml_and_dsl_read_as_the_same_tokens`); DSL → XML → DSL likewise. A new XML construct the DSL can't express breaks this: give it DSL syntax rather than special-casing the patcher.
+- Changing how imported XML is written as DSL changes users' stored DSL: bump `DSL_RULES` (`src-tauri/src/importer/tei/segments.rs`) and keep older documents on their rules.
 - Regression tests: `test_menota_file_unchanged_is_byte_identical` and friends in `src-tauri/src/importer/tests.rs`.
 
 ## Development Notes

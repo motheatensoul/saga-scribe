@@ -834,6 +834,7 @@
                         originalPreamble: project.original_preamble ?? "",
                         originalPostamble: project.original_postamble ?? "",
                         isMenota: project.imported_document.is_menota ?? false,
+                        dslRules: project.imported_document.dsl_rules ?? 0,
                     });
                     preservationStore.setSections({
                         preamble: project.original_preamble ?? "",
@@ -1198,6 +1199,7 @@
                     originalPreamble: result.originalPreamble ?? "",
                     originalPostamble: result.originalPostamble ?? "",
                     isMenota: result.importedDocument.is_menota ?? false,
+                    dslRules: result.importedDocument.dsl_rules ?? 0,
                 });
                 preservationStore.setSections({
                     preamble: result.originalPreamble ?? "",

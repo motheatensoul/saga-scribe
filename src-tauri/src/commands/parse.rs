@@ -205,7 +205,11 @@ pub async fn compile_imported(
         }
 
         // Compute patches between original segments and edited DSL
-        let patches = compute_patches(&source.document.segments, &edited_dsl)?;
+        let patches = compute_patches(
+            &source.document.segments,
+            source.document.dsl_rules,
+            &edited_dsl,
+        )?;
 
         // Apply patches to the original body XML
         let body = render_body(

@@ -22,7 +22,7 @@ use crate::metadata::{
 };
 use crate::importer::tei::extraction::Extractor;
 use crate::importer::tei::helpers;
-use crate::importer::tei::segments::{ImportedDocument, Segment, SourceSpans};
+use crate::importer::tei::segments::{ImportedDocument, Segment, SourceSpans, DSL_RULES};
 use libxml::parser::{Parser, ParserOptions};
 use libxml::tree::{Document, Node, NodeType};
 
@@ -104,13 +104,14 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
     let spans = extractor.take_spans();
 
     // Generate DSL from segments (this is the new, segment-aware path)
-    let dsl = crate::importer::tei::extraction::segments_to_dsl(&segments);
+    let dsl = crate::importer::tei::extraction::segments_to_dsl(&segments, DSL_RULES);
 
     // Create the imported document manifest
     let imported_document = ImportedDocument {
         segments,
         is_menota,
         spans,
+        dsl_rules: DSL_RULES,
     };
 
     // Trim output to avoid massive trailing/leading whitespace

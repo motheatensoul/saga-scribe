@@ -75,10 +75,11 @@ const LCS_CELL_LIMIT: usize = 4_000_000;
 /// Returns an error if the edited DSL does not parse.
 pub fn compute_patches(
     segments: &[Segment],
+    dsl_rules: u32,
     edited_dsl: &str,
 ) -> Result<Vec<PatchOperation>, String> {
     // Fast-path: if the edited DSL matches the original extraction, keep everything.
-    let original_dsl = segments_to_dsl(segments);
+    let original_dsl = segments_to_dsl(segments, dsl_rules);
     if original_dsl.trim() == edited_dsl.trim() {
         return Ok(Vec::new());
     }
@@ -283,6 +284,24 @@ impl OriginalTokens {
 
         ops
     }
+}
+
+/// The one DSL token an imported element reads as (words, punctuation,
+/// breaks, paragraph starts), for checking both readings agree.
+#[cfg(test)]
+pub fn segment_dsl_token(seg: &Segment) -> Option<String> {
+    let text = segment_token_text(seg)?;
+    let tokens = parse_dsl_to_tokens(&text).ok()?;
+    match tokens.as_slice() {
+        [token] => Some(token.clone()),
+        _ => Some(format!("<{} tokens: {}>", tokens.len(), text)),
+    }
+}
+
+/// The tokens the patcher diffs, read from DSL.
+#[cfg(test)]
+pub fn dsl_tokens(dsl: &str) -> Result<Vec<String>, String> {
+    parse_dsl_to_tokens(dsl)
 }
 
 /// The DSL text a segment contributes to the token stream, if any.

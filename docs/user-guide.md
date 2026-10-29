@@ -195,9 +195,15 @@ Example: `.abbr[d.]{deus}` produces an abbreviation mark for "d." expanding to "
 
 ```
 |            Explicit word boundary
+upp~haf      One word written as two (one <w>, "upp haf" in facs/dipl, "upphaf" in norm)
 ~//5         Word continues across line break (to line 5): hel~//5lo
 ~///1v       Word continues across page break
 ```
+
+Punctuation written as an entity is a separate `<pc>` when it stands alone
+between spaces (`þa :middot: þo`); glued to letters it is part of the word
+(`:middot:Q:middot:` is the numeral ·Q·). A lone letter entity such as
+`:inodot:` (the word í) stays a word.
 
 ### Special Characters
 

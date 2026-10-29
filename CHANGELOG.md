@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Imported files are never modified by reading them**: unedited content is written back byte-for-byte, and edits only replace the bytes of what was edited
 - **Project file format 1.6**: `segments.json` always holds the full manifest (with MENOTA flag and source spans for every tag); 1.4 and 1.5 projects still open. Files imported before this version don't show `.p` until re-imported
+- **Imported XML and its DSL read as the same words**: a `<w>` written as several words (`þo at`, 1,447 in HolmPerg) is written `þo~at`, and entity punctuation that is its own `<pc>` (`:middot:`, 483) is set off by spaces. Documents imported earlier keep their DSL as it was
+- **Entity punctuation alone between spaces** (`þa :middot: þo`) compiles to `<pc>`; glued to letters (`:middot:Q:middot:`) it stays part of the word
 - **Editing an imported word** keeps its lemma, analysis and hand-curated normalized form (before, the normalized form was regenerated from the dictionary); the diplomatic form follows the edit. Such words are underlined in the previews and flagged "edited" in the word panel until re-imported, as a reminder to check them
 - **Non-MENOTA imports** keep their own encoding style (plain `<w>` or plain text) instead of gaining MENOTA markup on edited words
 - **DSL parser**: rebuilt on a hierarchical syntax tree with source positions and error recovery (internal foundation for the round-trip work); output is unchanged
@@ -47,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Word numbering** now follows document order everywhere, so lemmas loaded from a file stay on the right words
 - **Mid-word line breaks** (`~//`): the compiled XML kept the break (single-level) or dropped it entirely (MENOTA), and read the rest of the word as the line number; the default XSLT dropped breaks inside words, merging lines and losing their numbers. It now shows a broken word as one box per line, the first ending in a hyphen
 - **Default XSLT, line-by-line transcriptions**: a paragraph starting mid-line pushed the rest of that line onto a row of its own; paragraphs now run inline there, marked with a pilcrow (¶). Prose without line breaks (e.g. front matter) keeps block paragraphs
+- **Abbreviations in MENOTA output**: entities inside `.abbr[…]` were written as literal text (`k:bar:` instead of `k&bar;`), and reading such a file back lost the expansion
 - **PDF margins**: page margins were ignored, so text ran to the edge of the page
 - **Export menu** stopped responding after cancelling a file dialog
 - **Save and export dialogs** add the file extension (`.teis`, `.xml`, `.html`, `.pdf`, `.json`) when a name is typed without one

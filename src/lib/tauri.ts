@@ -132,6 +132,8 @@ export interface ImportedDocument {
   is_menota: boolean;
   /** Byte ranges of segments in the original body, indexed by segment id */
   spans?: ([number, number] | null)[];
+  /** DSL rules version the document was imported with (absent: 0) */
+  dsl_rules?: number;
 }
 
 export interface ImportResult {

@@ -240,11 +240,9 @@ impl<'a> Compiler<'a> {
                 result
             }
             Node::Abbreviation { abbr, expansion } => {
-                format!(
-                    "<choice><abbr>{}</abbr><expan>{}</expan></choice>",
-                    self.escape_xml(abbr),
-                    self.escape_xml(expansion)
-                )
+                let abbr = self.nodes_to_xml(&inline_nodes(abbr));
+                let expansion = self.nodes_to_xml(&inline_nodes(expansion));
+                format!("<choice><abbr>{}</abbr><expan>{}</expan></choice>", abbr, expansion)
             }
             Node::Gap { quantity, supplied } => {
                 let gap_xml = match quantity {
@@ -728,7 +726,9 @@ impl<'a> Compiler<'a> {
         match node {
             Node::Text(text) => self.escape_xml(text),
             Node::Entity(name) => format!("&{};", name),
-            Node::Abbreviation { abbr, .. } => format!("<abbr>{}</abbr>", self.escape_xml(abbr)),
+            Node::Abbreviation { abbr, .. } => {
+                format!("<abbr>{}</abbr>", self.nodes_to_facs(&inline_nodes(abbr)))
+            }
             Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(text)),
             Node::Gap { quantity, .. } => {
                 // Facsimile shows gap only, not supplied
@@ -788,7 +788,9 @@ impl<'a> Compiler<'a> {
                 // Final fallback to entity reference
                 format!("&{};", name)
             }
-            Node::Abbreviation { expansion, .. } => format!("<expan>{}</expan>", self.escape_xml(expansion)),
+            Node::Abbreviation { expansion, .. } => {
+                format!("<expan>{}</expan>", self.nodes_to_diplomatic(&inline_nodes(expansion)))
+            }
             Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(text)),
             // Clippy is cranky about this being two nested matches, its suggested fix does not work though.
             Node::Gap { supplied, .. } => {
@@ -894,8 +896,7 @@ impl<'a> Compiler<'a> {
                 format!("&{};", name)
             }
             Node::Abbreviation { expansion, .. } => {
-                let normalized = self.normalize_text(expansion);
-                format!("<expan>{}</expan>", self.escape_xml(&normalized))
+                format!("<expan>{}</expan>", self.nodes_to_normalized(&inline_nodes(expansion)))
             }
             Node::Unclear(text) => {
                 let normalized = self.normalize_text(text);
@@ -1210,6 +1211,15 @@ impl<'a> Compiler<'a> {
         }
         output
     }
+}
+
+/// The DSL inside a construct (`.abbr[k:bar:]`) as nodes, so its entities are
+/// compiled like anywhere else; unparseable content stays text.
+fn inline_nodes(dsl: &str) -> Vec<Node> {
+    Lexer::new(dsl)
+        .parse()
+        .map(|doc| doc.nodes)
+        .unwrap_or_else(|_| vec![Node::Text(dsl.to_string())])
 }
 
 impl Default for Compiler<'_> {

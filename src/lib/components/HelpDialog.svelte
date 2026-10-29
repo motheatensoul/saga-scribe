@@ -103,6 +103,11 @@
             desc: "Explicit word boundary",
         },
         {
+            syntax: "upp~haf",
+            output: "<w>upp haf</w>",
+            desc: "One word written as two",
+        },
+        {
             syntax: "~//5",
             output: "(continuation + lb)",
             desc: "Word continues across line",

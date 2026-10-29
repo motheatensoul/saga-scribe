@@ -553,7 +553,7 @@ impl Extractor {
             id: self.next_id(),
             original_xml,
             attributes,
-            dsl_content,
+            dsl_content: join_written_words(&dsl_content),
             has_inline_lb,
         }
     }
@@ -759,8 +759,11 @@ impl Extractor {
     ) -> Option<(String, String)> {
         let facs_node = Self::find_descendant(node, "facs")?;
         let dipl_node = Self::find_descendant(node, "dipl")?;
-        let has_am = Self::find_descendant(&facs_node, "am").is_some();
-        let has_ex = Self::find_descendant(&dipl_node, "ex").is_some();
+        // MENOTA's <me:am>/<me:ex>, or the <abbr>/<expan> Saga-Scribe writes
+        let has_am = Self::find_descendant(&facs_node, "am").is_some()
+            || Self::find_descendant(&facs_node, "abbr").is_some();
+        let has_ex = Self::find_descendant(&dipl_node, "ex").is_some()
+            || Self::find_descendant(&dipl_node, "expan").is_some();
 
         if !has_am && !has_ex {
             return None;
@@ -1216,6 +1219,47 @@ pub fn extract_segments(body_node: &Node) -> Vec<Segment> {
     extractor.extract_segments(body_node)
 }
 
+/// Joins the written words of one `<w>` with `~` (compound join), so the DSL
+/// reads them as one word, as the XML does: `þo at` → `þo~at`. Whitespace
+/// inside constructs (`.abbr[…]{…}`, `^{…}`, `<…>`) is left alone, and
+/// whitespace after a continued break (`to~//5 þings`) is dropped.
+pub fn join_written_words(dsl: &str) -> String {
+    let mut out = String::with_capacity(dsl.len());
+    let mut depth = 0usize;
+    let mut chars = dsl.trim().chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '[' | '{' | '<' => depth += 1,
+            ']' | '}' | '>' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        if depth == 0 && c.is_whitespace() {
+            while chars.next_if(|c| c.is_whitespace()).is_some() {}
+            let after_break = out.trim_end_matches(|c: char| c.is_ascii_digit()).ends_with("~//");
+            if !after_break && !out.ends_with('~') {
+                out.push('~');
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Whether a punctuation segment's DSL is made only of punctuation entities
+/// (`:middot:`), which the DSL marks by setting them off with spaces.
+fn is_entity_punctuation(dsl: &str) -> bool {
+    let dsl = dsl.trim();
+    dsl.len() > 2
+        && dsl.starts_with(':')
+        && dsl.ends_with(':')
+        && dsl[1..dsl.len() - 1].split("::").all(|name| {
+            !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && crate::entities::is_punctuation_entity(name)
+        })
+}
+
 /// Converts a segment list back to DSL text representation.
 ///
 /// This is used for:
@@ -1225,11 +1269,15 @@ pub fn extract_segments(body_node: &Node) -> Vec<Segment> {
 /// # Formatting Rules
 ///
 /// - Words are separated by spaces (from Whitespace segments)
-/// - Punctuation immediately follows words (no space)
+/// - Punctuation immediately follows words (no space), except entity
+///   punctuation (`:middot:`), which is set off by spaces
+/// - Paragraph starts: `.p`, set off by spaces
 /// - Line breaks: newline + `//n` + space
 /// - Page breaks: newline + `///n`
 /// - Structural elements are skipped (not represented in DSL)
-pub fn segments_to_dsl(segments: &[Segment]) -> String {
+///
+/// `dsl_rules` is the document's [`DSL_RULES`](super::segments::DSL_RULES) version.
+pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
     let mut dsl = String::new();
     let mut last_was_linebreak = false;
     let mut pending_space = false;  // Track if we should add a space before next word
@@ -1244,6 +1292,17 @@ pub fn segments_to_dsl(segments: &[Segment]) -> String {
                 dsl.push_str(dsl_content);
                 last_was_linebreak = false;
                 pending_space = false;
+            }
+            Segment::Punctuation { dsl_content, .. }
+                if dsl_rules >= 1 && is_entity_punctuation(dsl_content) =>
+            {
+                // Set off by spaces: glued to a word it would be part of the word
+                if !dsl.is_empty() && !dsl.ends_with(char::is_whitespace) {
+                    dsl.push(' ');
+                }
+                dsl.push_str(dsl_content);
+                last_was_linebreak = false;
+                pending_space = true;
             }
             Segment::Punctuation { dsl_content, .. } => {
                 // Punctuation typically follows immediately after word (no space)
