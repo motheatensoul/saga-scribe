@@ -32,7 +32,7 @@ tokio = { version = "1.49.0", features = ["sync"] }
 # as wry uses, so nothing extra is compiled.
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
-glib = "0.18"
+glib = "0.20"
 webkit2gtk = "2.0"
 
 [target.'cfg(windows)'.dependencies]
