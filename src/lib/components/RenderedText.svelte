@@ -1,21 +1,24 @@
 <script lang="ts">
     import { tick } from 'svelte';
     import { entityStore } from '$lib/stores/entities';
-    import { getInflections, lemmaMappings } from '$lib/stores/dictionary';
-    import { annotationTypesByWord, type AnnotationType } from '$lib/stores/annotations';
+    import { getInflections } from '$lib/stores/dictionary';
+    import type { AnnotationType } from '$lib/stores/annotations';
     import { validationStore } from '$lib/stores/validation';
-    import { importedStore } from '$lib/stores/imported.svelte';
     import type { ParsedDocument, TextToken } from '$lib/rendered/document';
     import { renderFull, renderUpdate, type RenderedState } from '$lib/rendered/incremental';
     import { perfRecord } from '$lib/perf';
     import type { EntityMap } from '$lib/stores/entities';
+    import { NO_MARKS, type WordMarks } from '$lib/rendered/marks';
 
     let {
         content = '',
+        marks = NO_MARKS,
         active = true,
         onwordclick,
     }: {
         content?: string;
+        /** What to mark on the words of `content`, numbered as it is */
+        marks?: WordMarks;
         /** Hidden views skip updates and catch up when shown again */
         active?: boolean;
         onwordclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement, isSpanExtend?: boolean) => void;
@@ -33,7 +36,7 @@
     /** What `document` was rendered from, so edits can re-parse only affected pages */
     let rendered: RenderedState | null = null;
     /** The newest document not yet rendered, rendered once the running rendering is done */
-    let wanted: { content: string; entities: EntityMap } | null = null;
+    let wanted: { content: string; entities: EntityMap; marks: WordMarks } | null = null;
     let renderLoopRunning = false;
     /** Stops rendering when the view goes away */
     const unmounted = new AbortController();
@@ -42,10 +45,10 @@
     let lastContent = $state('');
     let currentPageIndex = $state(0);
 
-    // Pre-compute confirmed word set for O(1) lookups during render
-    let confirmedWordSet = $derived(
-        new Set(Object.keys($lemmaMappings.mappings).map(Number))
-    );
+    /** The marks of the document on screen (switched with it, see marks.ts) */
+    let shownMarks = $state.raw<WordMarks>(NO_MARKS);
+    /** The marks of the newest content */
+    let latestMarks: WordMarks = NO_MARKS;
 
     // Visible pages: current + 1 adjacent on each side for scroll buffer
     let visiblePages = $derived(() => {
@@ -62,9 +65,15 @@
     $effect(() => {
         const currentContent = content;
         const currentEntities = entities;
+        latestMarks = marks;
 
         if (!active) return;
-        if (currentContent === lastContent) return;
+        if (currentContent === lastContent) {
+            // Only the marks changed: they belong to what's shown, unless a
+            // rendering of it is still running (it takes them when done)
+            if (!renderLoopRunning) shownMarks = latestMarks;
+            return;
+        }
         lastContent = currentContent;
 
         if (!currentContent.trim()) {
@@ -82,7 +91,7 @@
 
         // Rendered after the running rendering, if any: that one is finished
         // and shown first, so the view keeps up even while edits keep coming
-        wanted = { content: currentContent, entities: currentEntities };
+        wanted = { content: currentContent, entities: currentEntities, marks: latestMarks };
         if (!renderLoopRunning) void renderLoop();
     });
 
@@ -115,6 +124,8 @@
                 const sameIndex = result.pages.findIndex((p) => p.pageNumber === viewedPage);
                 const shown = performance.now();
                 document = result;
+                // Its marks; the newest, if it's the newest content
+                shownMarks = job.content === lastContent ? latestMarks : job.marks;
                 currentPageIndex = sameIndex >= 0 ? sameIndex : 0;
                 isRendering = false;
                 // The pages on screen redrawn (tick: after the DOM update)
@@ -144,21 +155,21 @@
     }
 
     // Check if this specific word instance is confirmed in the session
-    // Uses pre-computed confirmedWordSet for O(1) lookup
+    // One lookup in the marks of the shown document
     function isWordConfirmed(wordIndex: number | undefined): boolean {
         if (wordIndex === undefined || wordIndex < 0) return false;
-        return confirmedWordSet.has(wordIndex);
+        return shownMarks.confirmed.has(wordIndex);
     }
 
     /** Edited since import, keeping the original's lemma and normalized form */
     function isWordEdited(wordIndex: number | undefined): boolean {
-        return wordIndex !== undefined && importedStore.editedWords.has(wordIndex);
+        return wordIndex !== undefined && shownMarks.edited.has(wordIndex);
     }
 
     // Check if word has specific annotation type (one lookup per word)
     function hasAnnotationType(wordIndex: number | undefined, type: AnnotationType): boolean {
         if (wordIndex === undefined || wordIndex < 0) return false;
-        return $annotationTypesByWord.get(wordIndex)?.has(type) ?? false;
+        return shownMarks.types.get(wordIndex)?.has(type) ?? false;
     }
 
     // Navigation functions

@@ -16,8 +16,10 @@ export function markEdit(now = performance.now()) {
 }
 
 /**
- * Runs `work` once no edit has been made for `pauseMs` (at once if none
- * was made that recently). Returns a function that cancels it.
+ * Runs `work` once no edit has been made for `pauseMs` (on the next turn of
+ * the event loop if none was made that recently, never synchronously: state
+ * changing together, in successive microtasks, is all in place by then).
+ * Returns a function that cancels it.
  */
 export function whenTypingPauses(work: () => void, pauseMs = TYPING_PAUSE_MS): () => void {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -30,7 +32,7 @@ export function whenTypingPauses(work: () => void, pauseMs = TYPING_PAUSE_MS): (
             work();
         }
     };
-    check();
+    timer = setTimeout(check, 0);
     return () => {
         if (timer !== null) clearTimeout(timer);
     };

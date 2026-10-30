@@ -4,11 +4,13 @@ import { markEdit, whenTypingPauses } from "./typing";
 describe("whenTypingPauses", () => {
     afterEach(() => vi.useRealTimers());
 
-    it("runs at once when nobody is typing", () => {
+    it("runs on the next turn when nobody is typing", () => {
         vi.useFakeTimers();
         markEdit(performance.now() - 1000);
         const work = vi.fn();
         whenTypingPauses(work, 200);
+        expect(work).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(0);
         expect(work).toHaveBeenCalledOnce();
     });
 

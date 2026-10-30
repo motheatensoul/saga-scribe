@@ -3,6 +3,9 @@
     import XsltRenderer from './XsltRenderer.svelte';
     import XmlPreview from './XmlPreview.svelte';
     import { whenTypingPauses } from '$lib/editor/typing';
+    import { currentMarks, NO_MARKS, type WordMarks } from '$lib/rendered/marks';
+    import { annotationTypesByWord, lemmaMappings } from '$lib/stores/annotations';
+    import { importedStore } from '$lib/stores/imported.svelte';
     import { perfRecord } from '$lib/perf';
 
     let {
@@ -18,14 +21,19 @@
     let viewMode = $state<'xml' | 'rendered' | 'xslt'>('rendered');
 
     // The views show new output only once typing pauses: redrawing them
-    // between keystrokes would hold up the keystrokes
+    // between keystrokes would hold up the keystrokes. The marks on its
+    // words are taken with it (numbered by the same compile).
     let shown = $state('');
+    let shownMarks = $state.raw<WordMarks>(NO_MARKS);
     $effect(() => {
+        // Also when only the marks change (a note added)
+        void [$lemmaMappings, $annotationTypesByWord, importedStore.editedWords];
         const next = content;
         const arrived = performance.now();
         return whenTypingPauses(() => {
             perfRecord('preview.held_back', performance.now() - arrived);
             shown = next;
+            shownMarks = currentMarks();
         });
     });
 
@@ -97,7 +105,7 @@
         <!-- Lazy mount + keep alive: only mount when first visited, then keep mounted but hidden -->
         {#if visited.rendered}
             <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'rendered'}>
-                <RenderedText content={shown} active={viewMode === 'rendered'} {onwordclick} />
+                <RenderedText content={shown} marks={shownMarks} active={viewMode === 'rendered'} {onwordclick} />
             </div>
         {/if}
         {#if visited.xslt}
