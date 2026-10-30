@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ONP unreachable**: when an entry's details can't be fetched (offline, or onp.ku.dk down), the word panel says so instead of waiting indefinitely; the analysis can still be entered
 - **Editor highlighting disagreed with the compiler** in places: gaps with supplied text (`[...<na>]`) and `|` or `~` right after some characters weren't highlighted, a lone `-`, `:` or `}` was marked as an error, `word.p` was shown as a paragraph break, and braces nested in `.supplied{}` ended it early. The editor now finds constructs exactly as the compiler does, checked against a shared corpus of over a thousand inputs (and HolmPerg)
 - **Lemmas after a heading were off by the heading's words**: words inside `.head{}`, `.supplied{}` and `.norm{}` weren't counted when lemmas and annotations were applied, though the previews count them
+- **The last lines of the editor hid under the horizontal scrollbar** when long lines made it appear: the editor's scrollbars now take up space of their own instead of overlaying the text
 
 ## [0.6.1] - 2026-10-29
 
