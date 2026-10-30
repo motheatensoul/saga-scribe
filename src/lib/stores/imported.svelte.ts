@@ -107,10 +107,10 @@ class ImportedStore {
     if (!this.isImportedMode) {
       throw new Error("Not in imported mode");
     }
-    const result = await compileSession.run(editedDsl, async (guidance) => {
+    const result = await compileSession.run(editedDsl, async (guidance, xmlBase) => {
       // Make sure the backend holds this document (rejects if loading it failed)
       await this.backendSync;
-      return compileImported(editedDsl, options(), guidance);
+      return compileImported(editedDsl, options(), guidance, xmlBase);
     });
     this.editedWords = new Set(result.editedWords);
     return result.xml;

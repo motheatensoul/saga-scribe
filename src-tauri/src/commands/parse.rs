@@ -31,8 +31,10 @@ pub async fn compile_dsl(
     lemma_mappings_json: Option<String>,
     annotations_json: Option<String>,
     guidance: Option<Guidance>,
+    xml_base: Option<u64>,
     session: State<'_, NativeSession>,
-) -> Result<CompileOutput, String> {
+    sent: State<'_, SentOutput>,
+) -> Result<CompileReply, String> {
     let session = session.inner().clone();
     // Move all the work to a blocking thread pool to avoid blocking the UI
     tauri::async_runtime::spawn_blocking(move || {
@@ -127,6 +129,7 @@ pub async fn compile_dsl(
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
+    .map(|output| sent.reply(output, xml_base))
 }
 
 /// The last native-mode compile: which token and word is which, so the next
@@ -249,7 +252,9 @@ pub async fn compile_imported(
     custom_mappings: Option<HashMap<String, String>>,
     lemma_mappings_json: Option<String>,
     guidance: Option<Guidance>,
-) -> Result<CompileOutput, String> {
+    xml_base: Option<u64>,
+    sent: State<'_, SentOutput>,
+) -> Result<CompileReply, String> {
     let session = session.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let total = perf::timer();
@@ -321,6 +326,7 @@ pub async fn compile_imported(
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
+    .map(|output| sent.reply(output, xml_base))
 }
 
 /// Compiles edited DSL into the imported document `source` (see
@@ -406,6 +412,117 @@ pub struct CompileOutput {
     pub edited_words: Vec<u32>,
 }
 
+/// What the frontend gets of a compile: the document whole, or only what
+/// changed since the output it holds (see [`SentOutput`]).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompileReply {
+    /// The full document, unless sent as `delta`
+    pub xml: Option<String>,
+    /// The change to the output of revision `xml_base` (as the frontend asked)
+    pub delta: Option<XmlDelta>,
+    pub revision: u64,
+    pub renumbering: Option<Renumbering>,
+    pub edited_words: Vec<u32>,
+}
+
+/// A change to a document: `from..to` (in UTF-16 code units, as JavaScript
+/// counts) replaced by `insert`.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct XmlDelta {
+    pub from: usize,
+    pub to: usize,
+    pub insert: String,
+}
+
+/// The last output sent to the frontend, by revision. A large manuscript's
+/// XML is megabytes; a keystroke changes a few bytes of it, so the next
+/// compile sends only that change, if the frontend still holds this output.
+#[derive(Default)]
+pub struct SentOutput(Mutex<Option<(u64, String)>>);
+
+impl SentOutput {
+    /// `output` as sent to a frontend holding the output of revision
+    /// `xml_base`: as a change to it if this is that output, else whole.
+    pub fn reply(&self, output: CompileOutput, xml_base: Option<u64>) -> CompileReply {
+        let mut timer = perf::timer();
+        let mut last = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let delta = match (&*last, xml_base) {
+            (Some((revision, previous)), Some(base)) if *revision == base => Some(xml_delta(previous, &output.xml)),
+            _ => None,
+        };
+        timer.lap(
+            "compile.xml_delta",
+            [("delta", delta.is_some().into()), ("insert_bytes", delta.as_ref().map_or(0, |d| d.insert.len()).into())],
+        );
+        let CompileOutput { xml, revision, renumbering, edited_words } = output;
+        let reply = CompileReply {
+            xml: if delta.is_some() { None } else { Some(xml.clone()) },
+            delta,
+            revision,
+            renumbering,
+            edited_words,
+        };
+        *last = Some((revision, xml));
+        reply
+    }
+}
+
+/// Length of the common prefix of `a` and `b` in bytes, ending on a char boundary.
+fn common_prefix(a: &str, b: &str) -> usize {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let max = a.len().min(b.len());
+    // Whole blocks first (compared with memcmp, fast in debug builds too)
+    const BLOCK: usize = 4096;
+    let mut n = 0;
+    while n + BLOCK <= max && a[n..n + BLOCK] == b[n..n + BLOCK] {
+        n += BLOCK;
+    }
+    while n < max && a[n] == b[n] {
+        n += 1;
+    }
+    // Not inside a character (a continuation byte means one started before)
+    while n > 0 && (a.get(n).is_some_and(|&c| c & 0xC0 == 0x80) || b.get(n).is_some_and(|&c| c & 0xC0 == 0x80)) {
+        n -= 1;
+    }
+    n
+}
+
+/// Length of the common suffix of `a` and `b` in bytes, at most `max`, starting on a char boundary.
+fn common_suffix(a: &str, b: &str, max: usize) -> usize {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    const BLOCK: usize = 4096;
+    let mut n = 0;
+    while n + BLOCK <= max && a[a.len() - n - BLOCK..a.len() - n] == b[b.len() - n - BLOCK..b.len() - n] {
+        n += BLOCK;
+    }
+    while n < max && a[a.len() - n - 1] == b[b.len() - n - 1] {
+        n += 1;
+    }
+    while n > 0 && a[a.len() - n] & 0xC0 == 0x80 {
+        n -= 1;
+    }
+    n
+}
+
+/// UTF-16 code units in `bytes` (valid UTF-8): one per character, two for
+/// those of four bytes.
+fn utf16_len(bytes: &[u8]) -> usize {
+    bytes.iter().map(|&b| usize::from(b & 0xC0 != 0x80) + usize::from(b >= 0xF0)).sum()
+}
+
+/// The change turning `previous` into `next`.
+fn xml_delta(previous: &str, next: &str) -> XmlDelta {
+    let prefix = common_prefix(previous, next);
+    let suffix = common_suffix(previous, next, previous.len().min(next.len()) - prefix);
+    let from = utf16_len(&previous.as_bytes()[..prefix]);
+    XmlDelta {
+        from,
+        to: from + utf16_len(&previous.as_bytes()[prefix..previous.len() - suffix]),
+        insert: next[prefix..next.len() - suffix].to_string(),
+    }
+}
+
 /// A DSL syntax error, positioned for the editor.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DslDiagnostic {
@@ -449,6 +566,62 @@ fn dsl_diagnostics(input: &str) -> Vec<DslDiagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `delta` applied to `previous` as JavaScript would, in UTF-16 units.
+    fn apply_delta(previous: &str, delta: &XmlDelta) -> String {
+        let units: Vec<u16> = previous.encode_utf16().collect();
+        let mut out = String::from_utf16(&units[..delta.from]).unwrap();
+        out.push_str(&delta.insert);
+        out.push_str(&String::from_utf16(&units[delta.to..]).unwrap());
+        out
+    }
+
+    #[test]
+    fn test_xml_delta_rebuilds_the_new_document() {
+        let long = "ꝛ𝔞 þat ".repeat(2000);
+        let cases = [
+            ("", ""),
+            ("abc", "abc"),
+            ("abc", "abXc"),
+            ("abc", ""),
+            ("", "abc"),
+            ("aþc", "aðc"),
+            ("a𝔞c", "a𝔟c"),
+            ("ꝛꝛꝛ", "ꝛꝛ"),
+            ("𝔞𝔞", "𝔞"),
+        ];
+        for (previous, next) in cases {
+            assert_eq!(apply_delta(previous, &xml_delta(previous, next)), next, "{previous:?} -> {next:?}");
+        }
+        // Long enough for the block comparisons, edited in the middle and at the ends
+        let mid = long.char_indices().nth(7000).unwrap().0;
+        for next in [
+            format!("{}𝔟{}", &long[..mid], &long[mid..]),
+            format!("{}{}", &long[..mid], &long[mid + 'ꝛ'.len_utf8().min(long.len() - mid)..]),
+            format!("x{long}"),
+            format!("{long}x"),
+        ] {
+            let delta = xml_delta(&long, &next);
+            assert_eq!(apply_delta(&long, &delta), next);
+            assert!(delta.insert.len() <= 4, "{:?}", delta.insert);
+        }
+    }
+
+    #[test]
+    fn test_output_is_sent_as_a_change_only_to_the_output_the_frontend_holds() {
+        let sent = SentOutput::default();
+        let output = |xml: &str, revision| CompileOutput { xml: xml.into(), revision, renumbering: None, edited_words: vec![] };
+        // Nothing held yet: whole
+        let first = sent.reply(output("<w>ok</w>", 1), Some(1));
+        assert_eq!((first.xml.as_deref(), first.delta), (Some("<w>ok</w>"), None));
+        // Holding revision 1: the change to it
+        let second = sent.reply(output("<w>ek</w>", 2), Some(1));
+        assert_eq!(second.xml, None);
+        assert_eq!(second.delta, Some(XmlDelta { from: 3, to: 4, insert: "e".into() }));
+        // Holding something else (or nothing): whole
+        assert_eq!(sent.reply(output("<w>ak</w>", 3), Some(1)).xml.as_deref(), Some("<w>ak</w>"));
+        assert_eq!(sent.reply(output("<w>uk</w>", 4), None).xml.as_deref(), Some("<w>uk</w>"));
+    }
 
     #[test]
     fn test_dsl_diagnostics_use_utf16_offsets_and_stay_on_one_line() {

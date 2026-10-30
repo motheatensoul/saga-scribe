@@ -196,6 +196,7 @@ export async function compileDsl(
   templateFooter: string,
   options?: CompileOptions,
   guidance?: CompileGuidance,
+  xmlBase?: number,
 ): Promise<CompileResult> {
   return invoke("compile_dsl", {
     input,
@@ -212,6 +213,7 @@ export async function compileDsl(
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     annotationsJson: options?.annotationsJson ?? null,
     guidance: guidance ?? null,
+    xmlBase: xmlBase ?? null,
   });
 }
 
@@ -258,9 +260,21 @@ export interface CompileGuidance {
   changes: TextChange[];
 }
 
-/** Result of {@link compileDsl} and {@link compileImported}. */
+/** A change to a document: `from..to` (UTF-16 offsets) replaced by `insert`. */
+export interface XmlDelta {
+  from: number;
+  to: number;
+  insert: string;
+}
+
+/**
+ * Result of {@link compileDsl} and {@link compileImported}: the document
+ * whole (`xml`), or, if the caller holds the output of revision `xmlBase`,
+ * only the change to it (`delta`). `compileSession` puts it back together.
+ */
 export interface CompileResult {
-  xml: string;
+  xml?: string | null;
+  delta?: XmlDelta | null;
   /** Identifies this compile's DSL, for {@link CompileGuidance} */
   revision: number;
   /**
@@ -281,6 +295,7 @@ export async function compileImported(
   editedDsl: string,
   options?: CompileImportedOptions,
   guidance?: CompileGuidance,
+  xmlBase?: number,
 ): Promise<CompileResult> {
   return invoke("compile_imported", {
     editedDsl,
@@ -290,6 +305,7 @@ export async function compileImported(
     customMappings: options?.customMappings ?? null,
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     guidance: guidance ?? null,
+    xmlBase: xmlBase ?? null,
   });
 }
 

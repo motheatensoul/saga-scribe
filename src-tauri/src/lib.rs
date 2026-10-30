@@ -26,6 +26,7 @@ pub fn run() {
         .manage(OnpState(Mutex::new(None)))
         .manage(commands::parse::ImportedSession::default())
         .manage(commands::parse::NativeSession::default())
+        .manage(commands::parse::SentOutput::default())
         .manage(commands::pdf::PdfExportState::default())
         .setup(|app| {
             // Spawn validation actor

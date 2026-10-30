@@ -62,6 +62,30 @@ describe("compileSession", () => {
         });
     });
 
+    it("puts the document back together from the changes the backend sends", async () => {
+        compileSession.reset();
+        const bases: (number | undefined)[] = [];
+        const first = await compileSession.run("a", async (_, xmlBase) => {
+            bases.push(xmlBase);
+            return { revision: 1, xml: "<w>a</w>" };
+        });
+        const second = await compileSession.run("ab", async (_, xmlBase) => {
+            bases.push(xmlBase);
+            return { revision: 2, delta: { from: 4, to: 4, insert: "b" } };
+        });
+        expect([first.xml, second.xml]).toEqual(["<w>a</w>", "<w>ab</w>"]);
+        // Nothing held at first; then the first compile's output
+        expect(bases).toEqual([undefined, 1]);
+
+        // After a reset, nothing is held: the next is sent whole
+        compileSession.reset();
+        await compileSession.run("x", async (_, xmlBase) => {
+            bases.push(xmlBase);
+            return { revision: 1, xml: "<w>x</w>" };
+        });
+        expect(bases[2]).toBeUndefined();
+    });
+
     it("sends no guidance after a reset, and the changes since otherwise", async () => {
         compileSession.reset();
         const seen: (CompileGuidance | undefined)[] = [];

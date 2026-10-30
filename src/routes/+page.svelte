@@ -178,7 +178,7 @@
             }
         }
 
-        const result = await perfTime("compile.roundtrip", () => compileSession.run(content, (guidance) => {
+        const result = await perfTime("compile.roundtrip", () => compileSession.run(content, (guidance, xmlBase) => {
             const annotationSet = annotationStore.getSet();
             return compileDsl(
                 content,
@@ -195,6 +195,7 @@
                         annotationSet.annotations.length > 0 ? JSON.stringify(annotationSet) : undefined,
                 },
                 guidance,
+                xmlBase,
             );
         }), { mode: "native", dsl_chars: content.length });
         return result.xml;
