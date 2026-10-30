@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Lemmas are written into imported files**: confirming a lemma sets `lemma` and `me:msa` (or `msa`) on that word in the imported XML. Lemmas that came from the file leave it byte-identical. Notes and other annotations stay in the project, as they would add markup the file doesn't have
 - **Normalized forms without a lemma**: the word panel's normalized form field is always there (on multi-level transcriptions), starts from the word's current form, and saves with or without a lemma. Removing a lemma keeps a normalized form set by hand. On imported files, a changed normalized form is written into the word's `<me:norm>` (line breaks in it are kept)
+- **Performance log**: started with `--perf-log` (or the environment variable `SAGA_SCRIBE_PERF_LOG=1`), the app writes how long each stage of compiling, previewing and validating takes, and when the window stalled, to `perf-<time>.jsonl` in its log directory
 
 ### Fixed
 

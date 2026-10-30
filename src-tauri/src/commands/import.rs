@@ -12,29 +12,36 @@ pub async fn import_file(path: String) -> Result<ImportResult, String> {
     // spawn_blocking moves the CPU-bound work to a thread pool,
     // while the async command itself runs off the main thread
     tauri::async_runtime::spawn_blocking(move || {
-        let path_obj = Path::new(&path);
-        let extension = path_obj
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-
-        let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-
-        match extension.as_str() {
-            "xml" | "tei" => tei::parse(&content),
-            // Plain text files - return as DSL with no metadata or segments
-            _ => Ok(ImportResult {
-                dsl: content,
-                metadata: None,
-                imported_document: None,
-                original_body_xml: None,
-                original_preamble: None,
-                original_postamble: None,
-                is_imported_mode: false,
-            }),
-        }
+        let timer = crate::perf::timer();
+        let result = import_from(&path);
+        timer.done("import_file", [("ok", result.is_ok().into())]);
+        result
     })
     .await
     .map_err(|e| format!("Import task failed: {}", e))?
+}
+
+fn import_from(path: &str) -> Result<ImportResult, String> {
+    let path_obj = Path::new(path);
+    let extension = path_obj
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
+
+    match extension.as_str() {
+        "xml" | "tei" => tei::parse(&content),
+        // Plain text files - return as DSL with no metadata or segments
+        _ => Ok(ImportResult {
+            dsl: content,
+            metadata: None,
+            imported_document: None,
+            original_body_xml: None,
+            original_preamble: None,
+            original_postamble: None,
+            is_imported_mode: false,
+        }),
+    }
 }

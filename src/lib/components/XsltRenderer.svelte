@@ -5,6 +5,7 @@
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
     import { importedStore } from '$lib/stores/imported.svelte';
     import { isPageLocal, renderPages, splitPages } from '$lib/rendered/xsltPages';
+    import { perfRecord, perfTimeSync } from '$lib/perf';
 
     let {
         content = '',
@@ -112,7 +113,8 @@
         const controller = new AbortController();
         (async () => {
             try {
-                const paged = pageLocal ? splitPages(xmlContent) : null;
+                const started = performance.now();
+                const paged = pageLocal ? perfTimeSync('preview.xslt.split_pages', () => splitPages(xmlContent)) : null;
                 if (paged) {
                     // Cached pages only fit the same stylesheet and entities
                     const cache =
@@ -121,7 +123,9 @@
                             : new Map<string, string>();
                     const result = await renderPages(processor, paged, entities, cache, controller.signal);
                     pageCache = result.cache;
-                    showPages(paged.pieces, result.html);
+                    perfTimeSync('preview.xslt.show_pages', () => showPages(paged.pieces, result.html), {
+                        pages: paged.pieces.length,
+                    });
                     renderedHtml = '';
                 } else {
                     // Whole-document transform: the stylesheet computes its own parameters
@@ -136,6 +140,7 @@
                 renderedFrom = { processor, content: xmlContent, entities };
                 error = null;
                 isTransforming = false;
+                perfRecord('preview.xslt', performance.now() - started, { paged: paged !== null });
             } catch (e) {
                 if (controller.signal.aborted) return;
                 error = e instanceof Error ? e.message : `Transform error: ${e}`;

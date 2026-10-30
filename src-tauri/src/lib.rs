@@ -7,6 +7,7 @@ mod importer;
 pub mod metadata;
 mod normalizer;
 mod parser;
+mod perf;
 mod settings;
 mod stylesheet;
 mod template;
@@ -39,9 +40,19 @@ pub fn run() {
                 )?;
             }
 
+            use tauri::Manager;
+            match app.path().app_log_dir() {
+                Ok(dir) => {
+                    if let Some(path) = perf::init(&dir) {
+                        eprintln!("Performance log: {}", path.display());
+                        log::info!("Performance log: {}", path.display());
+                    }
+                }
+                Err(e) => eprintln!("No log directory for the performance log: {}", e),
+            }
+
             // Initialize window theme based on settings
             use settings::SettingsManager;
-            use tauri::Manager;
 
             let app_handle = app.handle();
             if let Ok(manager) = SettingsManager::new(app_handle) {
@@ -130,6 +141,8 @@ pub fn run() {
             commands::metadata::generate_tei_footer,
             commands::metadata::validate_metadata,
             commands::metadata::create_empty_metadata,
+            perf::perf_log_path,
+            perf::perf_record,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

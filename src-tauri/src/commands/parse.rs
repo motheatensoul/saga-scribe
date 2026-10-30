@@ -5,6 +5,7 @@ use crate::importer::tei::patching::{compiler_config_for, render_body, write_lem
 use crate::importer::tei::segments::ImportedDocument;
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping, WordKey};
+use crate::perf;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::State;
@@ -35,6 +36,8 @@ pub async fn compile_dsl(
     let session = session.inner().clone();
     // Move all the work to a blocking thread pool to avoid blocking the UI
     tauri::async_runtime::spawn_blocking(move || {
+        let total = perf::timer();
+        let mut timer = perf::timer();
         // Load entities if provided
         let mut registry = EntityRegistry::new();
         if let Some(json) = entities_json {
@@ -58,7 +61,10 @@ pub async fn compile_dsl(
             }
         }
 
+        timer.lap("compile.load_entities", []);
+
         // Parse lemma mappings if provided (keyed by word INDEX)
+        let lemma_json_bytes = lemma_mappings_json.as_ref().map_or(0, String::len);
         let lemma_mappings: HashMap<u32, LemmaMapping> = match lemma_mappings_json {
             Some(json) => serde_json::from_str(&json)
                 .map_err(|e| format!("Failed to parse lemma mappings: {}", e))?,
@@ -73,6 +79,11 @@ pub async fn compile_dsl(
             ),
             None => None,
         };
+
+        timer.lap(
+            "compile.read_annotations",
+            [("lemmas", lemma_mappings.len().into()), ("json_bytes", lemma_json_bytes.into())],
+        );
 
         // Configure compiler
         let config = CompilerConfig {
@@ -98,15 +109,21 @@ pub async fn compile_dsl(
         }
 
         let mut state = session.0.lock().map_err(|_| "Compile state is poisoned")?;
+        timer.lap("compile.wait_for_session", []);
         let (body, revision, renumbered) =
             compile_tracking_words(compiler, &input, guidance.as_ref(), &mut state)?;
 
-        Ok(CompileOutput {
-            xml: format!("{}\n{}\n{}", template_header, body, template_footer),
-            revision,
-            renumbering: renumbered,
-            edited_words: Vec::new(),
-        })
+        let xml = format!("{}\n{}\n{}", template_header, body, template_footer);
+        total.done(
+            "compile_dsl",
+            [
+                ("revision", revision.into()),
+                ("guided", guidance.is_some().into()),
+                ("dsl_bytes", input.len().into()),
+                ("xml_bytes", xml.len().into()),
+            ],
+        );
+        Ok(CompileOutput { xml, revision, renumbering: renumbered, edited_words: Vec::new() })
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
@@ -134,14 +151,18 @@ pub(crate) fn compile_tracking_words(
     guidance: Option<&Guidance>,
     state: &mut Option<NativeState>,
 ) -> Result<(String, u64, Option<Renumbering>), String> {
+    let mut timer = perf::timer();
     let previous = state.as_ref().filter(|_| guidance.is_some());
     let tracked = Tracked::track(previous.map(|p| &p.tracked), guidance, input, 0)?;
     let previous_numbers = previous.map(|p| numbers_by_key(&p.words));
     let mut compiler = compiler.with_word_identity(tracked.ids.clone(), previous_numbers);
+    timer.lap("compile.track_words", []);
 
     let body = compiler.compile(input)?;
     let words = compiler.word_keys().to_vec();
+    timer.lap("compile.compile", [("words", words.len().into())]);
     let renumbered = previous.and_then(|p| renumbering(&p.words, &words));
+    timer.done("compile.renumber", []);
     let revision = tracked.revision;
     *state = Some(NativeState { tracked, words });
     Ok((body, revision, renumbered))
@@ -185,7 +206,11 @@ pub async fn set_imported_document(
     let source = match segments_json {
         Some(json) => Some(
             tauri::async_runtime::spawn_blocking(move || {
-                ImportedDocument::from_json(&json).map(|document| {
+                let timer = perf::timer();
+                let json_bytes = json.len();
+                let document = ImportedDocument::from_json(&json);
+                timer.done("set_imported_document", [("json_bytes", json_bytes.into())]);
+                document.map(|document| {
                     ImportedSource::new(
                         document,
                         original_body_xml.unwrap_or_default(),
@@ -227,17 +252,25 @@ pub async fn compile_imported(
 ) -> Result<CompileOutput, String> {
     let session = session.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let total = perf::timer();
+        let mut timer = perf::timer();
         // Confirmed lemmas, numbered by the previous compile (see CompileOutput)
+        let lemma_json_bytes = lemma_mappings_json.as_ref().map_or(0, String::len);
         let lemmas: HashMap<u32, LemmaMapping> = match lemma_mappings_json {
             Some(json) => serde_json::from_str(&json)
                 .map_err(|e| format!("Failed to parse lemma mappings: {}", e))?,
             None => HashMap::new(),
         };
+        timer.lap(
+            "compile.read_annotations",
+            [("lemmas", lemmas.len().into()), ("json_bytes", lemma_json_bytes.into())],
+        );
         let mut guard = session
             .0
             .lock()
             .map_err(|_| "Imported document state is poisoned")?;
         let source = guard.as_mut().ok_or("No imported document is loaded")?;
+        timer.lap("compile.wait_for_session", []);
 
         // Load entities if provided
         let mut registry = EntityRegistry::new();
@@ -261,6 +294,8 @@ pub async fn compile_imported(
             }
         }
 
+        timer.done("compile.load_entities", []);
+
         // Match the document's own encoding style
         let config = compiler_config_for(&source.document);
 
@@ -272,7 +307,17 @@ pub async fn compile_imported(
             compiler = compiler.with_dictionary(dict);
         }
 
-        compile_imported_source(source, &mut compiler, &edited_dsl, guidance.as_ref(), lemmas)
+        let output = compile_imported_source(source, &mut compiler, &edited_dsl, guidance.as_ref(), lemmas)?;
+        total.done(
+            "compile_imported",
+            [
+                ("revision", output.revision.into()),
+                ("guided", guidance.is_some().into()),
+                ("dsl_bytes", edited_dsl.len().into()),
+                ("xml_bytes", output.xml.len().into()),
+            ],
+        );
+        Ok(output)
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
@@ -291,10 +336,12 @@ pub(crate) fn compile_imported_source(
 ) -> Result<CompileOutput, String> {
     // Compute patches between original segments and edited DSL, using the
     // editor's changes to keep track of which word is which
+    let mut timer = perf::timer();
     let patcher = source.patcher.get_or_insert_with(|| {
         Patcher::new(&source.document.segments, source.document.dsl_rules)
     });
     let (patches, state) = patcher.compute(edited_dsl, guidance)?;
+    timer.lap("compile.compute_patches", [("patches", patches.len().into())]);
 
     // Apply patches to the original body XML
     let body = render_body(
@@ -303,6 +350,7 @@ pub(crate) fn compile_imported_source(
         &patches,
         compiler,
     )?;
+    timer.lap("compile.render_body", []);
 
     // Which word is which: lemmas follow their words (no guidance: the
     // document was just loaded, numbered as it is now)
@@ -310,6 +358,7 @@ pub(crate) fn compile_imported_source(
         Patcher::new(&source.document.segments, source.document.dsl_rules)
     });
     let words = patcher.word_keys(&source.document, &body, &state);
+    timer.lap("compile.word_keys", [("words", words.len().into())]);
     let previous = source.words.as_ref().filter(|_| guidance.is_some());
     let renumbered = previous.and_then(|previous| renumbering(previous, &words));
     let lemmas = match previous {
@@ -322,7 +371,9 @@ pub(crate) fn compile_imported_source(
         }
         None => lemmas,
     };
+    timer.lap("compile.renumber", []);
     let body_xml = write_lemmas(&body, &lemmas, source.document.is_menota);
+    timer.lap("compile.write_lemmas", [("lemmas", lemmas.len().into())]);
 
     // Only a successful compile becomes the basis for the next one
     patcher.commit(state);
@@ -368,7 +419,10 @@ pub struct DslDiagnostic {
 /// Reports every syntax error in DSL source, for the editor's linter.
 #[tauri::command(async)]
 pub async fn check_dsl(input: String) -> Vec<DslDiagnostic> {
-    dsl_diagnostics(&input)
+    let timer = perf::timer();
+    let diagnostics = dsl_diagnostics(&input);
+    timer.done("check_dsl", [("dsl_bytes", input.len().into()), ("errors", diagnostics.len().into())]);
+    diagnostics
 }
 
 fn dsl_diagnostics(input: &str) -> Vec<DslDiagnostic> {

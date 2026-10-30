@@ -48,6 +48,7 @@
     } from "$lib/tauri";
     import type { ImportedDocument } from "$lib/tauri";
     import { loadAppResources } from "$lib/startup";
+    import { perfEnabled, perfRecord, perfTime, perfTimeSync } from "$lib/perf";
     import { importedLemmas } from "$lib/utils/importedLemmas";
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
     import { printToPdf, withPrintStyles } from "$lib/utils/pdfExport";
@@ -93,7 +94,9 @@
     /** The selected word's normalized form, as compiled */
     let selectedWordNormalized = $derived(
         showLemmatizer && selectedWordIndex >= 0
-            ? wordNormalizedForm(previewContent, selectedWordIndex, $entityStore.entities)
+            ? perfTimeSync("lemmatizer.normalized_form", () =>
+                  wordNormalizedForm(previewContent, selectedWordIndex, $entityStore.entities),
+              )
             : null,
     );
     // For span selections (shift-click extends)
@@ -140,16 +143,25 @@
         // when it's this compile's turn
         // Empty lemmas too: removed ones (taken out of imported files) and
         // words with only a normalized form
-        const lemmaMappingsJson = () => {
-            const writes = annotationStore.getLemmaWrites();
-            return Object.keys(writes).length > 0 ? JSON.stringify(writes) : undefined;
-        };
+        const lemmaMappingsJson = () =>
+            perfTimeSync("compile.lemma_payload", () => {
+                const writes = annotationStore.getLemmaWrites();
+                const count = Object.keys(writes).length;
+                const json = count > 0 ? JSON.stringify(writes) : undefined;
+                perfRecord("compile.lemma_payload.size", 0, { lemmas: count, json_bytes: json?.length ?? 0 });
+                return json;
+            });
 
         if (importedStore.isImportedMode) {
-            return importedStore.compile(content, () => ({
-                ...entityOptions,
-                lemmaMappingsJson: lemmaMappingsJson(),
-            }));
+            return perfTime(
+                "compile.roundtrip",
+                () =>
+                    importedStore.compile(content, () => ({
+                        ...entityOptions,
+                        lemmaMappingsJson: lemmaMappingsJson(),
+                    })),
+                { mode: "imported", dsl_chars: content.length },
+            );
         }
 
         // Use dynamic metadata header if metadata exists, otherwise use template header
@@ -166,7 +178,7 @@
             }
         }
 
-        const result = await compileSession.run(content, (guidance) => {
+        const result = await perfTime("compile.roundtrip", () => compileSession.run(content, (guidance) => {
             const annotationSet = annotationStore.getSet();
             return compileDsl(
                 content,
@@ -184,13 +196,13 @@
                 },
                 guidance,
             );
-        });
+        }), { mode: "native", dsl_chars: content.length });
         return result.xml;
     }
 
     // Words inserted or deleted: everything stored by word number moves along
     compileSession.onRenumbering = (map) => {
-        annotationStore.renumber(map);
+        perfTimeSync("compile.renumber_annotations", () => annotationStore.renumber(map), { words: map.length });
         const move = (index: number) => renumberWord(map, index) ?? -1;
         if (selectedWordIndex >= 0) selectedWordIndex = move(selectedWordIndex);
         if (spanEndWordIndex !== null) {
@@ -215,8 +227,14 @@
         validationTimeout = setTimeout(async () => {
             const schemaId = $templateStore.active?.validationSchemaId || "tei-p5";
             try {
-                const validationResult = await validateXml(xml, schemaId);
-                if (run === validationRun) validationStore.setResult(validationResult);
+                const validationResult = await perfTime("validate.roundtrip", () => validateXml(xml, schemaId), {
+                    xml_chars: xml.length,
+                });
+                if (run === validationRun) {
+                    perfTimeSync("validate.apply", () => validationStore.setResult(validationResult), {
+                        errors: validationResult.errors.length,
+                    });
+                }
             } catch (validationError) {
                 if (run !== validationRun) return;
                 console.warn("Validation failed:", validationError);
@@ -227,11 +245,19 @@
     }
 
     /** Compiles and schedules validation; returns whether compilation succeeded. */
+    /** When the first edit not yet compiled was made, for the performance log */
+    let pendingEditSince: number | null = null;
+
     async function doCompile(content: string): Promise<boolean> {
+        const editSince = pendingEditSince;
+        pendingEditSince = null;
+        const start = performance.now();
+        if (editSince !== null) perfRecord("edit.until_compile", start - editSince);
         try {
             const result = await compileOnly(content);
             if (result === null) return false;
-            previewContent = result;
+            perfTimeSync("preview.set_content", () => (previewContent = result), { xml_chars: result.length });
+            if (editSince !== null) perfRecord("edit.until_xml", performance.now() - editSince);
             scheduleValidation(result);
             return true;
         } catch (e) {
@@ -261,6 +287,10 @@
     }
 
     function handleEditorChange(content: string) {
+        if (perfEnabled()) {
+            pendingEditSince ??= performance.now();
+            perfRecord("ui.edit", 0, { dsl_chars: content.length });
+        }
         updatePreview(content);
     }
 
@@ -597,6 +627,16 @@
     let exportProgress = $state<string | null>(null);
     let exportController: AbortController | null = null;
 
+    // For the performance log: each export step lasts until the next one
+    let exportStep: { label: string; since: number } | null = null;
+    $effect(() => {
+        const label = exportProgress;
+        if (!perfEnabled()) return;
+        const now = performance.now();
+        if (exportStep) perfRecord("export.step", now - exportStep.since, { step: exportStep.label });
+        exportStep = label === null ? null : { label, since: now };
+    });
+
     const EXPORT_STAGE_LABELS: Record<XsltStage, string> = {
         preparing: "Preparing document…",
         parsing: "Parsing XML…",
@@ -615,8 +655,10 @@
         const controller = new AbortController();
         exportController = controller;
         exportProgress = "Starting…";
+        const started = performance.now();
         try {
             await task(controller.signal);
+            perfRecord("export", performance.now() - started, { format: what });
         } catch (e) {
             if (controller.signal.aborted) {
                 errorStore.info("Export", `${what} export cancelled`);

@@ -16,6 +16,7 @@ import { stylesheetStore } from "$lib/stores/stylesheets";
 import { entityStore } from "$lib/stores/entities";
 import { errorStore } from "$lib/stores/errors";
 import { dictionaryStore, inflectionStore } from "$lib/stores/dictionary";
+import { initPerf, perfRecord } from "$lib/perf";
 
 /** The bundled data the compiler is given with each compile */
 export interface CompilerResources {
@@ -164,6 +165,11 @@ async function loadEntitySet(): Promise<string | null> {
  */
 export async function loadAppResources(): Promise<CompilerResources> {
     errorStore.info("App", "Application starting...");
+    const start = performance.now();
+    const perfLog = await initPerf();
+    if (perfLog) {
+        errorStore.info("App", `Writing the performance log to ${perfLog}`);
+    }
 
     // Settings first: the others read them
     try {
@@ -226,6 +232,7 @@ export async function loadAppResources(): Promise<CompilerResources> {
         }
     });
 
+    perfRecord("startup", performance.now() - start);
     errorStore.info("App", "Application ready");
     return { normalizerJson, entityMappingsJson };
 }

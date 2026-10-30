@@ -115,14 +115,31 @@ pub async fn validate_xml(
     xml_content: String,
     schema_id: String,
 ) -> Result<ValidationResult, String> {
-    let schemas_dir = get_schemas_dir(&app)?;
+    let timer = crate::perf::timer();
+    let xml_bytes = xml_content.len();
+    let result = validate_xml_against(&app, &sender, xml_content, &schema_id).await;
+    // Including the wait for validations ahead of it
+    timer.done(
+        "validate_xml",
+        [("xml_bytes", xml_bytes.into()), ("superseded", result.as_ref().is_err_and(|e| e.contains("superseded")).into())],
+    );
+    result
+}
+
+async fn validate_xml_against(
+    app: &AppHandle,
+    sender: &ValidationSender,
+    xml_content: String,
+    schema_id: &str,
+) -> Result<ValidationResult, String> {
+    let schemas_dir = get_schemas_dir(app)?;
 
     // Map schema ID to filename
-    let schema_file = match schema_id.as_str() {
+    let schema_file = match schema_id {
         "tei-p5" => "tei_all.xsd",
         "menota" => "menota.xsd",
         "menota-p5" => "menotaP5.rng",
-        _ => &schema_id, // Assume it's a filename for custom schemas
+        _ => schema_id, // Assume it's a filename for custom schemas
     };
 
     let schema_path = schemas_dir.join(schema_file);
