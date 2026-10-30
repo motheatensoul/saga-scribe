@@ -16,6 +16,8 @@
     import { X as CloseButton } from "@lucide/svelte";
     import { importedStore } from '$lib/stores/imported.svelte';
     import { analysisKey, sameAnalysis } from '$lib/utils/msa';
+    import { resolveEntityReferences } from '$lib/utils/wordNorm';
+    import { entityStore } from '$lib/stores/entities';
     import {
         wordClasses,
         cases,
@@ -33,15 +35,18 @@
     let {
         facsimile,
         diplomatic,
+        normalized = null,
         wordIndex,
         onclose,
         onsave,
     }: {
         facsimile: string;   // Facsimile-level form (for display/storage)
         diplomatic: string;  // Diplomatic-level form (for lookup)
+        /** The word's current normalized form; null without a normalized level */
+        normalized?: string | null;
         wordIndex: number;
         onclose?: () => void;
-        /** After a lemma was confirmed (lemma, msa) or removed (none) */
+        /** After a lemma was confirmed (lemma, msa), removed (none) or the normalized form changed */
         onsave?: (wordIndex: number, lemma?: string, msa?: string) => void;
     } = $props();
 
@@ -78,8 +83,17 @@
     // Currently selected existing mapping (for highlighting)
     let selectedMappingId = $state<string | null>(null);
 
-    // Normalized form for <me:norm> level
-    let normalizedForm = $state('');
+    // Normalized form for <me:norm> level, starting from the word's current one
+    // svelte-ignore state_referenced_locally
+    let normalizedForm = $state(normalized ?? '');
+    /** The normalized form set by the user, if any (otherwise generated, or the file's) */
+    let normOverride = $derived.by(() => {
+        const ann = $sessionLemmaStore.set.annotations.find(
+            (a) => a.type === 'lemma' && a.target.type === 'word' && a.target.wordIndex === wordIndex,
+        );
+        return ann?.value.kind === 'lemma' ? ann.value.normalized : undefined;
+    });
+    let normChanged = $derived(normalized !== null && normalizedForm.trim() !== normalized);
 
     // Derived: which fields to show based on word class
     let showCase = $derived(
@@ -146,38 +160,6 @@
 
         return parts.join(' ');
     });
-
-    // Suggest normalized form based on orthographic rules
-    function suggestNormalized(diplomatic: string): string {
-        let result = diplomatic.toLowerCase();
-
-        // Old Norse orthographic normalizations
-        // Double vowels to acute accents
-        result = result.replace(/aa/g, 'á');
-        result = result.replace(/ee/g, 'é');
-        result = result.replace(/ii/g, 'í');
-        result = result.replace(/oo/g, 'ó');
-        result = result.replace(/uu/g, 'ú');
-        result = result.replace(/yy/g, 'ý');
-
-        // w -> v (Old Norse doesn't use w)
-        result = result.replace(/w/g, 'v');
-
-        // Common medieval spellings
-        result = result.replace(/th/g, 'þ');
-        result = result.replace(/dh/g, 'ð');
-
-        // Long s normalization (should already be done in diplomatic, but just in case)
-        result = result.replace(/ſ/g, 's');
-
-        // Normalize some common variants
-        result = result.replace(/ø/g, 'ǫ');  // Can be either, but ǫ is more standard
-
-        return result;
-    }
-
-    // Auto-suggest normalized form based on diplomatic level
-    let suggestedNorm = $derived(suggestNormalized(diplomatic));
 
     // Check if this word instance already has a session confirmation
     let sessionConfirmation = $derived($lemmaMappings.mappings[wordIndex]);
@@ -273,9 +255,6 @@
         else if (pos === 'interjection') wordClass = 'xIT';
         else wordClass = '';
 
-        // Initialize normalized form with suggestion
-        normalizedForm = suggestedNorm;
-
         try {
             fullEntry = await fetchOnpFullEntry(entry.id);
         } catch (e) {
@@ -286,13 +265,24 @@
         }
     }
 
+    /** The normalized form to keep: a changed one (empty: back to the generated one) or the user's earlier one */
+    function chosenNormalized(): string | undefined {
+        return normChanged ? normalizedForm.trim() || undefined : normOverride;
+    }
+
     async function handleSave() {
         if (!selectedEntry || !msaString) {
+            if (normChanged) {
+                sessionLemmaStore.setNormalized(wordIndex, chosenNormalized(), importedStore.isImportedMode);
+                onsave?.(wordIndex);
+                onclose?.();
+            }
             return;
         }
 
-        // Use normalized form if provided, otherwise use suggestion
-        const normForm = normalizedForm.trim() || suggestedNorm;
+        const chosen = chosenNormalized();
+        // For the dictionary: the form this word ends up with
+        const normForm = chosen ?? normalized ?? undefined;
 
         try {
             // Save to persistent inflection store (by diplomatic form for consistent lookup)
@@ -322,7 +312,7 @@
             sessionLemmaStore.confirmWithHistory(wordIndex, {
                 lemma: selectedEntry.lemma,
                 msa: msaString,
-                normalized: normForm,
+                normalized: chosen,
             });
 
             onsave?.(wordIndex, selectedEntry.lemma, msaString);
@@ -335,6 +325,10 @@
     /** Removes this word's lemma (kept as a removal on imported files, so it reaches the file). */
     function handleRemoveLemma() {
         sessionLemmaStore.unconfirmWithHistory(wordIndex, true, importedStore.isImportedMode);
+        selectedEntry = null;
+        selectedMappingId = null;
+        wordClass = '';
+        resetMorphology();
         onsave?.(wordIndex);
     }
 
@@ -361,11 +355,21 @@
         // Track which mapping is selected for highlighting
         selectedMappingId = `${mapping.onp_id}-${analysisKey(mapping.analysis)}`;
 
+        applyAnalysis(mapping.onp_id, mapping.lemma, mapping.part_of_speech, mapping.analysis);
+
+        // The normalized form that goes with it (imported ones may hold entity references)
+        if (mapping.normalized && normalized !== null) {
+            normalizedForm = resolveEntityReferences(mapping.normalized, $entityStore.entities);
+        }
+    }
+
+    /** Fills the form with a lemma and its analysis. */
+    function applyAnalysis(onpId: string, lemma: string, partOfSpeech: string, msa: string) {
         // Set selected entry with basic info from the mapping
         selectedEntry = {
-            id: mapping.onp_id,
-            lemma: mapping.lemma,
-            part_of_speech: [mapping.part_of_speech],
+            id: onpId,
+            lemma,
+            part_of_speech: [partOfSpeech],
             release: '',
             lemma_mod: '',
             language: 'non',
@@ -373,11 +377,8 @@
             citations: 0,
         };
 
-        // Set normalized form
-        normalizedForm = mapping.normalized || suggestedNorm;
-
         // Parse the MSA string and populate all form fields
-        const parsed = parseMsaString(mapping.analysis);
+        const parsed = parseMsaString(msa);
 
         // Apply all parsed values to form fields
         wordClass = parsed.wordClass;
@@ -492,6 +493,27 @@
         wordClass = select.value;
         resetMorphology();
     }
+
+    /** Opens on the word's lemma, ready to be changed. */
+    async function loadConfirmedLemma(lemma: string, msa: string) {
+        // Its ONP entry, if the dictionary has the headword
+        let entryId = `imported:${lemma}`;
+        try {
+            entryId = (await lookupLemma(lemma)).find((entry) => entry.lemma === lemma)?.id ?? entryId;
+        } catch (e) {
+            console.error('Failed to look up the lemma:', e);
+        }
+        // Unless another lemma was picked meanwhile
+        if (!selectedEntry) {
+            applyAnalysis(entryId, lemma, msa.split(/\s+/)[0] ?? '', msa);
+        }
+    }
+
+    // svelte-ignore state_referenced_locally
+    const confirmedOnOpen = get(lemmaMappings).mappings[wordIndex];
+    if (confirmedOnOpen) {
+        loadConfirmedLemma(confirmedOnOpen.lemma, confirmedOnOpen.msa);
+    }
 </script>
 
 <div class="flex flex-col gap-4 max-h-[80vh] overflow-y-auto">
@@ -524,12 +546,12 @@
     {#if sessionConfirmation}
         <div class="flex items-center justify-between gap-2 rounded-lg border border-success/40 p-3">
             <div class="text-sm">
-                <span class="opacity-70">Lemma of this word:</span>
+                <span class="opacity-70">Lemma:</span>
                 <span class="font-medium">{sessionConfirmation.lemma}</span>
                 <code class="ml-1 text-xs px-1 rounded bg-base-300">{sessionConfirmation.msa}</code>
             </div>
             <button type="button" class="btn btn-sm btn-outline btn-error" onclick={handleRemoveLemma}>
-                Remove lemma from this word
+                Remove lemma
             </button>
         </div>
     {/if}
@@ -592,7 +614,7 @@
             id="lemma-search"
             type="text"
             class="input input-bordered"
-            placeholder="Enter lemma..."
+            placeholder="Headword, e.g. maðr"
             bind:value={searchQuery}
             disabled={!$dictionaryStore.loaded}
         />
@@ -626,7 +648,9 @@
             </ul>
         </div>
     {:else if searchQuery.length >= 1}
-        <p class="text-sm opacity-70 text-center py-2">No results found</p>
+        <p class="text-sm opacity-70 text-center py-2">
+            No headword “{searchQuery}”. Search for the dictionary form (maðr, not manni).
+        </p>
     {/if}
 
     {#if selectedEntry}
@@ -636,15 +660,17 @@
                     <h4 class="font-bold text-lg">{selectedEntry.lemma}</h4>
                     <span class="badge badge-sm">{selectedEntry.part_of_speech?.[0] || '?'}</span>
                 </div>
-                <a
-                    href={`https://onp.ku.dk/${selectedEntry.id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="btn btn-xs btn-ghost"
-                    title="Open in ONP"
-                >
-                    ↗
-                </a>
+                {#if !selectedEntry.id.startsWith('imported:')}
+                    <a
+                        href={`https://onp.ku.dk/${selectedEntry.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="btn btn-xs btn-ghost"
+                        title="Open in ONP"
+                    >
+                        ↗
+                    </a>
+                {/if}
             </div>
 
             {#if isLoadingFull}
@@ -808,36 +834,50 @@
                         <span class="text-xs opacity-70">me:msa:</span>
                         <code class="ml-1 font-mono text-sm">{msaString}</code>
                     </div>
-
-                    <!-- Normalized form input -->
-                    <div class="form-control mt-3">
-                        <label class="label py-1" for="normalized-form">
-                            <span class="label-text font-medium">Normalized form (me:norm)</span>
-                        </label>
-                        <div class="flex gap-2">
-                            <input
-                                id="normalized-form"
-                                type="text"
-                                class="input input-bordered input-sm flex-1 font-mono"
-                                bind:value={normalizedForm}
-                                placeholder={suggestedNorm}
-                            />
-                            {#if normalizedForm !== suggestedNorm}
-                                <button
-                                    type="button"
-                                    class="btn btn-ghost btn-sm"
-                                    onclick={() => normalizedForm = suggestedNorm}
-                                    title="Reset to suggestion"
-                                >
-                                    ↺
-                                </button>
-                            {/if}
-                        </div>
-                        <div class="text-xs opacity-60 mt-1">
-                            Diplomatic: {diplomatic} → Suggested: {suggestedNorm}
-                        </div>
-                    </div>
                 {/if}
+            {/if}
+        </div>
+    {/if}
+
+    {#if normalized !== null}
+        <div class="form-control">
+            <label class="label py-1" for="normalized-form">
+                <span class="label-text font-medium">Normalized form (me:norm)</span>
+            </label>
+            <div class="flex gap-2">
+                <input
+                    id="normalized-form"
+                    type="text"
+                    class="input input-bordered input-sm flex-1 font-mono"
+                    bind:value={normalizedForm}
+                />
+                {#if normChanged}
+                    <button
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        onclick={() => (normalizedForm = normalized ?? '')}
+                        title="Undo the change"
+                        aria-label="Undo the change"
+                    >
+                        ↺
+                    </button>
+                {:else if normOverride !== undefined}
+                    <button
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        onclick={() => {
+                            sessionLemmaStore.setNormalized(wordIndex, undefined, importedStore.isImportedMode);
+                            onsave?.(wordIndex);
+                            onclose?.();
+                        }}
+                        title={importedStore.isImportedMode ? "Use the file's normalized form" : 'Use the generated normalized form'}
+                    >
+                        {importedStore.isImportedMode ? "Use the file's" : 'Use generated'}
+                    </button>
+                {/if}
+            </div>
+            {#if normChanged && !sessionConfirmation && (!selectedEntry || !msaString)}
+                <div class="text-xs opacity-60 mt-1">Saved without a lemma</div>
             {/if}
         </div>
     {/if}
@@ -848,7 +888,7 @@
             type="button"
             class="btn btn-primary"
             onclick={handleSave}
-            disabled={!selectedEntry || !msaString}
+            disabled={!(selectedEntry && msaString) && !normChanged}
         >
             Save
         </button>

@@ -10,12 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Lemmas are written into imported files**: confirming a lemma sets `lemma` and `me:msa` (or `msa`) on that word in the imported XML. Lemmas that came from the file leave it byte-identical. Notes and other annotations stay in the project, as they would add markup the file doesn't have
+- **Normalized forms without a lemma**: the word panel's normalized form field is always there (on multi-level transcriptions), starts from the word's current form, and saves with or without a lemma. Removing a lemma keeps a normalized form set by hand. On imported files, a changed normalized form is written into the word's `<me:norm>` (line breaks in it are kept)
 
 ### Fixed
 
 - **Annotations moved to the wrong words** when words were inserted or deleted before them: lemmas and annotations are stored by word number, which shifted. The backend now keeps track of which word is which across edits (as imported mode did since 0.6), reports how word numbers moved after each compile, and the app moves lemmas, annotations, their undo history and the selection along
 - **Another word typed in place of a deleted one inherited the old word's lemma and normalized form** (in imported files, the normalized form stuck even when the old word was typed back). Only an edit of a word (differing in at most half its letters, like a typo fix) keeps its lemma, analysis and normalized form; another word in its place is a new word, written in the same place
-- **Removing a lemma**: the word panel has "Remove lemma from this word"; its ✕ on known analyses removes the analysis from the dictionary (now labelled so), which left the word's lemma in place. On imported files, removing a lemma removes `lemma` and `me:msa` from the word in the file (and is kept in the project, undoable)
+- **The word panel opens on the word's lemma**, ready to change; it opened empty, so a lemma could only be removed, not edited, when the word's form wasn't in the dictionary (e.g. after a typo fix)
+- **Removing a lemma**: the word panel has "Remove lemma"; its ✕ on known analyses removes the analysis from the dictionary (now labelled so), which left the word's lemma in place. On imported files, removing a lemma removes `lemma` and `me:msa` from the word in the file (and is kept in the project, undoable)
 - **Undo and redo** of lemmas were never enabled: the toolbar followed a history nothing was recorded in
 - **Analyses with their tags in another order** (`xNC gM nS` and `gM xNC nS`) counted as different analyses; they are the same, in the dictionary and when writing lemmas into imported files
 - **ONP unreachable**: when an entry's details can't be fetched (offline, or onp.ku.dk down), the word panel says so instead of waiting indefinitely; the analysis can still be entered

@@ -19,6 +19,7 @@
     import { editor } from "$lib/stores/editor";
     import { templateStore } from "$lib/stores/template";
     import { entityStore } from "$lib/stores/entities";
+    import { wordNormalizedForm } from "$lib/utils/wordNorm";
     import { settings } from "$lib/stores/settings";
     import { stylesheetStore } from "$lib/stores/stylesheets";
     import { errorStore, errorCounts } from "$lib/stores/errors";
@@ -123,6 +124,12 @@
     let selectedWordDiplomatic = $state<string | null>(null);
     let selectedWordIndex = $state<number>(-1);
     let selectedWordElement = $state<HTMLElement | null>(null);
+    /** The selected word's normalized form, as compiled */
+    let selectedWordNormalized = $derived(
+        showLemmatizer && selectedWordIndex >= 0
+            ? wordNormalizedForm(previewContent, selectedWordIndex, $entityStore.entities)
+            : null,
+    );
     // For span selections (shift-click extends)
     let spanEndWordIndex = $state<number | null>(null);
     let compileTimeout: ReturnType<typeof setTimeout>;
@@ -491,20 +498,18 @@
         // Lemmas and annotations are numbered by the previous compile, and
         // renumbered after each one (compileSession), so they are read only
         // when it's this compile's turn
+        // Empty lemmas too: removed ones (taken out of imported files) and
+        // words with only a normalized form
         const lemmaMappingsJson = () => {
-            const mappings = get(lemmaMappings).mappings;
-            return Object.keys(mappings).length > 0 ? JSON.stringify(mappings) : undefined;
+            const writes = annotationStore.getLemmaWrites();
+            return Object.keys(writes).length > 0 ? JSON.stringify(writes) : undefined;
         };
 
         if (importedStore.isImportedMode) {
-            // Removed lemmas too (empty): they are removed from the file
-            return importedStore.compile(content, () => {
-                const writes = annotationStore.getLemmaWrites();
-                return {
-                    ...entityOptions,
-                    lemmaMappingsJson: Object.keys(writes).length > 0 ? JSON.stringify(writes) : undefined,
-                };
-            });
+            return importedStore.compile(content, () => ({
+                ...entityOptions,
+                lemmaMappingsJson: lemmaMappingsJson(),
+            }));
         }
 
         // Use dynamic metadata header if metadata exists, otherwise use template header
@@ -1249,10 +1254,10 @@
                             : [];
                         for (const nw of nestedWords) {
                             if (nw.lemma && nw.msa) {
+                                // The file's normalized form isn't the user's: not stored
                                 lemmaConfirmations[wordIndex] = {
                                     lemma: nw.lemma,
                                     msa: nw.msa,
-                                    normalized: nw.normalized,
                                 };
 
                                 const wordform = (nw.diplomatic ?? nw.facsimile ?? "").trim();
@@ -1294,11 +1299,7 @@
                     }
 
                     if (lemma && msa) {
-                        lemmaConfirmations[wordIndex] = {
-                            lemma,
-                            msa,
-                            normalized: normalized ?? undefined,
-                        };
+                        lemmaConfirmations[wordIndex] = { lemma, msa };
 
                         const diplomatic = extractMenotaText(
                             segment.original_xml,
@@ -1681,13 +1682,16 @@
                 <!-- Tab content -->
                 <div class="p-4">
                     <div class:hidden={wordPanelTab !== "lemmatize"}>
-                        <Lemmatizer
-                            facsimile={selectedWordFacsimile || ""}
-                            diplomatic={selectedWordDiplomatic}
-                            wordIndex={selectedWordIndex}
-                            onclose={handleLemmatizerClose}
-                            onsave={handleLemmatizerSave}
-                        />
+                        {#key selectedWordIndex}
+                            <Lemmatizer
+                                facsimile={selectedWordFacsimile || ""}
+                                diplomatic={selectedWordDiplomatic}
+                                normalized={selectedWordNormalized}
+                                wordIndex={selectedWordIndex}
+                                onclose={handleLemmatizerClose}
+                                onsave={handleLemmatizerSave}
+                            />
+                        {/key}
                     </div>
                     <div class:hidden={wordPanelTab !== "annotate"}>
                         <AnnotationPanel

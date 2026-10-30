@@ -344,6 +344,23 @@ fn test_compiler_norm_wrapper() {
 }
 
 #[test]
+fn test_compiler_normalized_form_without_lemma() {
+    let config = CompilerConfig {
+        word_wrap: true,
+        auto_line_numbers: false,
+        multi_level: true,
+        wrap_pages: false,
+    };
+    let mut lemmas = HashMap::new();
+    let norm_only = LemmaMapping { lemma: String::new(), msa: String::new(), normalized: Some("maðr".to_string()) };
+    lemmas.insert(0, norm_only);
+    let mut compiler = Compiler::new().with_config(config).with_lemma_mappings(lemmas);
+    let result = compiler.compile("maþr").unwrap();
+    assert!(result.contains("<me:norm>maðr</me:norm>"), "{result}");
+    assert!(!result.contains("lemma="), "{result}");
+}
+
+#[test]
 fn test_compiler_deletion() {
     let mut compiler = Compiler::new();
     let result = compiler.compile("-{removed}-").unwrap();

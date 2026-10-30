@@ -15,7 +15,6 @@ import { renumberAnnotation, renumberSet, type Renumbering } from "./renumber";
 import {
     createEmptyAnnotationSet,
     createLemmaAnnotation,
-    createRemovedLemma,
     getLemmaWrites,
     isRemovedLemma,
     getAnnotationsForWord,
@@ -334,11 +333,33 @@ function createAnnotationStore() {
 
     /**
      * Remove a word's lemma. On an imported file (`keepRemoval`) the removal
-     * is kept as an empty lemma, so that it is written into the file.
+     * is kept as an empty lemma, so that it is written into the file. The
+     * word's normalized form, if set, stays.
      */
     function unconfirmLemma(wordIndex: number, recordHistory = true, keepRemoval = false): void {
-        if (keepRemoval) {
-            addAnnotation(createRemovedLemma(wordIndex), recordHistory);
+        setLemmaValue(wordIndex, "", "", getLemmaMapping(wordIndex)?.normalized, recordHistory, keepRemoval);
+    }
+
+    /**
+     * Set a word's normalized form (`undefined`: the generated one, or on an
+     * imported file the file's), keeping its lemma, if any.
+     */
+    function setNormalized(wordIndex: number, normalized: string | undefined, keepRemoval = false): void {
+        const current = getLemmaMapping(wordIndex);
+        setLemmaValue(wordIndex, current?.lemma ?? "", current?.msa ?? "", normalized, true, keepRemoval);
+    }
+
+    /** An empty lemma with no normalized form is kept only as a removal (`keepRemoval`). */
+    function setLemmaValue(
+        wordIndex: number,
+        lemma: string,
+        msa: string,
+        normalized: string | undefined,
+        recordHistory: boolean,
+        keepRemoval: boolean,
+    ): void {
+        if (lemma || normalized || keepRemoval) {
+            addAnnotation(createLemmaAnnotation(wordIndex, lemma, msa, normalized), recordHistory);
         } else {
             removeAnnotation(`lemma-${wordIndex}`, recordHistory);
         }
@@ -357,7 +378,7 @@ function createAnnotationStore() {
      * Check if a word has a confirmed lemma
      */
     function isLemmaConfirmed(wordIndex: number): boolean {
-        return hasAnnotationType(wordIndex, "lemma");
+        return !!getLemmaMapping(wordIndex)?.lemma;
     }
 
     /**
@@ -463,6 +484,7 @@ function createAnnotationStore() {
         // Backward-compatible lemma methods
         confirmLemma,
         unconfirmLemma,
+        setNormalized,
         isLemmaConfirmed,
         getLemmaMapping,
         getLemmaMappings,
@@ -496,7 +518,8 @@ export const isWordConfirmed = derived(annotationStore, ($store) => {
             (a) =>
                 a.type === "lemma" &&
                 a.target.type === "word" &&
-                a.target.wordIndex === wordIndex,
+                a.target.wordIndex === wordIndex &&
+                !isRemovedLemma(a),
         );
     };
 });

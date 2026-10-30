@@ -573,7 +573,8 @@ impl<'a> Compiler<'a> {
         }
     }
     fn get_lemma_attributes_by_index(&self, word_index: u32) -> String {
-        if let Some(mapping) = self.lemma_mappings.get(&word_index) {
+        // An empty lemma carries only a normalized form
+        if let Some(mapping) = self.lemma_mappings.get(&word_index).filter(|m| !m.lemma.is_empty()) {
             format!(
                 " lemma=\"{}\" me:msa=\"{}\"",
                 self.escape_xml(&mapping.lemma),

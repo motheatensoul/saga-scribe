@@ -535,10 +535,24 @@ mod imported_identity_tests {
         guidance: Option<Guidance>,
         lemmas: &[(u32, &str, &str)],
     ) -> CompileOutput {
+        let lemmas: Vec<_> = lemmas.iter().map(|(n, lemma, msa)| (*n, *lemma, *msa, None)).collect();
+        compile_with_norms(source, dsl, guidance, &lemmas)
+    }
+
+    /// Like `compile`, with lemmas carrying normalized forms.
+    fn compile_with_norms(
+        source: &mut ImportedSource,
+        dsl: &str,
+        guidance: Option<Guidance>,
+        lemmas: &[(u32, &str, &str, Option<&str>)],
+    ) -> CompileOutput {
         let mut compiler = Compiler::new().with_config(compiler_config_for(&source.document));
         let lemmas = lemmas
             .iter()
-            .map(|(n, lemma, msa)| (*n, LemmaMapping { lemma: lemma.to_string(), msa: msa.to_string(), normalized: None }))
+            .map(|(n, lemma, msa, norm)| {
+                let mapping = LemmaMapping { lemma: lemma.to_string(), msa: msa.to_string(), normalized: norm.map(str::to_string) };
+                (*n, mapping)
+            })
             .collect();
         compile_imported_source(source, &mut compiler, dsl, guidance.as_ref(), lemmas).unwrap()
     }
@@ -597,6 +611,35 @@ mod imported_identity_tests {
 
         let out = compile(&mut source, &dsl, None, &lemmas);
         assert!(out.xml == xml, "the file's own lemmas changed it");
+
+        // With the normalized forms the app reads with them: <me:norm> text,
+        // tags removed and whitespace collapsed
+        let norms: Vec<Option<String>> = words
+            .iter()
+            .map(|&at| {
+                let word = &body[at..at + body[at..].find("</w>")?];
+                let start = word.find("<me:norm>")? + "<me:norm>".len();
+                let inner = &word[start..start + word[start..].find("</me:norm>")?];
+                let mut text = String::new();
+                let mut in_tag = false;
+                for c in inner.chars() {
+                    match c {
+                        '<' => in_tag = true,
+                        '>' => in_tag = false,
+                        c if !in_tag => text.push(c),
+                        _ => {}
+                    }
+                }
+                Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
+            })
+            .collect();
+        let with_norms: Vec<_> = lemmas
+            .iter()
+            .map(|&(n, lemma, msa)| (n, lemma, msa, norms[n as usize].as_deref()))
+            .collect();
+        assert!(with_norms.iter().filter(|l| l.3.is_some()).count() > 40_000);
+        let out = compile_with_norms(&mut source, &dsl, None, &with_norms);
+        assert!(out.xml == xml, "the file's own normalized forms changed it");
     }
 
     /// Replaces `old` with `new` in the DSL, as one editor change.
@@ -642,6 +685,24 @@ mod imported_identity_tests {
         // An empty lemma: removed by the user
         let out = compile(&mut source, &dsl, None, &[(0, "", ""), (1, "", "")]);
         assert_eq!(out.xml, TWO_OKS.replacen(r#"<w lemma="ok" me:msa="xCC">"#, "<w>", 1));
+    }
+
+    #[test]
+    fn test_changed_normalized_form_is_written_into_the_file() {
+        let (mut source, dsl) = open(TWO_OKS);
+        // Word 1 has no lemma: only its normalized form is set
+        let out = compile_with_norms(&mut source, &dsl, None, &[(0, "ok", "xCC", Some("ok")), (1, "", "", Some("maðr & co"))]);
+        assert_eq!(out.xml, TWO_OKS.replacen("<me:norm>maðr</me:norm>", "<me:norm>maðr &amp; co</me:norm>", 1));
+    }
+
+    #[test]
+    fn test_normalized_form_keeps_the_line_breaks_in_it() {
+        let xml = TWO_OKS.replacen("<me:norm>maðr</me:norm>", r#"<me:norm>ma<lb n="2"/>ðr</me:norm>"#, 1);
+        let (mut source, dsl) = open(&xml);
+        let out = compile_with_norms(&mut source, &dsl, None, &[(1, "", "", Some("maðr"))]);
+        assert_eq!(out.xml, xml, "the same text, around a line break");
+        let out = compile_with_norms(&mut source, &dsl, None, &[(1, "", "", Some("mannr"))]);
+        assert!(out.xml.contains(r#"<me:norm>mannr<lb n="2"/></me:norm>"#), "{}", out.xml);
     }
 
     #[test]

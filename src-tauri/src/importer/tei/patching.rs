@@ -940,13 +940,18 @@ impl Output {
 /// whichever the word or document uses). Only values that differ from what
 /// the tag already says (references resolved) are written, so lemmas read
 /// from the file leave it byte-identical. An empty lemma is a lemma the user
-/// removed: the word's lemma and analysis attributes are removed.
+/// removed: the word's lemma and analysis attributes are removed. A
+/// normalized form, if given and different from the word's `<me:norm>` text,
+/// replaces that text.
 pub fn write_lemmas(rendered: &RenderedBody, lemmas: &HashMap<u32, LemmaMapping>, menota: bool) -> String {
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     for (&number, mapping) in lemmas {
         let Some(&(at, _)) = rendered.words.get(number as usize) else { continue };
         let Some(len) = tag_length(&rendered.xml[at..]) else { continue };
         let tag = &rendered.xml[at..at + len];
+        if let Some(norm) = mapping.normalized.as_deref() {
+            edits.extend(norm_edit(&rendered.xml, at + len, norm));
+        }
 
         let mut new_tag = tag.to_string();
         if mapping.lemma.is_empty() {
@@ -986,6 +991,44 @@ pub fn write_lemmas(rendered: &RenderedBody, lemmas: &HashMap<u32, LemmaMapping>
         xml.replace_range(at..at + len, &tag);
     }
     xml
+}
+
+/// The edit setting the `<me:norm>` text of the word whose start tag ends at
+/// `from` to `norm`, if it says something else. Its text is compared as the
+/// app reads it on import: tags removed, whitespace collapsed, entity
+/// references as written. Line, page and column breaks inside it are kept.
+fn norm_edit(xml: &str, from: usize, norm: &str) -> Option<(usize, usize, String)> {
+    let norm = norm.split_whitespace().collect::<Vec<_>>().join(" ");
+    let word = &xml[from..from + xml[from..].find("</w>")?];
+    let open = word.find("<me:norm")?;
+    let open_len = tag_length(&word[open..])?;
+    if word[open..open + open_len].ends_with("/>") {
+        return None;
+    }
+    let start = open + open_len;
+    let end = start + word[start..].find("</me:norm>")?;
+    let inner = &word[start..end];
+
+    let mut text = String::new();
+    let mut breaks = String::new();
+    let mut rest = inner;
+    while let Some(lt) = rest.find('<') {
+        text.push_str(&rest[..lt]);
+        let len = tag_length(&rest[lt..])?;
+        let tag = &rest[lt..lt + len];
+        if ["<lb", "<pb", "<cb"].iter().any(|name| {
+            tag.starts_with(name) && tag[name.len()..].starts_with([' ', '/', '>'])
+        }) {
+            breaks.push_str(tag);
+        }
+        rest = &rest[lt + len..];
+    }
+    text.push_str(rest);
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if norm.is_empty() || text == norm || helpers::escape_xml_text(&norm) == text {
+        return None;
+    }
+    Some((from + start, inner.len(), helpers::escape_xml_text(&norm) + &breaks))
 }
 
 /// Offsets of the `<w>` start tags in `xml`.

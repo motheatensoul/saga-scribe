@@ -227,13 +227,17 @@ export function createRemovedLemma(wordIndex: number): Annotation {
     return createLemmaAnnotation(wordIndex, "", "");
 }
 
+/**
+ * An empty lemma: removed (see `createRemovedLemma`), or a word with only a
+ * normalized form. Shown and counted as no lemma.
+ */
 export function isRemovedLemma(annotation: Annotation): boolean {
     return annotation.type === "lemma" && annotation.value.kind === "lemma" && annotation.value.lemma === "";
 }
 
 /**
- * Lemmas to write into an imported file, by word number: confirmed ones and
- * removed ones (empty lemma).
+ * Lemmas to compile with, by word number: confirmed ones, removed ones (empty
+ * lemma) and normalized forms set by the user (with or without a lemma).
  */
 export function getLemmaWrites(set: AnnotationSet): Record<number, { lemma: string; msa: string; normalized?: string }> {
     const writes: Record<number, { lemma: string; msa: string; normalized?: string }> = {};
