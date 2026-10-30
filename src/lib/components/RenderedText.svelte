@@ -1,12 +1,14 @@
 <script lang="ts">
+    import { tick } from 'svelte';
     import { entityStore } from '$lib/stores/entities';
     import { getInflections, lemmaMappings } from '$lib/stores/dictionary';
-    import { annotationsForWord, type AnnotationType } from '$lib/stores/annotations';
+    import { annotationTypesByWord, type AnnotationType } from '$lib/stores/annotations';
     import { validationStore } from '$lib/stores/validation';
     import { importedStore } from '$lib/stores/imported.svelte';
     import type { ParsedDocument, TextToken } from '$lib/rendered/document';
     import { renderFull, renderUpdate, type RenderedState } from '$lib/rendered/incremental';
     import { perfRecord } from '$lib/perf';
+    import type { EntityMap } from '$lib/stores/entities';
 
     let {
         content = '',
@@ -30,9 +32,12 @@
     let document = $state.raw<ParsedDocument | null>(null);
     /** What `document` was rendered from, so edits can re-parse only affected pages */
     let rendered: RenderedState | null = null;
-    /** Stops the rendering in progress, when a newer document arrives */
-    let renderController: AbortController | null = null;
-    $effect(() => () => renderController?.abort());
+    /** The newest document not yet rendered, rendered once the running rendering is done */
+    let wanted: { content: string; entities: EntityMap } | null = null;
+    let renderLoopRunning = false;
+    /** Stops rendering when the view goes away */
+    const unmounted = new AbortController();
+    $effect(() => () => unmounted.abort());
     let isRendering = $state(false);
     let lastContent = $state('');
     let currentPageIndex = $state(0);
@@ -63,6 +68,7 @@
         lastContent = currentContent;
 
         if (!currentContent.trim()) {
+            wanted = null;
             document = null;
             rendered = null;
             currentPageIndex = 0;
@@ -74,43 +80,53 @@
         // until the new one is ready.
         if (!document) isRendering = true;
 
-        // A rendering still running is for an older document: stop it
-        renderController?.abort();
-        const controller = new AbortController();
-        renderController = controller;
-
-        // Use async IIFE for chunked parsing
-        (async () => {
-            // Yield first to let loading state render
-            await yieldToMain();
-
-            const started = performance.now();
-            let next: RenderedState;
-            try {
-                next = rendered
-                    ? await renderUpdate(rendered, currentContent, currentEntities, controller.signal)
-                    : await renderFull(currentContent, currentEntities, controller.signal);
-            } catch (e) {
-                if (controller.signal.aborted) {
-                    perfRecord('preview.rendered.abandoned', performance.now() - started);
-                    return;
-                }
-                throw e;
-            }
-            perfRecord('preview.rendered', performance.now() - started, { mode: next === rendered ? 'unchanged' : next.mode });
-            // A newer edit started its own parse; drop this stale result
-            if (currentContent !== lastContent) return;
-            rendered = next;
-            const result = next.doc;
-
-            // Stay on the page being viewed if it still exists
-            const viewedPage = document?.pages[currentPageIndex]?.pageNumber;
-            const sameIndex = result.pages.findIndex((p) => p.pageNumber === viewedPage);
-            document = result;
-            currentPageIndex = sameIndex >= 0 ? sameIndex : 0;
-            isRendering = false;
-        })();
+        // Rendered after the running rendering, if any: that one is finished
+        // and shown first, so the view keeps up even while edits keep coming
+        wanted = { content: currentContent, entities: currentEntities };
+        if (!renderLoopRunning) void renderLoop();
     });
+
+    /** Renders the newest wanted document, one at a time, until none is left. */
+    async function renderLoop() {
+        renderLoopRunning = true;
+        try {
+            while (wanted) {
+                const job = wanted;
+                wanted = null;
+                // Yield first to let loading state render
+                await yieldToMain();
+
+                const started = performance.now();
+                if (!rendered) perfRecord('preview.rendered.full_reason', 0, { reason: 'nothing rendered yet' });
+                const next = rendered
+                    ? await renderUpdate(rendered, job.content, job.entities, unmounted.signal)
+                    : await renderFull(job.content, job.entities, unmounted.signal);
+                perfRecord('preview.rendered', performance.now() - started, {
+                    mode: next === rendered ? 'unchanged' : next.mode,
+                    newer_waiting: wanted !== null,
+                });
+                // Cleared since (an empty document): nothing to show
+                if (!lastContent.trim()) continue;
+                rendered = next;
+                const result = next.doc;
+
+                // Stay on the page being viewed if it still exists
+                const viewedPage = document?.pages[currentPageIndex]?.pageNumber;
+                const sameIndex = result.pages.findIndex((p) => p.pageNumber === viewedPage);
+                const shown = performance.now();
+                document = result;
+                currentPageIndex = sameIndex >= 0 ? sameIndex : 0;
+                isRendering = false;
+                // The pages on screen redrawn (tick: after the DOM update)
+                await tick();
+                perfRecord('preview.rendered.dom', performance.now() - shown);
+            }
+        } catch (e) {
+            if (!unmounted.signal.aborted) throw e;
+        } finally {
+            renderLoopRunning = false;
+        }
+    }
 
     function handleWordClick(token: TextToken, event: MouseEvent) {
         const target = event.currentTarget as HTMLElement;
@@ -139,17 +155,10 @@
         return wordIndex !== undefined && importedStore.editedWords.has(wordIndex);
     }
 
-    // Check for different annotation types on a word
-    function getWordAnnotationTypes(wordIndex: number | undefined): Set<AnnotationType> {
-        if (wordIndex === undefined || wordIndex < 0) return new Set();
-        const anns = $annotationsForWord(wordIndex);
-        return new Set(anns.map(a => a.type));
-    }
-
-    // Check if word has specific annotation type
+    // Check if word has specific annotation type (one lookup per word)
     function hasAnnotationType(wordIndex: number | undefined, type: AnnotationType): boolean {
         if (wordIndex === undefined || wordIndex < 0) return false;
-        return getWordAnnotationTypes(wordIndex).has(type);
+        return $annotationTypesByWord.get(wordIndex)?.has(type) ?? false;
     }
 
     // Navigation functions

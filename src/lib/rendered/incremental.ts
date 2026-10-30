@@ -15,6 +15,7 @@
 
 import type { EntityMap } from "$lib/stores/entities";
 import { changedRange } from "$lib/utils/textDiff";
+import { perfRecord } from "$lib/perf";
 import { parseXmlAsync, type Page, type ParsedDocument, type TextToken } from "./document";
 import { attributeValue, scanTags, tagEnd, type OpenTag } from "./sourceScan";
 
@@ -42,9 +43,29 @@ export interface RenderedState {
 /** Edits touching more pages than this are re-parsed in full. */
 const MAX_INCREMENTAL_PAGES = 8;
 
+/** Gives up on an incremental update (logging why): the caller renders in full. */
+function bail(reason: string, fields?: Record<string, string | number>): null {
+    perfRecord("preview.rendered.full_reason", 0, { reason, ...fields });
+    return null;
+}
+
+/** Start of the occurrence of `marker` in `text` that `at` falls inside, if any */
+function markerAround(text: string, at: number, marker: string): number | null {
+    const start = Math.max(0, at - marker.length + 1);
+    const i = text.slice(start, at + marker.length - 1).indexOf(marker);
+    return i >= 0 && start + i < at ? start + i : null;
+}
+
+/** Occurrences of `marker` in `text` */
+function countOf(text: string, marker: string): number {
+    let count = 0;
+    for (let i = text.indexOf(marker); i >= 0; i = text.indexOf(marker, i + 1)) count++;
+    return count;
+}
+
 /** Edits containing any of these can change page structure or how the source is scanned. */
 const STRUCTURAL_MARKERS = ["<pb", "<!--", "-->", "<![CDATA[", "]]>", "<?", "<body", "</body"];
-/** Longest marker, minus one: how far a marker can reach past the changed range. */
+/** Longest marker, minus one: how far a marker split by the diff can reach past the changed range. */
 const MARKER_CONTEXT = 8;
 
 export async function renderFull(content: string, entities: EntityMap, signal?: AbortSignal): Promise<RenderedState> {
@@ -63,9 +84,17 @@ export async function renderUpdate(
     entities: EntityMap,
     signal?: AbortSignal,
 ): Promise<RenderedState> {
-    if (entities !== prev.entities) return renderFull(content, entities, signal);
+    if (entities !== prev.entities) {
+        bail("entities changed");
+        return renderFull(content, entities, signal);
+    }
     const change = changedRange(prev.content, content);
     if (!change) return prev;
+    perfRecord("preview.rendered.change", 0, {
+        from: change.from,
+        removed: change.to - change.from,
+        inserted: change.insert.length,
+    });
     return (await tryIncremental(prev, content, change, signal)) ?? renderFull(content, entities, signal);
 }
 
@@ -76,22 +105,62 @@ async function tryIncremental(
     signal?: AbortSignal,
 ): Promise<RenderedState | null> {
     const index = prev.index;
-    if (!index) return null;
+    if (!index) return bail("no index");
 
-    const { from, to, insert } = change;
-    // The diff may split a marker across its boundary (`</w><lb` -> `</w><pb/><lb`
-    // shares the `<`), so look a few characters beyond the changed range.
-    const removed = prev.content.slice(Math.max(0, from - MARKER_CONTEXT), to + MARKER_CONTEXT);
-    const inserted = content.slice(Math.max(0, from - MARKER_CONTEXT), from + insert.length + MARKER_CONTEXT);
-    if (STRUCTURAL_MARKERS.some((m) => removed.includes(m) || inserted.includes(m))) return null;
-    if (to > index.bodyEnd) return null;
+    // The diff may start a change inside a marker (matching its `<` to
+    // another tag's): a pure insertion or deletion slides left out of it
+    // while its text allows, anything else is widened to include it
+    let { from, to, insert } = change;
+    const splits = (at: number) => STRUCTURAL_MARKERS.some((m) => markerAround(prev.content, at, m) !== null);
+    if (from === to || insert === "") {
+        let text = from === to ? insert : prev.content.slice(from, to);
+        while (from > 0 && text && splits(from) && text.endsWith(prev.content[from - 1])) {
+            text = prev.content[from - 1] + text.slice(0, -1);
+            from--;
+        }
+        if (insert === "") {
+            to = from + text.length;
+        } else {
+            to = from;
+            insert = text;
+        }
+    }
+    for (const m of STRUCTURAL_MARKERS) {
+        const start = markerAround(prev.content, from, m);
+        if (start !== null) {
+            insert = prev.content.slice(start, from) + insert;
+            from = start;
+        }
+        const end = markerAround(prev.content, to, m);
+        if (end !== null) {
+            insert += prev.content.slice(to, end + m.length);
+            to = end + m.length;
+        }
+    }
+
+    // An edit changes a marker if the removed or inserted text holds one, or
+    // the text around it holds a different number of them before and after.
+    // The diff may split one that stays as it was (both sides have the `<`
+    // of `<pb` there), which is no edit of it; an edit next to a page break
+    // isn't either.
+    const before = prev.content.slice(Math.max(0, from - MARKER_CONTEXT), to + MARKER_CONTEXT);
+    const after = content.slice(Math.max(0, from - MARKER_CONTEXT), from + insert.length + MARKER_CONTEXT);
+    const removedText = prev.content.slice(from, to);
+    const marker = STRUCTURAL_MARKERS.find(
+        (m) =>
+            removedText.includes(m) ||
+            insert.includes(m) ||
+            countOf(before, m) !== countOf(after, m),
+    );
+    if (marker) return bail("structural edit", { marker });
+    if (to > index.bodyEnd) return bail("edit after body");
 
     const starts = index.pageStarts;
     // Text inserted right before a page's <pb/> belongs to the previous page
     const first = lastIndexBelow(starts, from);
-    if (first < 0) return null;
+    if (first < 0) return bail("edit before first page");
     const last = Math.max(first, lastIndexBelow(starts, to));
-    if (last - first + 1 > MAX_INCREMENTAL_PAGES) return null;
+    if (last - first + 1 > MAX_INCREMENTAL_PAGES) return bail("too many pages", { pages: last - first + 1 });
 
     const delta = insert.length - (to - from);
     const fragStart = starts[first];
@@ -104,11 +173,11 @@ async function tryIncremental(
     const endStack = scanTags(content, fragStart, fragEnd, startStack, (offset, stack) =>
         breaks.push({ offset, stack }),
     );
-    if (!endStack || !sameStack(endStack, expectedEndStack)) return null;
+    if (!endStack || !sameStack(endStack, expectedEndStack)) return bail("nesting changed");
 
     const firstIsIntro = isIntroPage(prev.doc, first);
     const pageCount = last - first + 1;
-    if (breaks.length !== pageCount - (firstIsIntro ? 1 : 0)) return null;
+    if (breaks.length !== pageCount - (firstIsIntro ? 1 : 0)) return bail("page breaks changed");
 
     // Parse just these pages, wrapped in the elements open around them
     const fragmentXml =
@@ -116,8 +185,8 @@ async function tryIncremental(
         content.slice(fragStart, fragEnd) +
         [...endStack].reverse().map((t) => `</${t.name}>`).join("");
     const fragment = await parseXmlAsync(fragmentXml, prev.entities, signal);
-    if (fragment.pages.length !== pageCount) return null;
-    if (fragment.pages.some((p) => p.pageNumber === "error" || p.pageNumber === "empty")) return null;
+    if (fragment.pages.length !== pageCount) return bail("fragment pages differ");
+    if (fragment.pages.some((p) => p.pageNumber === "error" || p.pageNumber === "empty")) return bail("fragment did not parse");
 
     // Word indices: the fragment counted from 0; place it after the preceding words
     const oldPages = prev.doc.pages;

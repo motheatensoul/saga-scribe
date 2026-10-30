@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { get } from "svelte/store";
-import { annotationHistory, annotationStore, lemmaMappings } from "$lib/stores/annotations";
+import { annotationHistory, annotationStore, annotationTypesByWord, lemmaMappings } from "$lib/stores/annotations";
+import { createNoteAnnotation, createRemovedLemma, createSemanticAnnotation } from "$lib/types/annotations";
 
 describe("removing a lemma from an imported word", () => {
     it("shows no lemma but sends the removal, and undo brings the lemma back", () => {
@@ -46,5 +47,23 @@ describe("a word's normalized form", () => {
         annotationStore.unconfirmWithHistory(4, true, false);
         expect(get(lemmaMappings).mappings[4]).toBeUndefined();
         expect(annotationStore.getLemmaWrites()[4]).toEqual({ lemma: "", msa: "", normalized: "manni" });
+    });
+});
+
+describe("annotation types by word", () => {
+    it("lists each word's annotation types, spans on every word they cover", () => {
+        annotationStore.clear();
+        annotationStore.loadLegacyConfirmations({ 1: { lemma: "ok", msa: "xCC" } });
+        annotationStore.add(createNoteAnnotation({ type: "word", wordIndex: 1 }, "n"), false);
+        annotationStore.add(createSemanticAnnotation({ type: "span", startWord: 3, endWord: 5 }, "person"), false);
+        annotationStore.add(createRemovedLemma(7), false);
+
+        const types = get(annotationTypesByWord);
+        expect([...(types.get(1) ?? [])].sort()).toEqual(["lemma", "note"]);
+        expect([3, 4, 5].map((w) => types.get(w)?.has("semantic"))).toEqual([true, true, true]);
+        expect(types.has(2)).toBe(false);
+        expect(types.has(6)).toBe(false);
+        // A removed lemma is no lemma
+        expect(types.has(7)).toBe(false);
     });
 });

@@ -534,6 +534,31 @@ export const annotationsForWord = derived(annotationStore, ($store) => {
 });
 
 /**
+ * The annotation types on each word, by word number: one lookup per word
+ * for the rendered text, which asks for every word it shows (filtering all
+ * annotations per word took hundreds of milliseconds on a lemmatized
+ * manuscript, and froze typing whenever the text was redrawn).
+ */
+export const annotationTypesByWord = derived(annotationStore, ($store) => {
+    const types = new Map<number, Set<AnnotationType>>();
+    const add = (word: number, type: AnnotationType) => {
+        let set = types.get(word);
+        if (!set) types.set(word, (set = new Set()));
+        set.add(type);
+    };
+    for (const annotation of $store.set.annotations) {
+        if (isRemovedLemma(annotation)) continue;
+        const { target } = annotation;
+        if (target.type === "span") {
+            for (let word = target.startWord; word <= target.endWord; word++) add(word, annotation.type);
+        } else {
+            add(target.wordIndex, annotation.type);
+        }
+    }
+    return types;
+});
+
+/**
  * Get annotation counts by type
  */
 export const annotationCounts = derived(annotationStore, ($store) => {
