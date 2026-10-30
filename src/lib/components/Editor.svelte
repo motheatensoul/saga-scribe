@@ -10,6 +10,7 @@
     import { teiLinter } from '$lib/parser/linter';
     import { lintGutter } from "@codemirror/lint";
     import { daisyExtensions } from '$lib/editor/theme';
+    import { markEdit } from '$lib/editor/typing';
 
     let {
         onchange,
@@ -51,6 +52,7 @@
                 daisyExtensions,
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
+                        markEdit();
                         onchanges?.(update.changes);
                         const content = update.state.doc.toString();
                         editor.setContent(content);

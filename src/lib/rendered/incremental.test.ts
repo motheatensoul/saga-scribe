@@ -70,6 +70,11 @@ describe("renderUpdate", () => {
             const next = await renderUpdate(state, edited, testEntities);
             expect(next.mode).toBe("incremental");
             expect(next.doc).toEqual((await renderFull(edited, testEntities)).doc);
+
+            // And the word deleted again
+            const back = await renderUpdate(next, xml, testEntities);
+            expect(back.mode).toBe("incremental");
+            expect(back.doc).toEqual(state.doc);
         }
     });
 

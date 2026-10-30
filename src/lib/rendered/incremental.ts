@@ -113,12 +113,15 @@ async function tryIncremental(
     let { from, to, insert } = change;
     const splits = (at: number) => STRUCTURAL_MARKERS.some((m) => markerAround(prev.content, at, m) !== null);
     if (from === to || insert === "") {
-        let text = from === to ? insert : prev.content.slice(from, to);
-        while (from > 0 && text && splits(from) && text.endsWith(prev.content[from - 1])) {
+        const deletion = insert === "";
+        let text = deletion ? prev.content.slice(from, to) : insert;
+        // A deletion's end splits a marker when the diff kept its `<` with the deleted text
+        const end = () => (deletion ? from + text.length : from);
+        while (from > 0 && text && (splits(from) || splits(end())) && text.endsWith(prev.content[from - 1])) {
             text = prev.content[from - 1] + text.slice(0, -1);
             from--;
         }
-        if (insert === "") {
+        if (deletion) {
             to = from + text.length;
         } else {
             to = from;

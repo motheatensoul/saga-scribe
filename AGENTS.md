@@ -171,6 +171,9 @@ async function processLargeData(items: Item[]) {
 }
 ```
 
+### Typing comes first
+A keystroke must show up in the editor at once, whatever the document's size: researchers who can't type fluently in the app transcribe elsewhere and paste. Work that redraws the previews waits for a pause in typing (`whenTypingPauses` in `src/lib/editor/typing.ts`; the preview pane does this for its views). Per-word work in the rendered text must be a lookup, never a scan of all annotations or lemmas (a lemmatized manuscript has tens of thousands). Check with the performance log: `ui.stall` entries while typing are bugs.
+
 ### Loading Spinners
 Use SVG spinners with `<animateTransform>` instead of CSS animations - they're more reliable during heavy processing:
 ```svelte
