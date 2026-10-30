@@ -75,6 +75,14 @@ pub fn run() {
                         tauri::Theme::Light
                     };
                     let _ = window.set_theme(Some(window_theme));
+                    // The theme's background (daisyUI caramellatte / coffee base-100),
+                    // so the window isn't white before the page is drawn
+                    let background = if effective_theme == "dark" {
+                        tauri::window::Color(38, 27, 37, 255)
+                    } else {
+                        tauri::window::Color(255, 247, 237, 255)
+                    };
+                    let _ = window.set_background_color(Some(background));
                 }
             }
 

@@ -46,9 +46,38 @@
                 }
             })();
         </script>
+        <style>
+            /* Until the app's styles load: the theme's background, and the
+               splash shown while the app starts (removed by +layout.svelte) */
+            html[data-theme="caramellatte"] { background: rgb(255 247 237); color: rgb(124 40 8); }
+            html[data-theme="coffee"] { background: rgb(38 27 37); color: rgb(197 159 97); }
+            #app-splash {
+                position: fixed;
+                inset: 0;
+                z-index: 1000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: inherit;
+                transition: opacity 0.2s ease-out;
+            }
+            #app-splash.done { opacity: 0; pointer-events: none; }
+        </style>
         %sveltekit.head%
     </head>
     <body data-sveltekit-preload-data="hover">
+        <div id="app-splash" role="status" aria-label="Loading Saga Scribe">
+            <!-- SVG animation: keeps turning while the app's scripts load -->
+            <svg viewBox="0 0 120 120" width="120" height="120" aria-hidden="true">
+                <image href="/logo.png" x="16" y="16" width="88" height="88" />
+                <circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-opacity="0.15" stroke-width="4" />
+                <circle cx="60" cy="60" r="54" fill="none" stroke="currentColor" stroke-width="4"
+                    stroke-linecap="round" stroke-dasharray="80 260">
+                    <animateTransform attributeName="transform" type="rotate"
+                        from="0 60 60" to="360 60 60" dur="1.2s" repeatCount="indefinite" />
+                </circle>
+            </svg>
+        </div>
         <div style="display: contents">%sveltekit.body%</div>
     </body>
 </html>
