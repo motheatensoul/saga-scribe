@@ -26,6 +26,42 @@ describe("compileSession", () => {
         expect(events).toEqual(["first done", "renumbered", "second gathers payload"]);
     });
 
+    it("compiles only the newest of the requests made while one runs, with all their changes", async () => {
+        compileSession.reset();
+        const compiled: string[] = [];
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => (release = resolve));
+        const first = compileSession.run("ab", async () => {
+            await gate;
+            compiled.push("ab");
+            return { revision: 1 };
+        });
+
+        // Typed on while the first compiles: "abc", then "abcd"
+        compileSession.record(ChangeSet.of({ from: 2, insert: "c" }, 2));
+        const second = compileSession.run("abc", async () => {
+            compiled.push("abc");
+            return { revision: 2 };
+        });
+        compileSession.record(ChangeSet.of({ from: 3, insert: "d" }, 3));
+        let guidance: CompileGuidance | undefined;
+        const third = compileSession.run("abcd", async (g) => {
+            guidance = g;
+            compiled.push("abcd");
+            return { revision: 3 };
+        });
+
+        release();
+        const results = await Promise.all([first, second, third]);
+        expect(compiled).toEqual(["ab", "abcd"]);
+        // The replaced request's caller gets the newer document's result
+        expect(results.map((r) => r.revision)).toEqual([1, 3, 3]);
+        expect(guidance).toEqual({
+            baseRevision: 1,
+            changes: [{ from_a: 2, to_a: 2, from_b: 2, to_b: 4 }],
+        });
+    });
+
     it("sends no guidance after a reset, and the changes since otherwise", async () => {
         compileSession.reset();
         const seen: (CompileGuidance | undefined)[] = [];

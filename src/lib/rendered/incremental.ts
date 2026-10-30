@@ -47,30 +47,33 @@ const STRUCTURAL_MARKERS = ["<pb", "<!--", "-->", "<![CDATA[", "]]>", "<?", "<bo
 /** Longest marker, minus one: how far a marker can reach past the changed range. */
 const MARKER_CONTEXT = 8;
 
-export async function renderFull(content: string, entities: EntityMap): Promise<RenderedState> {
-    const doc = await parseXmlAsync(content, entities);
+export async function renderFull(content: string, entities: EntityMap, signal?: AbortSignal): Promise<RenderedState> {
+    const doc = await parseXmlAsync(content, entities, signal);
     return { content, entities, doc, index: buildIndex(content, doc), mode: "full" };
 }
 
 /**
  * Renders `content`, reusing `prev` where possible.
- * Returns `prev` itself when nothing changed.
+ * Returns `prev` itself when nothing changed. Rejects once `signal` is
+ * aborted (a newer document is to be rendered instead).
  */
 export async function renderUpdate(
     prev: RenderedState,
     content: string,
     entities: EntityMap,
+    signal?: AbortSignal,
 ): Promise<RenderedState> {
-    if (entities !== prev.entities) return renderFull(content, entities);
+    if (entities !== prev.entities) return renderFull(content, entities, signal);
     const change = changedRange(prev.content, content);
     if (!change) return prev;
-    return (await tryIncremental(prev, content, change)) ?? renderFull(content, entities);
+    return (await tryIncremental(prev, content, change, signal)) ?? renderFull(content, entities, signal);
 }
 
 async function tryIncremental(
     prev: RenderedState,
     content: string,
     change: { from: number; to: number; insert: string },
+    signal?: AbortSignal,
 ): Promise<RenderedState | null> {
     const index = prev.index;
     if (!index) return null;
@@ -112,7 +115,7 @@ async function tryIncremental(
         startStack.map((t) => t.tag).join("") +
         content.slice(fragStart, fragEnd) +
         [...endStack].reverse().map((t) => `</${t.name}>`).join("");
-    const fragment = await parseXmlAsync(fragmentXml, prev.entities);
+    const fragment = await parseXmlAsync(fragmentXml, prev.entities, signal);
     if (fragment.pages.length !== pageCount) return null;
     if (fragment.pages.some((p) => p.pageNumber === "error" || p.pageNumber === "empty")) return null;
 

@@ -41,8 +41,12 @@ function sliceTag(xml: string, tagName: string): string | null {
 }
 
 // Async version of parseXml that yields to main thread periodically
-// Returns ParsedDocument with tokens grouped by page
-export async function parseXmlAsync(xml: string, entityDefs: EntityMap): Promise<ParsedDocument> {
+// Returns ParsedDocument with tokens grouped by page; rejects once `signal` is aborted
+export async function parseXmlAsync(
+    xml: string,
+    entityDefs: EntityMap,
+    signal?: AbortSignal,
+): Promise<ParsedDocument> {
     const emptyDoc: ParsedDocument = { pages: [], totalTokens: 0, totalWords: 0 };
     if (!xml.trim()) return emptyDoc;
 
@@ -118,7 +122,7 @@ export async function parseXmlAsync(xml: string, entityDefs: EntityMap): Promise
 
         // Use a counter object to track word index and yield progress
         const wordCounter = { index: 0 };
-        const yieldCounter = { count: 0 };
+        const yieldCounter = { count: 0, signal };
         const YIELD_EVERY = 500; // Yield every 500 tokens for smooth animation
 
         await extractTokensAsync(
@@ -190,6 +194,8 @@ export async function parseXmlAsync(xml: string, entityDefs: EntityMap): Promise
             totalWords
         };
     } catch (e) {
+        // Abandoned for a newer document, not an error in this one
+        if (signal?.aborted) throw e;
         console.error('Parse error:', e);
         return {
             pages: [{
@@ -273,14 +279,15 @@ async function extractTokensAsync(
     result: TextToken[],
     placeholderGlyphs: Map<string, string>,
     wordCounter: { index: number },
-    yieldCounter: { count: number },
+    yieldCounter: { count: number; signal?: AbortSignal },
     yieldEvery: number
 ): Promise<void> {
     for (const child of node.childNodes) {
-        // Yield to main thread periodically
+        // Yield to main thread periodically, and stop if no longer wanted
         yieldCounter.count++;
         if (yieldCounter.count % yieldEvery === 0) {
             await yieldToMain();
+            yieldCounter.signal?.throwIfAborted();
         }
 
         if (child.nodeType === Node.TEXT_NODE) {

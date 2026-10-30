@@ -85,3 +85,12 @@ describe("renderUpdate", () => {
         },
     );
 });
+
+describe("abandoned renders", () => {
+    it("stop at their next pause instead of finishing", async () => {
+        const controller = new AbortController();
+        const render = renderFull(syntheticDocument(40), testEntities, controller.signal);
+        controller.abort();
+        await expect(render).rejects.toThrow();
+    });
+});

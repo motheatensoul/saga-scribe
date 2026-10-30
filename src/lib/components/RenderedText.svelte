@@ -6,6 +6,7 @@
     import { importedStore } from '$lib/stores/imported.svelte';
     import type { ParsedDocument, TextToken } from '$lib/rendered/document';
     import { renderFull, renderUpdate, type RenderedState } from '$lib/rendered/incremental';
+    import { perfRecord } from '$lib/perf';
 
     let {
         content = '',
@@ -29,6 +30,9 @@
     let document = $state.raw<ParsedDocument | null>(null);
     /** What `document` was rendered from, so edits can re-parse only affected pages */
     let rendered: RenderedState | null = null;
+    /** Stops the rendering in progress, when a newer document arrives */
+    let renderController: AbortController | null = null;
+    $effect(() => () => renderController?.abort());
     let isRendering = $state(false);
     let lastContent = $state('');
     let currentPageIndex = $state(0);
@@ -70,14 +74,30 @@
         // until the new one is ready.
         if (!document) isRendering = true;
 
+        // A rendering still running is for an older document: stop it
+        renderController?.abort();
+        const controller = new AbortController();
+        renderController = controller;
+
         // Use async IIFE for chunked parsing
         (async () => {
             // Yield first to let loading state render
             await yieldToMain();
 
-            const next = rendered
-                ? await renderUpdate(rendered, currentContent, currentEntities)
-                : await renderFull(currentContent, currentEntities);
+            const started = performance.now();
+            let next: RenderedState;
+            try {
+                next = rendered
+                    ? await renderUpdate(rendered, currentContent, currentEntities, controller.signal)
+                    : await renderFull(currentContent, currentEntities, controller.signal);
+            } catch (e) {
+                if (controller.signal.aborted) {
+                    perfRecord('preview.rendered.abandoned', performance.now() - started);
+                    return;
+                }
+                throw e;
+            }
+            perfRecord('preview.rendered', performance.now() - started, { mode: next === rendered ? 'unchanged' : next.mode });
             // A newer edit started its own parse; drop this stale result
             if (currentContent !== lastContent) return;
             rendered = next;
