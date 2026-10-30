@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { wordNormalizedForm } from "./wordNorm";
+import { wordNormalizedForm, wordsWithDiplomaticForm } from "./wordNorm";
 
 const word = (norm: string) =>
     `<w lemma="x"><choice><me:facs>f</me:facs><me:dipl>d</me:dipl><me:norm>${norm}</me:norm></choice></w>`;
@@ -21,5 +21,23 @@ describe("wordNormalizedForm", () => {
 
     it("is null for a word without a normalized level", () => {
         expect(wordNormalizedForm("<w>ok</w>", 0, entities)).toBeNull();
+    });
+});
+
+describe("wordsWithDiplomaticForm", () => {
+    const tei = (body: string) =>
+        `<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>${body}</body></text></TEI>`;
+    const menota = (dipl: string) => `<w><choice><me:facs>${dipl}</me:facs><me:dipl>${dipl}</me:dipl><me:norm>n</me:norm></choice></w>`;
+
+    it("finds words by their diplomatic form", () => {
+        expect(wordsWithDiplomaticForm(tei(menota("ok") + menota("konungr") + menota("ok")), "ok")).toEqual([0, 2]);
+    });
+
+    it("reads a single-level word's text", () => {
+        expect(wordsWithDiplomaticForm(tei("<w>ok</w> <w>sva</w><head><w> ok </w></head>"), "ok")).toEqual([0, 2]);
+    });
+
+    it("finds nothing in XML that doesn't parse", () => {
+        expect(wordsWithDiplomaticForm("<w>ok", "ok")).toEqual([]);
     });
 });

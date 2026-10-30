@@ -1,6 +1,5 @@
 <script lang="ts">
     import { onMount, tick } from "svelte";
-    import { get } from "svelte/store";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open } from "@tauri-apps/plugin-dialog";
     import { saveAs } from "$lib/utils/saveDialog";
@@ -16,10 +15,11 @@
     import ValidationPanel from "$lib/components/ValidationPanel.svelte";
     import SettingsDialog from "$lib/components/SettingsDialog.svelte";
     import HelpDialog from "$lib/components/HelpDialog.svelte";
+    import BusyOverlay from "$lib/components/BusyOverlay.svelte";
     import { editor } from "$lib/stores/editor";
     import { templateStore } from "$lib/stores/template";
     import { entityStore } from "$lib/stores/entities";
-    import { wordNormalizedForm } from "$lib/utils/wordNorm";
+    import { wordNormalizedForm, wordsWithDiplomaticForm } from "$lib/utils/wordNorm";
     import { settings } from "$lib/stores/settings";
     import { stylesheetStore } from "$lib/stores/stylesheets";
     import { errorStore, errorCounts } from "$lib/stores/errors";
@@ -28,19 +28,11 @@
     import { importedStore } from "$lib/stores/imported.svelte";
     import { compileSession } from "$lib/stores/compileSession";
     import { renumberWord } from "$lib/stores/renumber";
-    import { analysisKey } from "$lib/utils/msa";
     import { preservationStore } from "$lib/stores/preservation.svelte";
     import type { Metadata } from "$lib/types/metadata";
     import { isMetadataEmpty } from "$lib/types/metadata";
     import {
-        listTemplates,
         compileDsl,
-        loadEntities,
-        loadTextFile,
-        loadCustomMappings,
-        loadCustomEntities,
-        loadOnpHeadwords,
-        loadInflections,
         saveProject,
         openProject,
         exportTei,
@@ -52,10 +44,11 @@
         importFile,
         exportInflections,
         generateTeiHeader,
-        listStylesheets,
         validateXml,
     } from "$lib/tauri";
-    import type { InflectedForm } from "$lib/tauri";
+    import type { ImportedDocument } from "$lib/tauri";
+    import { loadAppResources } from "$lib/startup";
+    import { importedLemmas } from "$lib/utils/importedLemmas";
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
     import { printToPdf, withPrintStyles } from "$lib/utils/pdfExport";
     import {
@@ -65,38 +58,12 @@
         runXsltTransform,
     } from "$lib/utils/xslt";
     import {
-        dictionaryStore,
         inflectionStore,
         sessionLemmaStore,
         annotationStore,
         lemmaMappings,
         annotationHistory,
-        canUndo,
-        canRedo,
     } from "$lib/stores/dictionary";
-    import { resolveResource, appDataDir } from "@tauri-apps/api/path";
-
-    // Flatpak resource path prefix
-    const FLATPAK_RESOURCE_PREFIX = "/app/bin";
-
-    /**
-     * Generate all possible paths for a resource file.
-     * Tries: Tauri resolved path, dev path, Flatpak path
-     */
-    async function getResourcePaths(resourceName: string): Promise<string[]> {
-        const tauriPath = await resolveResource(resourceName);
-
-        // Dev path: transform Tauri path to static folder
-        const devPath = tauriPath.replace(
-            new RegExp(`src-tauri/target/[^/]+/${resourceName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`),
-            `static/${resourceName}`,
-        );
-
-        // Flatpak path: /app/bin/{resourceName}
-        const flatpakPath = `${FLATPAK_RESOURCE_PREFIX}/${resourceName}`;
-
-        return [tauriPath, devPath, flatpakPath];
-    }
 
     //Icon imports
     import {
@@ -123,7 +90,6 @@
     let selectedWordFacsimile = $state<string | null>(null);
     let selectedWordDiplomatic = $state<string | null>(null);
     let selectedWordIndex = $state<number>(-1);
-    let selectedWordElement = $state<HTMLElement | null>(null);
     /** The selected word's normalized form, as compiled */
     let selectedWordNormalized = $derived(
         showLemmatizer && selectedWordIndex >= 0
@@ -151,337 +117,11 @@
     let normalizerJson = $state<string | null>(null);
     let entityMappingsJson = $state<string | null>(null);
     let isImporting = $state(false);
-    let isMounting: boolean = $state(true);
     let showMetadataEditor = $state(false);
     let currentMetadata = $state<Metadata | undefined>(undefined);
 
-    function stripXmlTags(text: string): string {
-        return text.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-    }
-
-    function extractTagText(xml: string, tagName: string): string | null {
-        const regex = new RegExp(
-            `<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`,
-            "i",
-        );
-        const match = xml.match(regex);
-        if (!match) {
-            return null;
-        }
-        const cleaned = stripXmlTags(match[1]);
-        return cleaned.length > 0 ? cleaned : null;
-    }
-
-    function extractMenotaText(xml: string, tagName: string): string | null {
-        return extractTagText(xml, `me:${tagName}`) ?? extractTagText(xml, tagName);
-    }
-
-    function countWordElements(xml: string): number {
-        if (!xml) return 0;
-        const matches = xml.match(/<w(?=[\s>])/g);
-        return matches ? matches.length : 0;
-    }
-
-    /**
-     * Extract lemma and msa attributes from all <w> elements within an XML string.
-     * Returns an array of objects with lemma, msa, and normalized text for each word.
-     * Used to recover lemma info from combined segments like .head{.supplied{...}}.
-     */
-    function extractWordAttributesFromXml(xml: string): Array<{
-        lemma?: string;
-        msa?: string;
-        normalized?: string;
-        diplomatic?: string;
-        facsimile?: string;
-    }> {
-        const results: Array<{
-            lemma?: string;
-            msa?: string;
-            normalized?: string;
-            diplomatic?: string;
-            facsimile?: string;
-        }> = [];
-
-        // Match each <w ...>...</w> element (non-greedy, handles nested content)
-        const wordRegex = /<w(?:\s([^>]*))?>([\s\S]*?)<\/w>/g;
-        let match;
-
-        while ((match = wordRegex.exec(xml)) !== null) {
-            const attrs = match[1] ?? "";
-            const content = match[2];
-
-            // Extract lemma attribute
-            const lemmaMatch = attrs.match(/lemma="([^"]*)"/);
-            const lemma = lemmaMatch ? lemmaMatch[1] : undefined;
-
-            // Extract me:msa or msa attribute
-            const msaMatch = attrs.match(/me:msa="([^"]*)"|msa="([^"]*)"/);
-            const msa = msaMatch ? (msaMatch[1] ?? msaMatch[2]) : undefined;
-
-            // Extract text from me:norm, me:dipl, me:facs levels
-            const normalized = extractMenotaText(content, "norm") ?? undefined;
-            const diplomatic = extractMenotaText(content, "dipl") ?? undefined;
-            const facsimile = extractMenotaText(content, "facs") ?? undefined;
-
-            results.push({ lemma, msa, normalized, diplomatic, facsimile });
-        }
-
-        return results;
-    }
-
     onMount(async () => {
-        errorStore.info("App", "Application starting...");
-
-        // Load settings first
-        try {
-            errorStore.info("Settings", "Loading settings...");
-            await settings.load();
-            errorStore.info("Settings", "Settings loaded");
-        } catch (e) {
-            errorStore.error("Settings", "Failed to load settings", String(e));
-        }
-
-        // Load templates
-        try {
-            errorStore.info("Templates", "Loading templates...");
-            const templates = await listTemplates();
-            templateStore.setTemplates(templates);
-
-            // Try to restore the previously active template
-            const savedTemplateId = $settings.activeTemplateId;
-            let activeTemplate = savedTemplateId
-                ? templates.find((t) => t.id === savedTemplateId)
-                : null;
-
-            // Fall back to first template if saved one not found
-            if (!activeTemplate && templates.length > 0) {
-                activeTemplate = templates[0];
-            }
-
-            if (activeTemplate) {
-                templateStore.setActive(activeTemplate);
-            }
-
-            errorStore.info(
-                "Templates",
-                `Loaded ${templates.length} templates`,
-            );
-        } catch (e) {
-            errorStore.error(
-                "Templates",
-                "Failed to load templates",
-                String(e),
-            );
-        }
-
-        // Load stylesheets
-        try {
-            errorStore.info("Stylesheets", "Loading stylesheets...");
-            const stylesheets = await listStylesheets();
-            stylesheetStore.setStylesheets(stylesheets);
-            if (
-                $settings.activeStylesheetId &&
-                !stylesheets.some(
-                    (stylesheet) => stylesheet.id === $settings.activeStylesheetId,
-                )
-            ) {
-                settings.update({ activeStylesheetId: "default" });
-            }
-            errorStore.info(
-                "Stylesheets",
-                `Loaded ${stylesheets.length} stylesheets`,
-            );
-        } catch (e) {
-            errorStore.error(
-                "Stylesheets",
-                "Failed to load stylesheets",
-                String(e),
-            );
-        }
-
-        // Load default MENOTA entities
-        // Try resource path (production), dev path, and Flatpak path
-        const entityPaths = await getResourcePaths("entities/menota.json");
-
-        let entities = null;
-        let loadedFrom = "";
-
-        for (const path of entityPaths) {
-            try {
-                errorStore.info("Entities", `Trying to load from: ${path}`);
-                entities = await loadEntities(path);
-                loadedFrom = path;
-                break;
-            } catch (e) {
-                errorStore.warning(
-                    "Entities",
-                    `Failed to load from ${path}`,
-                    String(e),
-                );
-            }
-        }
-
-        if (entities) {
-            const entityCount = Object.keys(entities).length;
-            errorStore.info(
-                "Entities",
-                `Loaded ${entityCount} entities from ${loadedFrom}`,
-            );
-            entityStore.setBuiltinEntities(entities);
-            
-            // Load custom entities
-            try {
-                const customEntities = await loadCustomEntities();
-                const customCount = Object.keys(customEntities).length;
-                if (customCount > 0) {
-                    errorStore.info(
-                        "Entities",
-                        `Loaded ${customCount} custom entities`,
-                    );
-                    entityStore.setCustomEntities(customEntities);
-                }
-            } catch (e) {
-                errorStore.warning(
-                    "Entities",
-                    "Failed to load custom entities",
-                    String(e),
-                );
-            }
-
-            // Load base entity mappings (diplomatic normalization defaults)
-            const baseMappingsPaths = await getResourcePaths(
-                "normalizer/entity-base-letters.json",
-            );
-
-            for (const path of baseMappingsPaths) {
-                try {
-                    errorStore.info(
-                        "Entities",
-                        `Trying to load base mappings from: ${path}`,
-                    );
-                    const baseMappingsText = await loadTextFile(path);
-                    entityMappingsJson = baseMappingsText; // Store raw JSON for compiler
-                    const baseMappingsData = JSON.parse(baseMappingsText);
-                    const mappings = baseMappingsData.mappings || {};
-                    const mappingsCount = Object.keys(mappings).length;
-                    errorStore.info(
-                        "Entities",
-                        `Loaded ${mappingsCount} base entity mappings from ${path}`,
-                    );
-                    entityStore.setBaseMappings(mappings);
-                    break;
-                } catch (e) {
-                    errorStore.warning(
-                        "Entities",
-                        `Failed to load base mappings from ${path}`,
-                        String(e),
-                    );
-                }
-            }
-
-            // Load custom entity mappings (user overrides)
-            try {
-                const customMappings = await loadCustomMappings();
-                const customCount = Object.keys(customMappings).length;
-                if (customCount > 0) {
-                    errorStore.info(
-                        "Entities",
-                        `Loaded ${customCount} custom entity mappings`,
-                    );
-                    entityStore.setCustomMappings(customMappings);
-                }
-            } catch (e) {
-                errorStore.warning(
-                    "Entities",
-                    "Failed to load custom mappings",
-                    String(e),
-                );
-            }
-        } else {
-            errorStore.error(
-                "Entities",
-                "Failed to load entities from any path",
-            );
-            entityStore.setError("Could not find entity definitions file");
-        }
-
-        // Load normalizer dictionary for multi-level transcription
-        const normalizerPaths = await getResourcePaths(
-            "normalizer/menota-levels.json",
-        );
-
-        for (const path of normalizerPaths) {
-            try {
-                errorStore.info("Normalizer", `Trying to load from: ${path}`);
-                normalizerJson = await loadTextFile(path);
-                errorStore.info(
-                    "Normalizer",
-                    `Loaded normalizer dictionary from ${path}`,
-                );
-                break;
-            } catch (e) {
-                errorStore.warning(
-                    "Normalizer",
-                    `Failed to load from ${path}`,
-                    String(e),
-                );
-            }
-        }
-
-        if (!normalizerJson) {
-            errorStore.warning(
-                "Normalizer",
-                "Could not load normalizer dictionary - multi-level output may not work correctly",
-            );
-        }
-
-        // Load ONP dictionary for lemmatization
-        const onpPaths = await getResourcePaths("dictionary/onp-headwords.json");
-
-        dictionaryStore.setLoading();
-        for (const path of onpPaths) {
-            try {
-                errorStore.info(
-                    "Dictionary",
-                    `Trying to load ONP headwords from: ${path}`,
-                );
-                const count = await loadOnpHeadwords(path);
-                errorStore.info(
-                    "Dictionary",
-                    `Loaded ${count} ONP headwords from ${path}`,
-                );
-                dictionaryStore.setLoaded(count);
-                break;
-            } catch (e) {
-                errorStore.warning(
-                    "Dictionary",
-                    `Failed to load from ${path}`,
-                    String(e),
-                );
-            }
-        }
-
-        // Load user inflection mappings
-        try {
-            const store = await loadInflections();
-            const count = Object.keys(store.forms).length;
-            if (count > 0) {
-                errorStore.info(
-                    "Dictionary",
-                    `Loaded ${count} user inflection mappings`,
-                );
-                inflectionStore.setMappings(store.forms);
-            }
-        } catch (e) {
-            errorStore.warning(
-                "Dictionary",
-                "Failed to load inflection mappings",
-                String(e),
-            );
-        }
-
-        isMounting = false;
-        errorStore.info("App", "Application ready");
+        ({ normalizerJson, entityMappingsJson } = await loadAppResources());
     });
 
     // Compile without updating UI - returns the result
@@ -614,6 +254,12 @@
         );
     }
 
+    /** Compiles now, instead of the pending preview compile; returns whether it succeeded */
+    function compileNow(content = $editor.content): Promise<boolean> {
+        clearTimeout(compileTimeout);
+        return doCompile(content);
+    }
+
     function handleEditorChange(content: string) {
         updatePreview(content);
     }
@@ -627,7 +273,7 @@
         facsimile: string,
         diplomatic: string,
         wordIndex: number,
-        element: HTMLElement,
+        _element: HTMLElement,
         isSpanExtend?: boolean,
     ) {
         if (isSpanExtend && showLemmatizer && selectedWordIndex >= 0) {
@@ -638,7 +284,6 @@
             selectedWordFacsimile = facsimile;
             selectedWordDiplomatic = diplomatic;
             selectedWordIndex = wordIndex;
-            selectedWordElement = element;
             spanEndWordIndex = null;
             showLemmatizer = true;
         }
@@ -649,7 +294,6 @@
         selectedWordFacsimile = null;
         selectedWordDiplomatic = null;
         selectedWordIndex = -1;
-        selectedWordElement = null;
         spanEndWordIndex = null;
     }
 
@@ -670,137 +314,76 @@
         );
     }
 
-    async function handleLemmatizerSave(
-        wordIndex: number,
-        lemma?: string,
-        msa?: string,
-    ) {
+    /** A lemma or annotation changed: shows it in the output right away */
+    async function handleLemmatizerSave() {
         // Wait for Svelte reactivity to propagate store updates
         await tick();
-        // Trigger immediate recompile to update TEI output with new lemma
-        // Cancel any pending auto-preview and compile directly
-        clearTimeout(compileTimeout);
-        doCompile($editor.content);
+        compileNow();
     }
 
-    /**
-     * Called when annotations are added or removed in the AnnotationPanel.
-     * Triggers recompile to update the XML output.
-     */
     async function handleAnnotationSave() {
         warnIfAnnotationsNotExported();
-        // Wait for Svelte reactivity to propagate store updates
-        await tick();
-        // Trigger immediate recompile to update TEI output
-        clearTimeout(compileTimeout);
-        doCompile($editor.content);
+        await handleLemmatizerSave();
     }
+
+    const findMatchingWords = (diplomatic: string) => wordsWithDiplomaticForm(previewContent, diplomatic);
 
     /**
-     * Find all word indices matching a diplomatic form in the preview XML.
-     * Used for bulk annotation feature.
+     * Undoes or redoes the last annotation change (lemmas and the others),
+     * without recording it in the history again.
      */
-    function findMatchingWords(targetDiplomatic: string): number[] {
-        if (!previewContent) return [];
-
-        const indices: number[] = [];
-        const parser = new DOMParser();
-
-        try {
-            const doc = parser.parseFromString(previewContent, "text/xml");
-            const parseError = doc.querySelector("parsererror");
-            if (parseError) return [];
-
-            // Find all <w> elements
-            const words = doc.querySelectorAll("w");
-            let wordIndex = 0;
-
-            for (const word of words) {
-                // Get diplomatic form - check me:dipl first, then fallback to text content
-                const diplEl = word.querySelector("dipl");
-                let diplomatic = diplEl?.textContent?.trim();
-
-                if (!diplomatic) {
-                    // Fallback: use text content of the word (for single-level mode)
-                    diplomatic = word.textContent?.trim() || "";
-                }
-
-                if (diplomatic === targetDiplomatic) {
-                    indices.push(wordIndex);
-                }
-                wordIndex++;
-            }
-        } catch {
-            // Parse error - return empty
-            return [];
-        }
-
-        return indices;
-    }
-
-    // Undo/redo for annotations (lemmatization and other types)
-    function handleLemmaUndo() {
-        const action = annotationHistory.undo();
+    function stepAnnotationHistory(direction: "Undo" | "Redo") {
+        const action = direction === "Undo" ? annotationHistory.undo() : annotationHistory.redo();
         if (!action) return;
 
-        // Revert the action (without pushing to history again)
-        if (action.type === "add") {
-            // Undo an add: remove the annotation
+        // The annotation the step leaves in place, if any
+        const result =
+            action.type === "add"
+                ? direction === "Undo" ? null : action.annotation
+                : action.type === "remove"
+                  ? direction === "Undo" ? action.annotation : null
+                  : direction === "Undo" ? (action.previousAnnotation ?? null) : action.annotation;
+        if (result) {
+            sessionLemmaStore.add(result, false);
+        } else {
             sessionLemmaStore.remove(action.annotation.id, false);
-        } else if (action.type === "remove") {
-            // Undo a remove: add back the annotation
-            sessionLemmaStore.add(action.annotation, false);
-        } else if (action.type === "update") {
-            // Undo an update: restore the previous annotation
-            if (action.previousAnnotation) {
-                sessionLemmaStore.add(action.previousAnnotation, false);
-            } else {
-                sessionLemmaStore.remove(action.annotation.id, false);
-            }
         }
+        compileNow();
 
-        // Recompile to reflect changes
-        clearTimeout(compileTimeout);
-        doCompile($editor.content);
-
-        // Get word index for feedback message
-        const wordIndex =
-            action.annotation.target.type === "word"
-                ? action.annotation.target.wordIndex
-                : action.annotation.target.type === "char"
-                  ? action.annotation.target.wordIndex
-                  : action.annotation.target.startWord;
-        errorStore.info("Undo", `Undid annotation for word #${wordIndex}`);
+        const { target } = action.annotation;
+        const wordIndex = target.type === "span" ? target.startWord : target.wordIndex;
+        errorStore.info(direction, `${direction === "Undo" ? "Undid" : "Redid"} annotation for word #${wordIndex}`);
     }
 
-    function handleLemmaRedo() {
-        const action = annotationHistory.redo();
-        if (!action) return;
+    const handleLemmaUndo = () => stepAnnotationHistory("Undo");
+    const handleLemmaRedo = () => stepAnnotationHistory("Redo");
 
-        // Reapply the action (without pushing to history again)
-        if (action.type === "add") {
-            // Redo an add: add the annotation
-            sessionLemmaStore.add(action.annotation, false);
-        } else if (action.type === "remove") {
-            // Redo a remove: remove the annotation
-            sessionLemmaStore.remove(action.annotation.id, false);
-        } else if (action.type === "update") {
-            // Redo an update: apply the new annotation
-            sessionLemmaStore.add(action.annotation, false);
+    /**
+     * Enters imported mode on `document` and the original file's parts, or
+     * leaves it if there's no document; returns whether it's imported mode.
+     */
+    function setImportedDocument(
+        document: ImportedDocument | undefined,
+        originalBodyXml: string | undefined,
+        preamble = "",
+        postamble = "",
+    ): boolean {
+        if (!document || !originalBodyXml) {
+            importedStore.reset();
+            preservationStore.clear();
+            return false;
         }
-
-        // Recompile to reflect changes
-        clearTimeout(compileTimeout);
-        doCompile($editor.content);
-
-        // Get word index for feedback message
-        const wordIndex =
-            action.annotation.target.type === "word"
-                ? action.annotation.target.wordIndex
-                : action.annotation.target.type === "char"
-                  ? action.annotation.target.wordIndex
-                  : action.annotation.target.startWord;
-        errorStore.info("Redo", `Redid annotation for word #${wordIndex}`);
+        importedStore.load({
+            segments: document.segments,
+            spans: document.spans,
+            originalBodyXml,
+            originalPreamble: preamble,
+            originalPostamble: postamble,
+            isMenota: document.is_menota ?? false,
+            dslRules: document.dsl_rules ?? 0,
+        });
+        preservationStore.setSections({ preamble, postamble });
+        return true;
     }
 
     // Project file handling
@@ -852,28 +435,14 @@
                     metadataStore.resetMetadata();
                 }
 
-                if (project.imported_document && project.original_body_xml) {
-                    importedStore.load({
-                        segments: project.imported_document.segments,
-                        spans: project.imported_document.spans,
-                        originalBodyXml: project.original_body_xml,
-                        originalPreamble: project.original_preamble ?? "",
-                        originalPostamble: project.original_postamble ?? "",
-                        isMenota: project.imported_document.is_menota ?? false,
-                        dslRules: project.imported_document.dsl_rules ?? 0,
-                    });
-                    preservationStore.setSections({
-                        preamble: project.original_preamble ?? "",
-                        postamble: project.original_postamble ?? "",
-                    });
-                } else {
-                    importedStore.reset();
-                    preservationStore.clear();
-                }
+                setImportedDocument(
+                    project.imported_document,
+                    project.original_body_xml,
+                    project.original_preamble,
+                    project.original_postamble,
+                );
 
-                // Cancel any pending auto-preview compile and trigger recompile
-                clearTimeout(compileTimeout);
-                await doCompile(project.source);
+                await compileNow(project.source);
 
                 errorStore.info("Project", `Opened project from ${pathStr}`);
             } else {
@@ -888,9 +457,7 @@
                 importedStore.reset();
                 preservationStore.clear();
 
-                // Cancel any pending auto-preview compile
-                clearTimeout(compileTimeout);
-                await doCompile(file.content);
+                await compileNow(file.content);
 
                 errorStore.info("File", `Opened DSL file from ${pathStr}`);
             }
@@ -900,30 +467,21 @@
     }
 
     async function handleSaveProject() {
-        const template = $templateStore.active;
-        if (!template) {
-            errorStore.warning(
-                "Save",
-                "Please select a template before saving",
-            );
-            return;
-        }
+        const template = requireTemplate("Save", "saving");
+        if (!template) return;
 
         // Get save path (use existing or prompt for new)
         let path = $editor.filePath;
         if (!path || !path.endsWith(".teis")) {
             path = await saveAs({ name: "Saga Scribe Project", extensions: ["teis"] }, {
-                defaultPath: path
-                    ? path.replace(/\.[^.]+$/, ".teis")
-                    : undefined,
+                defaultPath: pathWithExtension("teis"),
             });
         }
         if (!path) return;
 
         try {
             // Ensure we have fresh compiled output; never write a failed compile
-            clearTimeout(compileTimeout);
-            if (!(await doCompile($editor.content))) {
+            if (!(await compileNow())) {
                 errorStore.error(
                     "Save",
                     "Project not saved: the document could not be compiled. Fix the errors and save again.",
@@ -974,27 +532,36 @@
         }
     }
 
-    async function handleExportXml() {
+    /** The active template; logs why `action` can't go ahead without one */
+    function requireTemplate(category: string, action: string) {
         const template = $templateStore.active;
         if (!template) {
-            errorStore.warning(
-                "Export",
-                "Please select a template before exporting",
-            );
-            return;
+            errorStore.warning(category, `Please select a template before ${action}`);
         }
+        return template;
+    }
+
+    /** The open file's path with `extension` instead of its own, as a default for saving */
+    function pathWithExtension(extension: string): string | undefined {
+        return $editor.filePath?.replace(/\.[^.]+$/, `.${extension}`);
+    }
+
+    /** The open file's name without its extension, as an export's title */
+    function fileStem(): string | undefined {
+        return $editor.filePath ? $editor.filePath.split("/").pop()?.replace(/\.[^.]+$/, "") : "export";
+    }
+
+    async function handleExportXml() {
+        if (!requireTemplate("Export", "exporting")) return;
 
         const path = await saveAs({ name: "TEI-XML", extensions: ["xml"] }, {
-            defaultPath: $editor.filePath
-                ? $editor.filePath.replace(/\.[^.]+$/, ".xml")
-                : undefined,
+            defaultPath: pathWithExtension("xml"),
         });
         if (!path) return;
 
         try {
             // Ensure we have fresh compiled output; never export a failed compile
-            clearTimeout(compileTimeout);
-            if (!(await doCompile($editor.content))) {
+            if (!(await compileNow())) {
                 errorStore.error(
                     "Export",
                     "Not exported: the document could not be compiled. Fix the errors and export again.",
@@ -1069,9 +636,8 @@
     /** Compiles the document and renders it to sanitized HTML with the active stylesheet. */
     async function renderExportHtml(signal: AbortSignal): Promise<string> {
         exportProgress = "Compiling…";
-        clearTimeout(compileTimeout);
         // Never export a failed compile
-        if (!(await doCompile($editor.content))) {
+        if (!(await compileNow())) {
             throw new Error(
                 "the document could not be compiled. Fix the errors and try again.",
             );
@@ -1089,19 +655,10 @@
     }
 
     async function handleExportHtml() {
-        const template = $templateStore.active;
-        if (!template) {
-            errorStore.warning(
-                "Export",
-                "Please select a template before exporting",
-            );
-            return;
-        }
+        if (!requireTemplate("Export", "exporting")) return;
 
         const path = await saveAs({ name: "HTML", extensions: ["html", "htm"] }, {
-            defaultPath: $editor.filePath
-                ? $editor.filePath.replace(/\.[^.]+$/, ".html")
-                : undefined,
+            defaultPath: pathWithExtension("html"),
         });
         if (!path) return;
 
@@ -1109,9 +666,7 @@
             const htmlBody = await renderExportHtml(signal);
 
             // Generate standalone HTML with embedded styles
-            const fileName = $editor.filePath
-                ? $editor.filePath.split("/").pop()?.replace(/\.[^.]+$/, "")
-                : "export";
+            const fileName = fileStem();
             const fullHtml = generateStandaloneHtml(htmlBody, { title: fileName });
             signal.throwIfAborted();
 
@@ -1122,14 +677,7 @@
     }
 
     async function handleExportPdf() {
-        const template = $templateStore.active;
-        if (!template) {
-            errorStore.warning(
-                "Export",
-                "Please select a template before exporting",
-            );
-            return;
-        }
+        if (!requireTemplate("Export", "exporting")) return;
 
         // Where the backend writes PDFs itself, ask where to save first;
         // otherwise the system print dialog offers "Save as PDF".
@@ -1137,9 +685,7 @@
         let path: string | null = null;
         if (direct) {
             path = await saveAs({ name: "PDF", extensions: ["pdf"] }, {
-                defaultPath: $editor.filePath
-                    ? $editor.filePath.replace(/\.[^.]+$/, ".pdf")
-                    : undefined,
+                defaultPath: pathWithExtension("pdf"),
             });
             if (!path) return;
         }
@@ -1148,9 +694,7 @@
             const htmlBody = await renderExportHtml(signal);
 
             // Generate standalone HTML
-            const fileName = $editor.filePath
-                ? $editor.filePath.split("/").pop()?.replace(/\.[^.]+$/, "")
-                : "export";
+            const fileName = fileStem();
             const fullHtml = generateStandaloneHtml(htmlBody, {
                 title: fileName,
                 pageBreakStyle: "print-break",
@@ -1213,150 +757,28 @@
             sessionLemmaStore.clear();
             clearTimeout(compileTimeout);
 
+            const imported = result.isImportedMode ? result.importedDocument : undefined;
             if (
-                result.isImportedMode &&
-                result.importedDocument &&
-                result.originalBodyXml
+                setImportedDocument(
+                    imported,
+                    result.originalBodyXml,
+                    result.originalPreamble,
+                    result.originalPostamble,
+                )
             ) {
-                importedStore.load({
-                    segments: result.importedDocument.segments,
-                    spans: result.importedDocument.spans,
-                    originalBodyXml: result.originalBodyXml,
-                    originalPreamble: result.originalPreamble ?? "",
-                    originalPostamble: result.originalPostamble ?? "",
-                    isMenota: result.importedDocument.is_menota ?? false,
-                    dslRules: result.importedDocument.dsl_rules ?? 0,
-                });
-                preservationStore.setSections({
-                    preamble: result.originalPreamble ?? "",
-                    postamble: result.originalPostamble ?? "",
-                });
-
-                const lemmaConfirmations: Record<
-                    number,
-                    { lemma: string; msa: string; normalized?: string }
-                > = {};
-                const inflectionMap = new Map<string, InflectedForm>();
-                const isMenotaImport = result.importedDocument.is_menota ?? false;
-                let missingLemmaCount = 0;
-                let missingNormalizedCount = 0;
-                let wordIndex = 0;
-
-                for (const segment of result.importedDocument.segments) {
-                    if (!("has_inline_lb" in segment)) {
-                        continue;
-                    }
-                    // Words nested in other elements (head, supplied, add, del, ...)
-                    // are counted in document order, matching the rendered text.
-                    if (!segment.original_xml.trimStart().startsWith("<w")) {
-                        const nestedWords = segment.original_xml.trimStart().startsWith("<")
-                            ? extractWordAttributesFromXml(segment.original_xml)
-                            : [];
-                        for (const nw of nestedWords) {
-                            if (nw.lemma && nw.msa) {
-                                // The file's normalized form isn't the user's: not stored
-                                lemmaConfirmations[wordIndex] = {
-                                    lemma: nw.lemma,
-                                    msa: nw.msa,
-                                };
-
-                                const wordform = (nw.diplomatic ?? nw.facsimile ?? "").trim();
-                                if (wordform) {
-                                    const partOfSpeech = nw.msa.split(/\s+/)[0] ?? "";
-                                    const key = `${wordform.toLowerCase()}|${nw.lemma}|${analysisKey(nw.msa)}`;
-                                    if (!inflectionMap.has(key)) {
-                                        inflectionMap.set(key, {
-                                            onp_id: `imported:${nw.lemma}`,
-                                            lemma: nw.lemma,
-                                            analysis: nw.msa,
-                                            part_of_speech: partOfSpeech,
-                                            facsimile: nw.facsimile,
-                                            diplomatic: nw.diplomatic,
-                                            normalized: nw.normalized,
-                                        });
-                                    }
-                                }
-                            }
-                            wordIndex += 1;
-                        }
-                        continue;
-                    }
-
-                    const lemma = segment.attributes.lemma;
-                    const msa =
-                        segment.attributes["me:msa"] ?? segment.attributes.msa ?? "";
-                    const normalized = extractMenotaText(
-                        segment.original_xml,
-                        "norm",
-                    );
-                    if (isMenotaImport) {
-                        if (!lemma) {
-                            missingLemmaCount += 1;
-                        }
-                        if (!normalized) {
-                            missingNormalizedCount += 1;
-                        }
-                    }
-
-                    if (lemma && msa) {
-                        lemmaConfirmations[wordIndex] = { lemma, msa };
-
-                        const diplomatic = extractMenotaText(
-                            segment.original_xml,
-                            "dipl",
-                        );
-                        const facsimile = extractMenotaText(
-                            segment.original_xml,
-                            "facs",
-                        );
-                        const wordform = (diplomatic ?? facsimile ?? "").trim();
-
-                        if (wordform) {
-                            const partOfSpeech = msa.split(/\s+/)[0] ?? "";
-                            const key = `${wordform.toLowerCase()}|${lemma}|${analysisKey(msa)}`;
-                            if (!inflectionMap.has(key)) {
-                                inflectionMap.set(key, {
-                                    onp_id: `imported:${lemma}`,
-                                    lemma,
-                                    analysis: msa,
-                                    part_of_speech: partOfSpeech,
-                                    facsimile: facsimile ?? undefined,
-                                    diplomatic: diplomatic ?? undefined,
-                                    normalized: normalized ?? undefined,
-                                });
-                            }
-                        }
-                    }
-
-                    wordIndex += 1;
+                const lemmas = importedLemmas(imported!.segments, imported!.is_menota ?? false);
+                if (lemmas.missingLemmas > 0) {
+                    errorStore.warning("Import", `Missing lemma for ${lemmas.missingLemmas} word(s); left empty.`);
                 }
-
-                if (isMenotaImport) {
-                    if (missingLemmaCount > 0) {
-                        errorStore.warning(
-                            "Import",
-                            `Missing lemma for ${missingLemmaCount} word(s); left empty.`,
-                        );
-                    }
-                    if (missingNormalizedCount > 0) {
-                        errorStore.warning(
-                            "Import",
-                            `Missing normalized form for ${missingNormalizedCount} word(s).`,
-                        );
-                    }
+                if (lemmas.missingNormalized > 0) {
+                    errorStore.warning("Import", `Missing normalized form for ${lemmas.missingNormalized} word(s).`);
                 }
-
-                if (Object.keys(lemmaConfirmations).length > 0) {
-                    annotationStore.loadLegacyConfirmations(lemmaConfirmations);
+                if (Object.keys(lemmas.confirmations).length > 0) {
+                    annotationStore.loadLegacyConfirmations(lemmas.confirmations);
                 }
-
-                for (const [key, mapping] of inflectionMap) {
-                    const [wordform] = key.split("|");
-                    inflectionStore.addMapping(wordform, mapping);
+                for (const [wordform, form] of lemmas.inflections) {
+                    inflectionStore.addMapping(wordform, form);
                 }
-            } else {
-                importedStore.reset();
-                preservationStore.clear();
             }
 
             editorComponent?.setContent(result.dsl);
@@ -1710,98 +1132,11 @@
     {/if}
 
     {#if exportProgress !== null}
-        <div class="modal modal-open">
-            <div class="modal-backdrop bg-base-100/50"></div>
-            <div
-                class="modal-box bg-transparent shadow-none shadow-transparent border-none flex flex-col items-center justify-center overflow-hidden"
-                role="alertdialog"
-                aria-labelledby="export-progress-title"
-                aria-describedby="export-progress-step"
-            >
-                <!-- SVG spinner with explicit animation -->
-                <svg viewBox="0 0 50 50" width="48" height="48" aria-hidden="true">
-                    <circle
-                        cx="25"
-                        cy="25"
-                        r="20"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="4"
-                        stroke-linecap="round"
-                        stroke-dasharray="90, 150"
-                        stroke-dashoffset="0"
-                        class="text-primary"
-                    >
-                        <animateTransform
-                            attributeName="transform"
-                            type="rotate"
-                            from="0 25 25"
-                            to="360 25 25"
-                            dur="1s"
-                            repeatCount="indefinite"
-                        />
-                    </circle>
-                </svg>
-                <p
-                    id="export-progress-title"
-                    class="mt-4 font-bold text-lg text-base-content"
-                >
-                    Exporting…
-                </p>
-                <p
-                    id="export-progress-step"
-                    class="text-sm text-base-content/70"
-                    aria-live="polite"
-                >
-                    {exportProgress}
-                </p>
-                <button class="btn btn-ghost btn-sm mt-4" onclick={cancelExport}>
-                    Cancel
-                </button>
-            </div>
-        </div>
+        <BusyOverlay title="Exporting…" step={exportProgress} oncancel={cancelExport} />
     {/if}
 
     {#if isImporting}
-        <div class="modal modal-open">
-            <div class="modal-backdrop bg-base-100/50"></div>
-            <div
-                class="modal-box bg-transparent shadow-none shadow-transparent border-none flex flex-col items-center justify-center overflow-hidden"
-            >
-                <!-- SVG spinner with explicit animation -->
-                <svg
-                    class="spinner-svg"
-                    viewBox="0 0 50 50"
-                    width="48"
-                    height="48"
-                >
-                    <circle
-                        cx="25"
-                        cy="25"
-                        r="20"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="4"
-                        stroke-linecap="round"
-                        stroke-dasharray="90, 150"
-                        stroke-dashoffset="0"
-                        class="text-primary"
-                    >
-                        <animateTransform
-                            attributeName="transform"
-                            type="rotate"
-                            from="0 25 25"
-                            to="360 25 25"
-                            dur="1s"
-                            repeatCount="indefinite"
-                        />
-                    </circle>
-                </svg>
-                <p class="mt-4 font-bold text-lg text-base-content">
-                    Importing…
-                </p>
-            </div>
-        </div>
+        <BusyOverlay title="Importing…" />
     {/if}
 
     <SettingsDialog bind:isopen={showSettings} />

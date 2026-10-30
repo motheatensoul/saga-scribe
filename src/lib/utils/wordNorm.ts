@@ -33,3 +33,21 @@ export function resolveEntityReferences(text: string, entities: EntityMap): stri
         return XML_ENTITIES[name] ?? entities[name]?.char ?? ref;
     });
 }
+
+/**
+ * The word numbers of the words in compiled TEI whose diplomatic form (or
+ * text, in a single-level transcription) is `diplomatic`; none if the XML
+ * doesn't parse.
+ */
+export function wordsWithDiplomaticForm(xml: string, diplomatic: string): number[] {
+    if (!xml) return [];
+    const doc = new DOMParser().parseFromString(xml, "text/xml");
+    if (doc.querySelector("parsererror")) return [];
+
+    const indices: number[] = [];
+    doc.querySelectorAll("w").forEach((word, wordIndex) => {
+        const form = word.querySelector("dipl")?.textContent?.trim() || word.textContent?.trim() || "";
+        if (form === diplomatic) indices.push(wordIndex);
+    });
+    return indices;
+}
