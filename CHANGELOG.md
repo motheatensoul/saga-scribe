@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Undo and redo** of lemmas were never enabled: the toolbar followed a history nothing was recorded in
 - **Analyses with their tags in another order** (`xNC gM nS` and `gM xNC nS`) counted as different analyses; they are the same, in the dictionary and when writing lemmas into imported files
 - **ONP unreachable**: when an entry's details can't be fetched (offline, or onp.ku.dk down), the word panel says so instead of waiting indefinitely; the analysis can still be entered
+- **Editor highlighting disagreed with the compiler** in places: gaps with supplied text (`[...<na>]`) and `|` or `~` right after some characters weren't highlighted, a lone `-`, `:` or `}` was marked as an error, `word.p` was shown as a paragraph break, and braces nested in `.supplied{}` ended it early. The editor now finds constructs exactly as the compiler does, checked against a shared corpus of over a thousand inputs (and HolmPerg)
 - **Lemmas after a heading were off by the heading's words**: words inside `.head{}`, `.supplied{}` and `.norm{}` weren't counted when lemmas and annotations were applied, though the previews count them
 
 ## [0.6.1] - 2026-10-29

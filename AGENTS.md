@@ -93,7 +93,8 @@ saga-scribe/
 ```
 
 ## Key Files
-- **DSL Parser:** `src-tauri/src/parser/lexer.rs`, `src-tauri/src/parser/compiler.rs`
+- **DSL Parser:** `src-tauri/src/parser/syntax.rs` (parsing), `src-tauri/src/parser/compiler.rs`
+- **Editor highlighting:** `src/lib/parser/tei-dsl.grammar`, whose tokens come from `src/lib/parser/tokens.ts`: a rule-for-rule copy of `syntax.rs`'s scanning. Change both together (run `bun run build:grammar` after editing the grammar); the corpus test catches drift
 - **Word Tokenizer:** `src-tauri/src/parser/wordtokenizer.rs`
 - **Entities:** `static/entities/menota.json`, `src-tauri/src/entities/registry.rs`
 - **Editor:** `src/lib/components/Editor.svelte`
@@ -116,7 +117,8 @@ saga-scribe/
 
 ## Testing
 - Rust: `cd src-tauri; cargo test` (~200 tests: parser incl. differential tests against the original lexer, compiler, importer round-trip, normalizer, dictionary)
-- Frontend: `bun run test:js` (rendered-text parsing, incremental rendering equivalence, XSLT sanitizing, text diff)
+- Frontend: `bun run test:js` (rendered-text parsing, incremental rendering equivalence, XSLT sanitizing, text diff, highlighting grammar against the shared DSL corpus)
+- DSL corpus: `tests/fixtures/dsl-corpus.json` holds DSL inputs with the constructs the Rust parser finds; the editor's grammar must find the same (`src/lib/parser/corpus.test.ts`). After changing the DSL syntax or adding cases, regenerate it with `cd src-tauri; UPDATE_DSL_CORPUS=1 cargo test corpus` and review the diff
 - Note: jsdom has no `XSLTProcessor`; XSLT transforms themselves are not covered by unit tests.
 
 ## Fonts

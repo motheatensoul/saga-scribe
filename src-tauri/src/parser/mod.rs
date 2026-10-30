@@ -85,6 +85,9 @@ mod legacy_lexer;
 mod differential_tests;
 
 #[cfg(test)]
+mod corpus_tests;
+
+#[cfg(test)]
 mod tests;
 
 pub use compiler::{Compiler, CompilerConfig, LemmaMapping, WordKey};

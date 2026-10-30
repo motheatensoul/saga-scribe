@@ -25,6 +25,7 @@
 		"flatpak:bundle": "flatpak build-bundle flatpak-repo saga-scribe.flatpak app.sagascribe.Sagascribe"
 	},
 	"devDependencies": {
+		"@lezer/common": "^1.5.4",
 		"@lezer/generator": "^1.8.1",
 		"@sveltejs/adapter-static": "^4",
 		"@sveltejs/kit": "^3",
