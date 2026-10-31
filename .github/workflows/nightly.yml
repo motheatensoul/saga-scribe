@@ -1,0 +1,75 @@
+name: Nightly
+
+# Publishes the day's work on the newest dev/X.Y.Z branch as the nightly
+# release. Scheduled runs skip a branch that is already released (its vX.Y.Z
+# tag exists) or that hasn't changed since the last nightly.
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to build (default the newest dev/X.Y.Z); manual runs always build
+        type: string
+        required: false
+
+# One nightly at a time; a later run waits rather than cancelling one that may
+# be halfway through replacing the release
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  pick:
+    runs-on: ubuntu-latest
+    outputs:
+      branch: ${{ steps.pick.outputs.branch }}
+      sha: ${{ steps.pick.outputs.sha }}
+      build: ${{ steps.pick.outputs.build }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      INPUT_BRANCH: ${{ inputs.branch }}
+      SCHEDULED: ${{ github.event_name == 'schedule' }}
+    steps:
+      - name: Pick the branch
+        id: pick
+        run: |
+          branch="$INPUT_BRANCH"
+          if [ -z "$branch" ]; then
+            branch="$(gh api --paginate "repos/$REPO/branches" --jq '.[].name' |
+              grep -E '^dev/[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+          fi
+          if [ -z "$branch" ]; then
+            echo "No dev/X.Y.Z branch; nothing to build"
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          sha="$(gh api "repos/$REPO/git/ref/heads/$branch" --jq .object.sha)"
+          build=true
+          if [ "$SCHEDULED" = true ]; then
+            version="${branch#dev/}"
+            if gh api "repos/$REPO/git/ref/tags/v$version" > /dev/null 2>&1; then
+              echo "$branch is released as v$version; nothing to build"
+              build=false
+            elif [ "$(gh api "repos/$REPO/git/ref/tags/nightly" --jq .object.sha 2>/dev/null)" = "$sha" ]; then
+              echo "$branch hasn't changed since the last nightly"
+              build=false
+            fi
+          fi
+          echo "Building $branch at $sha: $build"
+          {
+            echo "branch=$branch"
+            echo "sha=$sha"
+            echo "build=$build"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: pick
+    if: needs.pick.outputs.build == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ needs.pick.outputs.sha }}
+      branch: ${{ needs.pick.outputs.branch }}
+      publish: true
+    secrets: inherit
