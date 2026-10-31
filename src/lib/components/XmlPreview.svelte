@@ -6,6 +6,7 @@
     import { basicSetup } from "codemirror";
     import { lintGutter, linter, type Diagnostic } from "@codemirror/lint";
     import { validationStore } from "$lib/stores/validation";
+    import { perfTimeSync } from "$lib/perf";
     import { scrollPositionStore } from "$lib/stores/scrollPosition.svelte";
     import { daisyExtensions } from "$lib/editor/theme";
     import { changedRange } from "$lib/utils/textDiff";
@@ -35,7 +36,7 @@
     let appliedContent = "";
 
     // Define a linter source that reads from the validation store
-    const xmlLinter = linter((view) => {
+    const xmlLinter = linter((view) => perfTimeSync('preview.xml.lint', () => {
         if (!validationState.lastResult || validationState.lastResult.valid) return [];
         
         const diagnostics: Diagnostic[] = [];
@@ -53,7 +54,7 @@
             }
         }
         return diagnostics;
-    });
+    }));
 
     onMount(() => {
         appliedContent = content;
@@ -103,11 +104,13 @@
     $effect(() => {
         const next = content;
         if (!view || !active) return;
-        const change = changedRange(appliedContent, next);
-        appliedContent = next;
-        if (change) {
-            view.dispatch({ changes: change });
-        }
+        perfTimeSync('preview.xml', () => {
+            const change = changedRange(appliedContent, next);
+            appliedContent = next;
+            if (change) {
+                view!.dispatch({ changes: change });
+            }
+        });
     });
     
     // Trigger linting update when validation changes

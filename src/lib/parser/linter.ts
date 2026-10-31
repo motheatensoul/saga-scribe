@@ -2,6 +2,7 @@ import { linter, type Diagnostic } from "@codemirror/lint";
 import { entityStore } from "$lib/stores/entities";
 import { get } from "svelte/store";
 import { checkDsl } from "$lib/tauri";
+import { perfTime } from "$lib/perf";
 
 // Debounce timer
 let linterTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -33,7 +34,8 @@ export const teiLinter = linter(async (view) => {
 
             // Syntax errors, at the construct that failed
             try {
-                for (const d of await checkDsl(content)) {
+                const found = await perfTime("lint.check_dsl", () => checkDsl(content), { dsl_chars: content.length });
+                for (const d of found) {
                     diagnostics.push({ from: d.from, to: d.to, severity: "error", message: d.message });
                 }
             } catch (e) {

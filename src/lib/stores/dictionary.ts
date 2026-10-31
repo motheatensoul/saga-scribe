@@ -1,3 +1,4 @@
+import { sameAnalysis } from "$lib/utils/msa";
 import { writable, derived } from 'svelte/store';
 import type { OnpEntry, InflectedForm } from '$lib/tauri';
 
@@ -113,7 +114,7 @@ function createInflectionMappingStore() {
             update((state) => {
                 const existing = state.mappings[wordform.toLowerCase()] || [];
                 const alreadyExists = existing.some(
-                    (f) => f.onp_id === inflection.onp_id && f.analysis === inflection.analysis
+                    (f) => f.onp_id === inflection.onp_id && sameAnalysis(f.analysis, inflection.analysis)
                 );
                 if (alreadyExists) return state;
                 return {
@@ -128,7 +129,7 @@ function createInflectionMappingStore() {
             update((state) => {
                 const existing = state.mappings[wordform.toLowerCase()] || [];
                 const filtered = existing.filter(
-                    (f) => !(f.onp_id === onpId && f.analysis === analysis)
+                    (f) => !(f.onp_id === onpId && sameAnalysis(f.analysis, analysis))
                 );
                 const newMappings = { ...state.mappings };
                 if (filtered.length === 0) {

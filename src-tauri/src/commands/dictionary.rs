@@ -73,12 +73,24 @@ pub async fn fetch_onp_full_entry(id: String) -> Result<OnpFullEntry, String> {
     let url = format!("https://onp.ku.dk/json/onp/{}", id);
     info!("Fetching ONP entry: {}", url);
 
-    let response = reqwest::get(&url)
-        .await
-        .map_err(|e| format!("Failed to fetch: {}", e))?;
+    // Without a timeout, an unresponsive server leaves the lookup hanging
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to set up the connection: {}", e))?;
+    let response = client.get(&url).send().await.map_err(|e| {
+        if e.is_connect() || e.is_timeout() {
+            "ONP (onp.ku.dk) can't be reached: you may be offline, or the site is down.".to_string()
+        } else {
+            format!("Fetching the ONP entry failed: {}", e)
+        }
+    })?;
 
     if !response.status().is_success() {
-        return Err(format!("ONP API returned status: {}", response.status()));
+        return Err(format!(
+            "ONP (onp.ku.dk) couldn't provide the entry (status {}).",
+            response.status()
+        ));
     }
 
     let entry: OnpFullEntry = response

@@ -165,6 +165,15 @@ impl ValidationActor {
                     }));
                     if let Ok(res) = result {
                         log::info!("XSD validation took {:?}", start.elapsed());
+                        crate::perf::record(
+                            "rust",
+                            "validate.xsd",
+                            start.elapsed().as_secs_f64() * 1000.0,
+                            [
+                                ("xml_bytes", xml.len().into()),
+                                ("errors", res.as_ref().map_or(0, |r| r.errors.len()).into()),
+                            ],
+                        );
                         let _ = reply.send(res);
                     } else {
                         log::error!("XSD validation panicked; dropping cached schema");
@@ -205,6 +214,15 @@ impl ValidationActor {
                     }));
                     if let Ok(res) = result {
                         log::info!("RelaxNG validation took {:?}", start.elapsed());
+                        crate::perf::record(
+                            "rust",
+                            "validate.relaxng",
+                            start.elapsed().as_secs_f64() * 1000.0,
+                            [
+                                ("xml_bytes", xml.len().into()),
+                                ("errors", res.as_ref().map_or(0, |r| r.errors.len()).into()),
+                            ],
+                        );
                         let _ = reply.send(res);
                     } else {
                         log::error!("RelaxNG validation panicked; dropping cached schema");

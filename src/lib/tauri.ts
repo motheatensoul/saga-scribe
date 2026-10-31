@@ -195,7 +195,9 @@ export async function compileDsl(
   templateHeader: string,
   templateFooter: string,
   options?: CompileOptions,
-): Promise<string> {
+  guidance?: CompileGuidance,
+  xmlBase?: number,
+): Promise<CompileResult> {
   return invoke("compile_dsl", {
     input,
     templateHeader,
@@ -210,6 +212,8 @@ export async function compileDsl(
     customMappings: options?.customMappings ?? null,
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     annotationsJson: options?.annotationsJson ?? null,
+    guidance: guidance ?? null,
+    xmlBase: xmlBase ?? null,
   });
 }
 
@@ -218,6 +222,8 @@ export interface CompileImportedOptions {
   normalizerJson?: string;
   entityMappingsJson?: string;
   customMappings?: Record<string, string>;
+  /** Confirmed lemmas by word number (written into the file's words) */
+  lemmaMappingsJson?: string;
 }
 
 /**
@@ -254,11 +260,29 @@ export interface CompileGuidance {
   changes: TextChange[];
 }
 
-/** Result of {@link compileImported}. */
-export interface ImportedCompileResult {
-  xml: string;
+/** A change to a document: `from..to` (UTF-16 offsets) replaced by `insert`. */
+export interface XmlDelta {
+  from: number;
+  to: number;
+  insert: string;
+}
+
+/**
+ * Result of {@link compileDsl} and {@link compileImported}: the document
+ * whole (`xml`), or, if the caller holds the output of revision `xmlBase`,
+ * only the change to it (`delta`). `compileSession` puts it back together.
+ */
+export interface CompileResult {
+  xml?: string | null;
+  delta?: XmlDelta | null;
   /** Identifies this compile's DSL, for {@link CompileGuidance} */
   revision: number;
+  /**
+   * Where the previous compile's words went: for each of its word numbers,
+   * the number now (null: deleted); absent if no word moved. Annotations
+   * are numbered by the previous compile (and sent so) until renumbered.
+   */
+  renumbering?: (number | null)[] | null;
   /**
    * Words (by number) edited in the DSL whose lemma, analysis and normalized
    * form were kept from the original and should be reviewed
@@ -271,14 +295,17 @@ export async function compileImported(
   editedDsl: string,
   options?: CompileImportedOptions,
   guidance?: CompileGuidance,
-): Promise<ImportedCompileResult> {
+  xmlBase?: number,
+): Promise<CompileResult> {
   return invoke("compile_imported", {
     editedDsl,
     entitiesJson: options?.entitiesJson ?? null,
     normalizerJson: options?.normalizerJson ?? null,
     entityMappingsJson: options?.entityMappingsJson ?? null,
     customMappings: options?.customMappings ?? null,
+    lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     guidance: guidance ?? null,
+    xmlBase: xmlBase ?? null,
   });
 }
 

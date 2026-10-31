@@ -57,6 +57,8 @@ const parserWithMetadata = parser.configure({
       "Abbreviation/...": tags.keyword,
       BracketContent: tags.string,
       BraceContent: tags.string,
+      // Content of .head{}, .supplied{}, .norm{}
+      BlockContent: tags.string,
 
       // Supplied block
       "SuppliedBlock/...": tags.inserted,
@@ -69,23 +71,18 @@ const parserWithMetadata = parser.configure({
 
       // Supplied
       Supplied: tags.inserted,
-      SuppliedContent: tags.inserted,
 
       // Deletion
       Deletion: tags.deleted,
-      DeletionContent: tags.deleted,
 
       // Addition
       Addition: tags.changed,
-      AdditionContent: tags.changed,
 
       // Note
       Note: tags.comment,
-      NoteContent: tags.comment,
 
       // Unclear
       Unclear: tags.emphasis,
-      UnclearContent: tags.emphasis,
 
       // Entity
       Entity: tags.atom,

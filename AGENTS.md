@@ -93,7 +93,8 @@ saga-scribe/
 ```
 
 ## Key Files
-- **DSL Parser:** `src-tauri/src/parser/lexer.rs`, `src-tauri/src/parser/compiler.rs`
+- **DSL Parser:** `src-tauri/src/parser/syntax.rs` (parsing), `src-tauri/src/parser/compiler.rs`
+- **Editor highlighting:** `src/lib/parser/tei-dsl.grammar`, whose tokens come from `src/lib/parser/tokens.ts`: a rule-for-rule copy of `syntax.rs`'s scanning. Change both together (run `bun run build:grammar` after editing the grammar); the corpus test catches drift
 - **Word Tokenizer:** `src-tauri/src/parser/wordtokenizer.rs`
 - **Entities:** `static/entities/menota.json`, `src-tauri/src/entities/registry.rs`
 - **Editor:** `src/lib/components/Editor.svelte`
@@ -116,7 +117,8 @@ saga-scribe/
 
 ## Testing
 - Rust: `cd src-tauri; cargo test` (~200 tests: parser incl. differential tests against the original lexer, compiler, importer round-trip, normalizer, dictionary)
-- Frontend: `bun run test:js` (rendered-text parsing, incremental rendering equivalence, XSLT sanitizing, text diff)
+- Frontend: `bun run test:js` (rendered-text parsing, incremental rendering equivalence, XSLT sanitizing, text diff, highlighting grammar against the shared DSL corpus)
+- DSL corpus: `tests/fixtures/dsl-corpus.json` holds DSL inputs with the constructs the Rust parser finds; the editor's grammar must find the same (`src/lib/parser/corpus.test.ts`). After changing the DSL syntax or adding cases, regenerate it with `cd src-tauri; UPDATE_DSL_CORPUS=1 cargo test corpus` and review the diff
 - Note: jsdom has no `XSLTProcessor`; XSLT transforms themselves are not covered by unit tests.
 
 ## Fonts
@@ -127,7 +129,9 @@ The user's file is privileged. Reading it must never change it:
 - Unedited content is emitted byte-for-byte: the importer records source spans (`src-tauri/src/importer/tei/source_map.rs`) and the patcher splices edits into the original bytes (`patching.rs`).
 - Whitespace-only or otherwise non-semantic DSL changes must produce no XML change.
 - Invalid DSL is an error, never an empty document; save/export refuse to write a failed compile.
+- Confirmed lemmas are written into the words' start tags (`write_lemmas`), but only where they differ from what the tag says with references resolved: lemmas loaded from the file must leave it byte-identical (`test_menota_file_with_its_own_lemmas_stays_byte_identical`).
 - The XML and the DSL generated from it read as the same tokens, one to one (`test_menota_file_xml_and_dsl_read_as_the_same_tokens`); DSL → XML → DSL likewise. A new XML construct the DSL can't express breaks this: give it DSL syntax rather than special-casing the patcher.
+- Word numbers: lemmas and annotations are stored by word number (the n-th `<w>` of the body, as the previews count). The backend tracks which token is which across edits in both modes (`src-tauri/src/identity.rs`; `Tracked`, the compiler's word keys), and each compile returns `renumbering`: where the previous compile's words went. `src/lib/stores/compileSession.ts` runs compiles one at a time, applies the renumbering (`onRenumbering`) and only then lets the next compile gather its payload: annotations sent to the backend are always numbered by its previous compile. A compile without guidance means a new document (no renumbering). Anything new that stores word numbers must be renumbered in `onRenumbering`.
 - Word identity: the backend `Patcher` (`patching.rs`) remembers each token of the last compiled DSL and which original word it is. The editor's changes since then (`src/lib/editor/editHistory.ts`, sent as `Guidance`) let untouched words keep their identity outright; only edited ranges are matched by comparison. Guidance only refines which word is which: without it (or out of step) the patcher compares whole documents, and the output must be correct either way (`test_guided_character_edits_always_reimport_as_edited` fuzzes this).
 - Parse TEI documents with `crate::xml::parse` (`src-tauri/src/xml.rs`), never libxml2 directly: it declares the document's entities first (libxml2 2.9 drops undeclared ones, 2.14+ keeps them) and disables network access. CI tests on Ubuntu's libxml2 2.9 while local machines usually have 2.14+, so entity handling bugs may show up in only one of them.
 - Changing how imported XML is written as DSL changes users' stored DSL: bump `DSL_RULES` (`src-tauri/src/importer/tei/segments.rs`) and keep older documents on their rules.
@@ -135,12 +139,13 @@ The user's file is privileged. Reading it must never change it:
 
 ## Development Notes
 - **Toolchain:** Rust is pinned in `rust-toolchain.toml` (CI reads it too, via `.github/actions/setup-rust`); the crate MSRV is `rust-version` in `src-tauri/Cargo.toml`.
-- **CI:** PRs to `main` run `test.yml`; pushes to `main` run the full multi-platform `build.yml` and publish the nightly release. Dev branches don't build automatically: to check every platform before merging, run "Build" manually on the branch (`gh workflow run build.yml --ref <branch>`), which builds without publishing. Windows libxml2 setup lives in `.github/actions/setup-libxml2-windows` (shared by build and release).
+- **CI:** PRs to `main` run `test.yml`; pushes to `main` run the full multi-platform `build.yml` and publish the nightly release: each build goes into a new draft, which replaces the previous nightly (and moves the `nightly` tag to the built commit) only once every platform succeeded. Dev branches don't build automatically: to check every platform before merging, run "Build" manually on the branch (`gh workflow run build.yml --ref <branch>`), which builds without publishing. Windows libxml2 setup lives in `.github/actions/setup-libxml2-windows` (shared by build and release).
 - **Flatpak:** the app is compiled inside the GNOME SDK (`flatpak/app.sagascribe.Sagascribe.yml`, with the Rust and LLVM SDK extensions), so it links the runtime's libraries; only the frontend is built outside (`bun run build`). Build locally with `flatpak/build-flatpak.sh`. Don't package a binary built on the host or Ubuntu: it links that system's libraries (e.g. `libxml2.so.2`, which GNOME runtimes no longer ship). When moving to a new GNOME runtime, check its SDK's `org.freedesktop.Sdk.Extension` version (`flatpak info --show-location org.gnome.Sdk//N`, `metadata`) and the extensions available for it.
 - **SvelteKit 3:** configuration lives in `vite.config.ts` (`sveltekit({...})`); there is no `svelte.config.js`. The `$lib` alias is configured there.
 - **PDF export:** the main window paginates the export HTML with Vivliostyle in an off-screen iframe (`src/lib/utils/paginate.ts`; hidden windows throttle timers, which makes Vivliostyle ~20x slower) and hands the static pages to the hidden `/print` window, which prints them with zero native margins. Page layout (margins, page numbers) lives in `withPrintStyles()` (`src/lib/utils/pdfExport.ts`). Vivliostyle is AGPL-3.0, compatible with our GPL-3.0-or-later.
 - **XSLT preview by page:** stylesheets declaring `<?saga-scribe render="page"?>` (like `static/xsl/simple.xsl`) are applied one page at a time and only re-run on changed pages (`src/lib/rendered/xsltPages.ts`). Such a stylesheet's output for an element may only depend on the element and its ancestors: when editing `simple.xsl`, don't use `preceding::`/`following::`, keys or document-wide counts (pass document-wide facts as parameters instead, like `lineBased`), or remove the declaration.
 - **XSLT output:** always pass through `sanitizeXsltHtml()` (`src/lib/utils/xslt.ts`, which also holds the shared preview/export pipeline) before rendering or exporting; the app runs under a strict CSP (`src-tauri/tauri.conf.json`).
+- **Performance log:** start the app with `--perf-log` (or `--perf-log=<file>`; in development `SAGA_SCRIBE_PERF_LOG=1 bun run tauri dev`) to log how long each stage of the work behind an edit takes, from both sides, as JSON lines in the app's log directory (`src-tauri/src/perf.rs`, `src/lib/perf.ts`). Late frames are logged as `ui.stall`. When adding heavy work, time it there (`perf::timer()`, `perfTime`)
 - **Cargo Command Quirk:** `cd src-tauri && cargo ...` fails. Use `cd src-tauri; cargo ...`.
 - **Bun:** Always use `bun` instead of `npm`.
 
@@ -165,6 +170,9 @@ async function processLargeData(items: Item[]) {
     }
 }
 ```
+
+### Typing comes first
+A keystroke must show up in the editor at once, whatever the document's size: researchers who can't type fluently in the app transcribe elsewhere and paste. Work that redraws the previews waits for a pause in typing (`whenTypingPauses` in `src/lib/editor/typing.ts`; the preview pane does this for its views). Per-word work in the rendered text must be a lookup, never a scan of all annotations or lemmas (a lemmatized manuscript has tens of thousands). Check with the performance log: `ui.stall` entries while typing are bugs.
 
 ### Loading Spinners
 Use SVG spinners with `<animateTransform>` instead of CSS animations - they're more reliable during heavy processing:

@@ -37,10 +37,15 @@
 use crate::importer::tei::extraction::segments_to_dsl;
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::{ImportedDocument, Segment};
-use crate::importer::tei::source_map::set_tag_attribute;
-use crate::parser::{Compiler, CompilerConfig, Lexer, Node, WordTokenizer};
-use std::collections::HashMap;
+use crate::importer::tei::source_map::{set_tag_attribute, tag_attribute, tag_length};
+use crate::identity::{
+    carry, diff_range, is_token, matched_tokens, node_to_dsl, spanned_dsl_tokens, Edit, Guidance,
+    Tracked,
+    PARAGRAPH,
+};
+use crate::parser::{Compiler, CompilerConfig, LemmaMapping, Lexer, Node, WordKey, WordTokenizer};
 use std::ops::Range;
+use std::collections::HashMap;
 
 /// A patch operation describing how to transform a segment.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -48,18 +53,27 @@ pub enum PatchOperation {
     #[serde(rename = "keep")]
     Keep { segment_id: usize },
     #[serde(rename = "modify")]
-    Modify { segment_id: usize, new_dsl: String },
+    Modify {
+        segment_id: usize,
+        new_dsl: String,
+        /// The edited token it now is (index into the edited DSL's tokens)
+        #[serde(default)]
+        token: Option<usize>,
+        /// Another word typed in its place, not the word edited: compiled
+        /// afresh (in the same place), without the old word's data
+        #[serde(default)]
+        fresh: bool,
+    },
     #[serde(rename = "insert")]
-    Insert { dsl: String },
+    Insert {
+        dsl: String,
+        /// The edited token inserted (index into the edited DSL's tokens)
+        #[serde(default)]
+        token: Option<usize>,
+    },
     #[serde(rename = "delete")]
     Delete { segment_id: usize },
 }
-
-/// The DSL token for a paragraph break.
-const PARAGRAPH: &str = ".p";
-
-/// Largest middle region (original × edited tokens) diffed with an exact LCS table.
-const LCS_CELL_LIMIT: usize = 4_000_000;
 
 /// Computes the patch operations needed to transform original segments into edited DSL.
 ///
@@ -89,37 +103,6 @@ pub fn compute_patches(
 // Word identity across edits
 // ============================================================================
 
-/// An edit made in the editor: `from_a..to_a` of the previous DSL became
-/// `from_b..to_b` of the new one, in UTF-16 code units (CodeMirror's offsets).
-#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
-pub struct TextChange {
-    pub from_a: usize,
-    pub to_a: usize,
-    pub from_b: usize,
-    pub to_b: usize,
-}
-
-/// The edits made since the DSL of revision `base_revision` was compiled.
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Guidance {
-    pub base_revision: u64,
-    pub changes: Vec<TextChange>,
-}
-
-/// The tokens of the most recently compiled DSL and which original token
-/// each one is: the identity of every word, carried from edit to edit.
-#[derive(Debug, Clone)]
-pub struct DslState {
-    revision: u64,
-    dsl: String,
-    tokens: Vec<String>,
-    spans: Vec<Range<usize>>,
-    /// For each token, the original token it is (edited or not), or `None`
-    /// for content added since import
-    origin: Vec<Option<usize>>,
-}
-
 /// Turns edited DSL into patches against the original document, keeping
 /// track of which word is which.
 ///
@@ -131,14 +114,23 @@ pub struct DslState {
 pub struct Patcher {
     original_dsl: String,
     original: OriginalTokens,
-    state: Option<DslState>,
+    /// The original token (the first of its unit) of each segment, by ID
+    token_of_segment: HashMap<usize, usize>,
+    /// The last committed compile. Original token `i` has ID `i`; tokens
+    /// added since import have IDs from the original token count on.
+    state: Option<Tracked>,
 }
 
 impl Patcher {
     pub fn new(segments: &[Segment], dsl_rules: u32) -> Self {
         let original_dsl = segments_to_dsl(segments, dsl_rules);
         let original = OriginalTokens::build(segments, &original_dsl);
-        Self { original_dsl, original, state: None }
+        let token_of_segment = original
+            .units
+            .iter()
+            .flat_map(|unit| unit.segment_ids.iter().map(move |&id| (id, unit.tokens.start)))
+            .collect();
+        Self { original_dsl, original, token_of_segment, state: None }
     }
 
     /// The revision of the last committed compile (0 before any).
@@ -157,31 +149,32 @@ impl Patcher {
         &self,
         edited_dsl: &str,
         guidance: Option<&Guidance>,
-    ) -> Result<(Vec<PatchOperation>, DslState), String> {
+    ) -> Result<(Vec<PatchOperation>, Tracked), String> {
         let (tokens, spans) = spanned_dsl_tokens(edited_dsl)?;
-        let revision = self.revision() + 1;
+        let original_count = self.original.tokens.len();
+        let previous = self.state.as_ref();
 
         // Unchanged since import (up to whitespace): every token is itself
         if self.original_dsl.trim() == edited_dsl.trim() && tokens == self.original.tokens {
-            let origin = (0..tokens.len()).map(Some).collect();
-            let state = DslState { revision, dsl: edited_dsl.to_string(), tokens, spans, origin };
+            let known: Vec<Option<u64>> = (0..tokens.len() as u64).map(Some).collect();
+            let state = Tracked::with_ids(previous, edited_dsl, tokens, spans, &known, original_count as u64);
             return Ok((Vec::new(), state));
         }
 
-        let guided = self.state.as_ref().zip(guidance).and_then(|(previous, guidance)| {
-            (guidance.base_revision == previous.revision)
-                .then(|| guided_origin(previous, &guidance.changes, edited_dsl, &tokens, &spans))
-                .flatten()
-        });
-        let origin = match guided {
-            Some(origin) => origin,
+        let carried = carry(previous, guidance, edited_dsl, &tokens, &spans);
+        let origin: Vec<Option<usize>> = match &carried {
+            // Original tokens are those with an original ID
+            Some(ids) => ids
+                .iter()
+                .map(|id| id.and_then(|id| usize::try_from(id).ok()).filter(|&i| i < original_count))
+                .collect(),
             None => {
                 let a: Vec<&str> = self.original.tokens.iter().map(String::as_str).collect();
                 let b: Vec<&str> = tokens.iter().map(String::as_str).collect();
                 let mut edits = Vec::with_capacity(a.len().max(b.len()));
                 diff_range(&a, &b, 0, 0, &mut edits);
                 let mut origin = vec![None; tokens.len()];
-                for (j, i) in matched_tokens(&edits, 0) {
+                for (j, i) in matched_tokens(&edits, 0, &a, &b) {
                     origin[j] = Some(i);
                 }
                 origin
@@ -189,156 +182,79 @@ impl Patcher {
         };
         let origin = increasing(origin);
 
+        // IDs: the original token's, or the carried one of content added since
+        // import; anything else is new
+        let known: Vec<Option<u64>> = (0..tokens.len())
+            .map(|j| match origin[j] {
+                Some(i) => Some(i as u64),
+                None => carried
+                    .as_ref()
+                    .and_then(|ids| ids[j])
+                    .filter(|&id| id >= original_count as u64),
+            })
+            .collect();
+
         let edits = edits_from_origin(&origin, &tokens, &self.original.tokens);
-        let patches = pair_modifications(self.original.to_segment_ops(&edits, &tokens));
-        let state = DslState { revision, dsl: edited_dsl.to_string(), tokens, spans, origin };
+        let patches = replace_in_place(self.original.to_segment_ops(&edits, &tokens));
+        let state = Tracked::with_ids(previous, edited_dsl, tokens, spans, &known, original_count as u64);
         Ok((patches, state))
     }
 
+    /// The key of each `<w>` of `rendered` (see [`WordKey`]): the ID of the
+    /// token it comes from (as tracked in `state`) and its position among
+    /// that token's words. A word copied from the original belongs to the
+    /// original token of the segment it is in; original token `i` has ID `i`.
+    pub fn word_keys(&self, doc: &ImportedDocument, rendered: &RenderedBody, state: &Tracked) -> Vec<WordKey> {
+        // Segments with a token, by where they are in the original body
+        let mut located: Vec<(usize, usize, usize)> = doc
+            .spans
+            .iter()
+            .flatten()
+            .enumerate()
+            .filter_map(|(id, span)| {
+                let (start, end) = (*span)?;
+                self.token_of_segment.contains_key(&id).then_some((start, end, id))
+            })
+            .collect();
+        located.sort_unstable();
+        let segment_at = |offset: usize| {
+            let i = located.partition_point(|(start, _, _)| *start <= offset).checked_sub(1)?;
+            let (_, end, id) = located[i];
+            (offset < end).then_some(id)
+        };
+
+        let mut counts: HashMap<u64, u32> = HashMap::new();
+        let mut unknown = 0u32;
+        rendered
+            .words
+            .iter()
+            .map(|(_, origin)| {
+                let id = match *origin {
+                    Origin::Source(offset) => segment_at(offset).and_then(|s| self.token_of_segment.get(&s)).map(|&t| t as u64),
+                    Origin::Segment(segment) => self.token_of_segment.get(&segment).map(|&t| t as u64),
+                    Origin::Token(Some(j)) => state.ids.get(j).copied(),
+                    Origin::Token(None) => None,
+                };
+                match id {
+                    Some(id) => {
+                        let k = counts.entry(id).or_default();
+                        *k += 1;
+                        (id, *k - 1)
+                    }
+                    // Not from a token (e.g. a <w> in markup the DSL doesn't show)
+                    None => {
+                        unknown += 1;
+                        (u64::MAX, unknown - 1)
+                    }
+                }
+            })
+            .collect()
+    }
+
     /// Makes `state` the basis for the next compile.
-    pub fn commit(&mut self, state: DslState) {
+    pub fn commit(&mut self, state: Tracked) {
         self.state = Some(state);
     }
-}
-
-/// The edited DSL's tokens (as the patcher diffs them) with their source ranges.
-fn spanned_dsl_tokens(dsl: &str) -> Result<(Vec<String>, Vec<Range<usize>>), String> {
-    let nodes = Lexer::new(dsl).parse_spanned()?;
-    Ok(WordTokenizer::new()
-        .tokenize_spanned(nodes)
-        .into_iter()
-        .filter(|(node, _)| is_token(node))
-        .map(|(node, span)| (node_to_dsl(&node), span))
-        .unzip())
-}
-
-/// Carries identity from the previous compile through the editor's changes.
-/// Returns `None` if the changes don't fit the previous DSL.
-fn guided_origin(
-    previous: &DslState,
-    changes: &[TextChange],
-    edited_dsl: &str,
-    tokens: &[String],
-    spans: &[Range<usize>],
-) -> Option<Vec<Option<usize>>> {
-    // CodeMirror's UTF-16 offsets as byte offsets in the old and new DSL
-    let old_at = utf16_to_bytes(&previous.dsl, changes.iter().flat_map(|c| [c.from_a, c.to_a]))?;
-    let new_at = utf16_to_bytes(edited_dsl, changes.iter().flat_map(|c| [c.from_b, c.to_b]))?;
-    let changes: Vec<(usize, usize, usize, usize)> = changes
-        .iter()
-        .map(|c| (old_at[&c.from_a], old_at[&c.to_a], new_at[&c.from_b], new_at[&c.to_b]))
-        .collect();
-    if changes.windows(2).any(|w| w[0].1 > w[1].0) {
-        return None;
-    }
-
-    // A token no change reaches into is the same token, shifted, if the new
-    // DSL has the same token at exactly the shifted place (an edit right at
-    // its edge may have merged it with a neighbour, so that is checked)
-    let by_start: HashMap<usize, usize> = spans.iter().enumerate().map(|(j, s)| (s.start, j)).collect();
-    let mut anchors: Vec<(usize, usize)> = Vec::new();
-    let mut c = 0;
-    for (k, span) in previous.spans.iter().enumerate() {
-        // Changes entirely before the token (insertions at its start included)
-        while c < changes.len() && changes[c].1 <= span.start {
-            c += 1;
-        }
-        let overlaps = changes.get(c).is_some_and(|&(from, _, _, _)| from < span.end);
-        if overlaps {
-            continue;
-        }
-        // Shift by the last change entirely before the token
-        let shift = |p: usize| match c.checked_sub(1).map(|i| changes[i]) {
-            Some((_, to_a, _, to_b)) => to_b + (p - to_a),
-            None => p,
-        };
-        let start = shift(span.start);
-        if let Some(&j) = by_start.get(&start) {
-            let in_order = anchors.last().is_none_or(|&(pk, pj)| k > pk && j > pj);
-            if in_order && spans[j].end == shift(span.end) && tokens[j] == previous.tokens[k] {
-                anchors.push((k, j));
-            }
-        }
-    }
-
-    // Between anchors, match the changed tokens by comparison
-    let mut origin = vec![None; tokens.len()];
-    let (mut k0, mut j0) = (0, 0);
-    let old: Vec<&str> = previous.tokens.iter().map(String::as_str).collect();
-    let new: Vec<&str> = tokens.iter().map(String::as_str).collect();
-    for &(k, j) in anchors.iter().chain(std::iter::once(&(old.len(), new.len()))) {
-        let mut edits = Vec::new();
-        diff_range(&old[k0..k], &new[j0..j], k0, j0, &mut edits);
-        for (jj, kk) in matched_tokens(&edits, j0) {
-            origin[jj] = previous.origin[kk];
-        }
-        if k < old.len() {
-            origin[j] = previous.origin[k];
-        }
-        (k0, j0) = (k + 1, j + 1);
-    }
-    Some(origin)
-}
-
-/// Converts UTF-16 offsets into `s` to byte offsets; `None` if one is out of
-/// range or inside a character.
-fn utf16_to_bytes(s: &str, offsets: impl Iterator<Item = usize>) -> Option<HashMap<usize, usize>> {
-    let mut wanted: Vec<usize> = offsets.collect();
-    wanted.sort_unstable();
-    wanted.dedup();
-    let mut found = HashMap::with_capacity(wanted.len());
-    let mut wanted = wanted.into_iter().peekable();
-    let mut units = 0;
-    for (byte, c) in s.char_indices().chain(std::iter::once((s.len(), '\0'))) {
-        while let Some(&w) = wanted.peek() {
-            if w > units {
-                break;
-            }
-            if w < units {
-                return None;
-            }
-            found.insert(w, byte);
-            wanted.next();
-        }
-        units += c.len_utf16();
-    }
-    wanted.peek().is_none().then_some(found)
-}
-
-/// The edited tokens of `edits` that are old ones, as (edited, old) index
-/// pairs: kept tokens, edits known to be the same word (`Replace`), and
-/// deleted tokens paired in order with tokens inserted in their place.
-/// `first_new` is the edited index the edits start at.
-fn matched_tokens(edits: &[Edit], first_new: usize) -> Vec<(usize, usize)> {
-    let mut pairs = Vec::new();
-    let mut next = first_new;
-    let (mut deleted, mut inserted): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
-    let flush = |pairs: &mut Vec<(usize, usize)>, deleted: &mut Vec<usize>, inserted: &mut Vec<usize>| {
-        pairs.extend(inserted.iter().copied().zip(deleted.iter().copied()));
-        deleted.clear();
-        inserted.clear();
-    };
-    for edit in edits {
-        match *edit {
-            Edit::Keep(i) => {
-                flush(&mut pairs, &mut deleted, &mut inserted);
-                pairs.push((next, i));
-                next += 1;
-            }
-            Edit::Delete(i) => deleted.push(i),
-            Edit::Insert(j) => {
-                inserted.push(j);
-                next = j + 1;
-            }
-            Edit::Replace(i, j) => {
-                flush(&mut pairs, &mut deleted, &mut inserted);
-                pairs.push((j, i));
-                next = j + 1;
-            }
-        }
-    }
-    flush(&mut pairs, &mut deleted, &mut inserted);
-    pairs
 }
 
 /// Drops identities that would reorder the original (text moved elsewhere
@@ -375,22 +291,6 @@ fn edits_from_origin(origin: &[Option<usize>], tokens: &[String], original: &[St
     edits.extend((next..original.len()).map(Edit::Delete));
     edits
 }
-
-/// Whether a tokenized node is one of the tokens the patcher diffs.
-fn is_token(node: &Node) -> bool {
-    matches!(
-        node,
-        Node::Word(_)
-            | Node::Punctuation(_)
-            | Node::LineBreak(_)
-            | Node::PageBreak(_)
-            | Node::Head(_)
-            | Node::SuppliedBlock(_)
-            | Node::Norm(_)
-            | Node::ParagraphBreak
-    )
-}
-
 
 /// A minimal group of original segments and DSL tokens that cover exactly the
 /// same text. Usually one segment ↔ one token, but a multi-word `<w>` is one
@@ -527,6 +427,7 @@ impl OriginalTokens {
                 Edit::Insert(j) => {
                     ops.push(PatchOperation::Insert {
                         dsl: edited[j].clone(),
+                        token: Some(j),
                     });
                     k += 1;
                     continue;
@@ -567,12 +468,18 @@ impl OriginalTokens {
                 })
                 .collect();
 
+            let token = unit_edits.iter().find_map(|e| match *e {
+                Edit::Insert(j) | Edit::Replace(_, j) => Some(j),
+                _ => None,
+            });
             let mut segment_ids = unit.segment_ids.iter().copied();
             if !new_tokens.is_empty() {
                 if let Some(segment_id) = segment_ids.next() {
                     ops.push(PatchOperation::Modify {
                         segment_id,
                         new_dsl: new_tokens.join(" "),
+                        token,
+                        fresh: false,
                     });
                 }
             }
@@ -630,231 +537,34 @@ fn parse_dsl_nodes(dsl: &str) -> Result<Vec<Node>, String> {
     Ok(WordTokenizer::new().tokenize(doc.nodes))
 }
 
-fn node_to_dsl(node: &Node) -> String {
-    match node {
-        Node::Text(t) => t.clone(),
-        Node::LineBreak(n) => {
-            if let Some(num) = n {
-                format!("//{}", num)
-            } else {
-                "//".to_string()
-            }
-        }
-        Node::PageBreak(n) => format!("///{}", n),
-        Node::Abbreviation { abbr, expansion } => format!(".abbr[{}]{{{}}}", abbr, expansion),
-        Node::Gap { quantity, supplied } => {
-            let mut s = "[...".to_string();
-            if let Some(q) = quantity {
-                s.push_str(&q.to_string());
-            }
-            if let Some(ref supp) = supplied {
-                s.push('<');
-                s.push_str(supp);
-                s.push('>');
-            }
-            s.push(']');
-            s
-        }
-        Node::Supplied(t) => format!("<{}>", t),
-        Node::SuppliedBlock(t) => format!(".supplied{{{}}}", t),
-        Node::Norm(t) => format!(".norm{{{}}}", t),
-        Node::Deletion(t) => format!("-{{{}}}-", t),
-        Node::Addition(t) => format!("+{{{}}}+", t),
-        Node::Note(t) => format!("^{{{}}}", t),
-        Node::Head(t) => format!(".head{{{}}}", t),
-        Node::Unclear(t) => format!("?{{{}}}?", t),
-        Node::Entity(name) => format!(":{}:", name),
-        Node::WordContinuation => "~".to_string(),
-        Node::CompoundJoin => "~".to_string(),
-        Node::WordBoundary => "|".to_string(),
-        Node::ParagraphBreak => PARAGRAPH.to_string(),
-        Node::Word(nodes) | Node::Punctuation(nodes) => nodes.iter().map(node_to_dsl).collect(),
-    }
-}
-
 // ============================================================================
-// Diffing
+// Rendering
 // ============================================================================
 
-/// An edit expressed as indices into the original (`Keep`, `Delete`) or
-/// edited (`Insert`) token sequence; `Replace` is an original token edited
-/// into an edited one (known to be the same word, not just adjacent).
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Edit {
-    Keep(usize),
-    Delete(usize),
-    Insert(usize),
-    Replace(usize, usize),
-}
-
-/// Diffs `a` against `b`, where `a[0]` is original token `ao` and `b[0]` is edited
-/// token `bo`. Strips the common prefix and suffix before diffing the middle.
-fn diff_range(a: &[&str], b: &[&str], ao: usize, bo: usize, out: &mut Vec<Edit>) {
-    let prefix = a.iter().zip(b).take_while(|(x, y)| x == y).count();
-    out.extend((0..prefix).map(|i| Edit::Keep(ao + i)));
-    let (a, b) = (&a[prefix..], &b[prefix..]);
-    let (ao, bo) = (ao + prefix, bo + prefix);
-
-    let suffix = a
-        .iter()
-        .rev()
-        .zip(b.iter().rev())
-        .take_while(|(x, y)| x == y)
-        .count();
-    let (am, bm) = (&a[..a.len() - suffix], &b[..b.len() - suffix]);
-
-    diff_middle(am, bm, ao, bo, out);
-    out.extend((0..suffix).map(|i| Edit::Keep(ao + am.len() + i)));
-}
-
-fn diff_middle(a: &[&str], b: &[&str], ao: usize, bo: usize, out: &mut Vec<Edit>) {
-    if a.is_empty() || b.is_empty() {
-        replace_all(a.len(), b.len(), ao, bo, out);
-        return;
-    }
-    if a.len().saturating_mul(b.len()) <= LCS_CELL_LIMIT {
-        diff_lcs(a, b, ao, bo, out);
-        return;
-    }
-
-    let anchors = unique_anchors(a, b);
-    if anchors.is_empty() {
-        // Nothing reliable to align on: replacing the region is honest, whereas
-        // pairing tokens by position would attach attributes to the wrong words.
-        replace_all(a.len(), b.len(), ao, bo, out);
-        return;
-    }
-
-    let (mut pa, mut pb) = (0, 0);
-    for (ia, ib) in anchors {
-        diff_range(&a[pa..ia], &b[pb..ib], ao + pa, bo + pb, out);
-        out.push(Edit::Keep(ao + ia));
-        pa = ia + 1;
-        pb = ib + 1;
-    }
-    diff_range(&a[pa..], &b[pb..], ao + pa, bo + pb, out);
-}
-
-fn replace_all(a_len: usize, b_len: usize, ao: usize, bo: usize, out: &mut Vec<Edit>) {
-    out.extend((0..a_len).map(|i| Edit::Delete(ao + i)));
-    out.extend((0..b_len).map(|j| Edit::Insert(bo + j)));
-}
-
-/// Exact LCS diff. Memory is `a.len() × b.len()` cells, bounded by [`LCS_CELL_LIMIT`].
-fn diff_lcs(a: &[&str], b: &[&str], ao: usize, bo: usize, out: &mut Vec<Edit>) {
-    let (m, n) = (a.len(), b.len());
-    let width = n + 1;
-    let mut dp = vec![0u32; (m + 1) * width];
-
-    for i in 1..=m {
-        for j in 1..=n {
-            dp[i * width + j] = if a[i - 1] == b[j - 1] {
-                dp[(i - 1) * width + (j - 1)] + 1
-            } else {
-                dp[(i - 1) * width + j].max(dp[i * width + (j - 1)])
-            };
-        }
-    }
-
-    let mut reversed = Vec::with_capacity(m + n);
-    let (mut i, mut j) = (m, n);
-    while i > 0 || j > 0 {
-        if i > 0 && j > 0 && a[i - 1] == b[j - 1] {
-            reversed.push(Edit::Keep(ao + i - 1));
-            i -= 1;
-            j -= 1;
-        } else if j > 0 && (i == 0 || dp[i * width + (j - 1)] >= dp[(i - 1) * width + j]) {
-            reversed.push(Edit::Insert(bo + j - 1));
-            j -= 1;
-        } else {
-            reversed.push(Edit::Delete(ao + i - 1));
-            i -= 1;
-        }
-    }
-    out.extend(reversed.into_iter().rev());
-}
-
-/// Finds tokens occurring exactly once in both sequences and returns the longest
-/// chain of them that appears in the same order on both sides (patience diff).
-fn unique_anchors(a: &[&str], b: &[&str]) -> Vec<(usize, usize)> {
-    // token -> (count in a, index in a, count in b, index in b)
-    let mut table: HashMap<&str, (usize, usize, usize, usize)> = HashMap::new();
-    for (i, token) in a.iter().enumerate() {
-        let entry = table.entry(token).or_insert((0, 0, 0, 0));
-        entry.0 += 1;
-        entry.1 = i;
-    }
-    for (j, token) in b.iter().enumerate() {
-        if let Some(entry) = table.get_mut(token) {
-            entry.2 += 1;
-            entry.3 = j;
-        }
-    }
-
-    let mut pairs: Vec<(usize, usize)> = table
-        .values()
-        .filter(|(ca, _, cb, _)| *ca == 1 && *cb == 1)
-        .map(|(_, ia, _, ib)| (*ia, *ib))
-        .collect();
-    pairs.sort_unstable();
-
-    longest_increasing_by_b(&pairs)
-}
-
-/// Longest subsequence of `pairs` (sorted by `.0`) whose `.1` values increase.
-fn longest_increasing_by_b(pairs: &[(usize, usize)]) -> Vec<(usize, usize)> {
-    // tails[k] = index into `pairs` of the smallest tail of an increasing run of length k+1
-    let mut tails: Vec<usize> = Vec::new();
-    let mut prev: Vec<Option<usize>> = vec![None; pairs.len()];
-
-    for (idx, &(_, b)) in pairs.iter().enumerate() {
-        let pos = tails.partition_point(|&t| pairs[t].1 < b);
-        if pos > 0 {
-            prev[idx] = Some(tails[pos - 1]);
-        }
-        if pos == tails.len() {
-            tails.push(idx);
-        } else {
-            tails[pos] = idx;
-        }
-    }
-
-    let mut chain = Vec::with_capacity(tails.len());
-    let mut cursor = tails.last().copied();
-    while let Some(idx) = cursor {
-        chain.push(pairs[idx]);
-        cursor = prev[idx];
-    }
-    chain.reverse();
-    chain
-}
-
-/// Pairs each run of deletions with the insertions next to it, in order, so that
-/// edited tokens become Modify operations and keep their original attributes.
-fn pair_modifications(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
+/// Turns a deleted segment and a word inserted in its place into one
+/// replacement in the same place (instead of deleting it and inserting the
+/// new word next to it). These are different words, so the replacement is
+/// fresh: it doesn't inherit the old word's lemma or normalized form.
+fn replace_in_place(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
     let mut result = Vec::with_capacity(ops.len());
     let mut deletes = Vec::new();
     let mut inserts = Vec::new();
 
     let flush = |result: &mut Vec<PatchOperation>,
                  deletes: &mut Vec<usize>,
-                 inserts: &mut Vec<String>| {
+                 inserts: &mut Vec<(String, Option<usize>)>| {
         let paired = deletes.len().min(inserts.len());
-        for (segment_id, new_dsl) in deletes.drain(..paired).zip(inserts.drain(..paired)) {
-            result.push(PatchOperation::Modify { segment_id, new_dsl });
+        for (segment_id, (new_dsl, token)) in deletes.drain(..paired).zip(inserts.drain(..paired)) {
+            result.push(PatchOperation::Modify { segment_id, new_dsl, token, fresh: true });
         }
-        result.extend(
-            deletes
-                .drain(..)
-                .map(|segment_id| PatchOperation::Delete { segment_id }),
-        );
-        result.extend(inserts.drain(..).map(|dsl| PatchOperation::Insert { dsl }));
+        result.extend(deletes.drain(..).map(|segment_id| PatchOperation::Delete { segment_id }));
+        result.extend(inserts.drain(..).map(|(dsl, token)| PatchOperation::Insert { dsl, token }));
     };
 
     for op in ops {
         match op {
             PatchOperation::Delete { segment_id } => deletes.push(segment_id),
-            PatchOperation::Insert { dsl } => inserts.push(dsl),
+            PatchOperation::Insert { dsl, token } => inserts.push((dsl, token)),
             other => {
                 flush(&mut result, &mut deletes, &mut inserts);
                 result.push(other);
@@ -864,10 +574,6 @@ fn pair_modifications(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
     flush(&mut result, &mut deletes, &mut inserts);
     result
 }
-
-// ============================================================================
-// Rendering
-// ============================================================================
 
 /// Compiler settings matching an imported document's own encoding style:
 /// MENOTA three-level words, plain `<w>` words, or unwrapped text.
@@ -907,7 +613,9 @@ pub fn render_body(
 
     if let Some(body) = original_body {
         if unchanged {
-            return Ok(RenderedBody { xml: body.to_string(), edited_words: Vec::new() });
+            let mut out = Output::with_capacity(body.len());
+            out.push(body, Origin::Source(0));
+            return Ok(out.finish(Vec::new()));
         }
     }
 
@@ -925,7 +633,7 @@ pub fn render_body(
     // the split belongs (after closing tags); merges are still fine
     if patches
         .iter()
-        .any(|p| matches!(p, PatchOperation::Insert { dsl } if dsl == PARAGRAPH))
+        .any(|p| matches!(p, PatchOperation::Insert { dsl, .. } if dsl == PARAGRAPH))
     {
         return Err(
             "Paragraphs can't be split in this file: its layout couldn't be mapped to the original source"
@@ -942,23 +650,15 @@ pub struct RenderedBody {
     /// Byte offsets (in `xml`) of edited `<w>` elements whose lemma, msa and
     /// normalized form were kept from the original and need a review.
     pub edited_words: Vec<usize>,
+    /// Every `<w>` element: its offset in `xml` and where it came from
+    pub words: Vec<(usize, Origin)>,
 }
 
 impl RenderedBody {
     /// The edited words as word numbers: the count of `<w>` elements before
     /// each, the numbering the previews and annotations use.
     pub fn edited_word_indices(&self) -> Vec<u32> {
-        let starts: Vec<usize> = self
-            .xml
-            .match_indices("<w")
-            .map(|(i, _)| i)
-            .filter(|&i| {
-                self.xml[i + 2..]
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c == '>' || c == '/' || c.is_whitespace())
-            })
-            .collect();
+        let starts: Vec<usize> = self.words.iter().map(|(at, _)| *at).collect();
         self.edited_words
             .iter()
             .map(|&offset| starts.partition_point(|&start| start < offset) as u32)
@@ -978,7 +678,7 @@ fn separate_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) ->
 
     let mut out = Vec::with_capacity(patches.len());
     for patch in patches {
-        let PatchOperation::Modify { segment_id, new_dsl } = patch else {
+        let PatchOperation::Modify { segment_id, new_dsl, token, fresh } = patch else {
             out.push(patch.clone());
             continue;
         };
@@ -988,7 +688,7 @@ fn separate_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) ->
             out.push(patch.clone());
             continue;
         }
-        let insert = |dsl: &String| PatchOperation::Insert { dsl: dsl.clone() };
+        let insert = |dsl: &String| PatchOperation::Insert { dsl: dsl.clone(), token: *token };
 
         if is_paragraph {
             // The first `.p` keeps the original tag; everything else is new
@@ -1015,6 +715,8 @@ fn separate_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) ->
                 out.push(PatchOperation::Modify {
                     segment_id: *segment_id,
                     new_dsl: tokens[lead..lead + run].join(" "),
+                    token: *token,
+                    fresh: *fresh,
                 });
             }
             out.extend(tokens[lead + run..].iter().map(insert));
@@ -1116,7 +818,7 @@ fn describe_segment(segment: Option<&Segment>) -> String {
 /// Describes the first `.p` edit that can't be applied.
 fn check_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) -> Result<(), String> {
     let touches_paragraphs = patches.iter().any(|p| match p {
-        PatchOperation::Insert { dsl } => dsl == PARAGRAPH,
+        PatchOperation::Insert { dsl, .. } => dsl == PARAGRAPH,
         PatchOperation::Delete { segment_id } => segments
             .iter()
             .any(|s| s.id() == *segment_id && matches!(s, Segment::Paragraph { .. })),
@@ -1131,7 +833,7 @@ fn check_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) -> Re
     let mut anchor: Option<usize> = None;
     for patch in patches {
         match patch {
-            PatchOperation::Insert { dsl } if dsl == PARAGRAPH => {
+            PatchOperation::Insert { dsl, .. } if dsl == PARAGRAPH => {
                 let Some(after) = anchor else {
                     return Err("A paragraph break (.p) can't come before the first imported paragraph".to_string());
                 };
@@ -1167,6 +869,181 @@ fn check_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) -> Re
     Ok(())
 }
 
+/// Where a stretch of the rewritten body came from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Origin {
+    /// Copied from the original body, starting at this offset
+    Source(usize),
+    /// Serialized from this original segment (rebuilding without spans)
+    Segment(usize),
+    /// Compiled from this edited token (index into the edited DSL's tokens)
+    Token(Option<usize>),
+}
+
+/// The rewritten body as it is built, with where each stretch came from.
+struct Output {
+    xml: String,
+    /// (offset in `xml`, origin) for each stretch, in order
+    origins: Vec<(usize, Origin)>,
+}
+
+impl Output {
+    fn with_capacity(capacity: usize) -> Self {
+        Self { xml: String::with_capacity(capacity), origins: Vec::new() }
+    }
+
+    /// Copies `body[range]`; `None` if it isn't a valid range of `body`.
+    fn copy(&mut self, body: &str, range: Range<usize>) -> Option<()> {
+        let text = body.get(range.clone())?;
+        self.push(text, Origin::Source(range.start));
+        Some(())
+    }
+
+    fn generate(&mut self, text: &str, token: Option<usize>) {
+        self.push(text, Origin::Token(token));
+    }
+
+    /// Drops everything from `len` on (and the origins of what's dropped).
+    fn truncate(&mut self, len: usize) {
+        self.xml.truncate(len);
+        self.origins.retain(|(start, _)| *start < len);
+    }
+
+    fn push(&mut self, text: &str, origin: Origin) {
+        if !text.is_empty() {
+            self.origins.push((self.xml.len(), origin));
+            self.xml.push_str(text);
+        }
+    }
+
+    /// The finished body, with the origin of each of its `<w>` elements.
+    fn finish(self, edited_words: Vec<usize>) -> RenderedBody {
+        let words = word_starts(&self.xml)
+            .into_iter()
+            .map(|at| {
+                let region = self.origins.partition_point(|(start, _)| *start <= at).saturating_sub(1);
+                let origin = match self.origins.get(region) {
+                    // A copied word: where its start tag is in the original
+                    Some((start, Origin::Source(source))) => Origin::Source(source + (at - start)),
+                    Some((_, origin)) => *origin,
+                    None => Origin::Token(None),
+                };
+                (at, origin)
+            })
+            .collect();
+        RenderedBody { xml: self.xml, edited_words, words }
+    }
+}
+
+/// `rendered`'s XML with confirmed lemmas (by word number) written into the
+/// words' start tags, as `lemma` and the analysis as `me:msa` (or `msa`,
+/// whichever the word or document uses). Only values that differ from what
+/// the tag already says (references resolved) are written, so lemmas read
+/// from the file leave it byte-identical. An empty lemma is a lemma the user
+/// removed: the word's lemma and analysis attributes are removed. A
+/// normalized form, if given and different from the word's `<me:norm>` text,
+/// replaces that text.
+pub fn write_lemmas(rendered: &RenderedBody, lemmas: &HashMap<u32, LemmaMapping>, menota: bool) -> String {
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for (&number, mapping) in lemmas {
+        let Some(&(at, _)) = rendered.words.get(number as usize) else { continue };
+        let Some(len) = tag_length(&rendered.xml[at..]) else { continue };
+        let tag = &rendered.xml[at..at + len];
+        if let Some(norm) = mapping.normalized.as_deref() {
+            edits.extend(norm_edit(&rendered.xml, at + len, norm));
+        }
+
+        let mut new_tag = tag.to_string();
+        if mapping.lemma.is_empty() {
+            for name in ["lemma", "me:msa", "msa"] {
+                new_tag = set_tag_attribute(&new_tag, name, None);
+            }
+            if new_tag != tag {
+                edits.push((at, len, new_tag));
+            }
+            continue;
+        }
+        if tag_attribute(tag, "lemma").as_deref() != Some(mapping.lemma.as_str()) {
+            new_tag = set_tag_attribute(&new_tag, "lemma", Some(&mapping.lemma));
+        }
+        let msa_name = if tag_attribute(tag, "me:msa").is_some() {
+            "me:msa"
+        } else if tag_attribute(tag, "msa").is_some() || !menota {
+            "msa"
+        } else {
+            "me:msa"
+        };
+        // The same tags in another order are the same analysis: left as written
+        let same_msa = tag_attribute(tag, msa_name)
+            .is_some_and(|written| crate::dictionary::same_analysis(&written, &mapping.msa));
+        if !mapping.msa.is_empty() && !same_msa {
+            new_tag = set_tag_attribute(&new_tag, msa_name, Some(&mapping.msa));
+        }
+        if new_tag != tag {
+            edits.push((at, len, new_tag));
+        }
+    }
+
+    // Back to front, so earlier offsets stay valid
+    edits.sort_unstable_by_key(|(at, _, _)| std::cmp::Reverse(*at));
+    let mut xml = rendered.xml.clone();
+    for (at, len, tag) in edits {
+        xml.replace_range(at..at + len, &tag);
+    }
+    xml
+}
+
+/// The edit setting the `<me:norm>` text of the word whose start tag ends at
+/// `from` to `norm`, if it says something else. Its text is compared as the
+/// app reads it on import: tags removed, whitespace collapsed, entity
+/// references as written. Line, page and column breaks inside it are kept.
+fn norm_edit(xml: &str, from: usize, norm: &str) -> Option<(usize, usize, String)> {
+    let norm = norm.split_whitespace().collect::<Vec<_>>().join(" ");
+    let word = &xml[from..from + xml[from..].find("</w>")?];
+    let open = word.find("<me:norm")?;
+    let open_len = tag_length(&word[open..])?;
+    if word[open..open + open_len].ends_with("/>") {
+        return None;
+    }
+    let start = open + open_len;
+    let end = start + word[start..].find("</me:norm>")?;
+    let inner = &word[start..end];
+
+    let mut text = String::new();
+    let mut breaks = String::new();
+    let mut rest = inner;
+    while let Some(lt) = rest.find('<') {
+        text.push_str(&rest[..lt]);
+        let len = tag_length(&rest[lt..])?;
+        let tag = &rest[lt..lt + len];
+        if ["<lb", "<pb", "<cb"].iter().any(|name| {
+            tag.starts_with(name) && tag[name.len()..].starts_with([' ', '/', '>'])
+        }) {
+            breaks.push_str(tag);
+        }
+        rest = &rest[lt + len..];
+    }
+    text.push_str(rest);
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if norm.is_empty() || text == norm || helpers::escape_xml_text(&norm) == text {
+        return None;
+    }
+    Some((from + start, inner.len(), helpers::escape_xml_text(&norm) + &breaks))
+}
+
+/// Offsets of the `<w>` start tags in `xml`.
+fn word_starts(xml: &str) -> Vec<usize> {
+    xml.match_indices("<w")
+        .map(|(i, _)| i)
+        .filter(|&i| {
+            xml[i + 2..]
+                .chars()
+                .next()
+                .is_some_and(|c| c == '>' || c == '/' || c.is_whitespace())
+        })
+        .collect()
+}
+
 /// Applies patches by replacing only the source bytes of affected segments.
 ///
 /// Returns `None` if a referenced segment has no span or spans are not in
@@ -1182,17 +1059,17 @@ fn splice_into_source(
     let mut edited_words = Vec::new();
     let structure = ParagraphStructure::new(segments);
 
-    let mut out = String::with_capacity(body.len() + 1024);
+    let mut out = Output::with_capacity(body.len() + 1024);
     let mut copied_to = 0;
     // End of the most recent segment touched by a patch; insertions go here.
     let mut anchor: Option<usize> = None;
     let mut anchor_segment: Option<usize> = None;
     // Insertions before the first segment, waiting for a position.
-    let mut pending: Vec<String> = Vec::new();
+    let mut pending: Vec<(String, Option<usize>)> = Vec::new();
 
     for patch in patches {
         match patch {
-            PatchOperation::Insert { dsl } => {
+            PatchOperation::Insert { dsl, token } => {
                 // Splits the paragraph (checked by `check_paragraph_edits`)
                 let split = dsl == PARAGRAPH;
                 let fragment = if split {
@@ -1208,14 +1085,14 @@ fn splice_into_source(
                 }
                 match anchor {
                     Some(at) => {
-                        out.push_str(body.get(copied_to..at)?);
+                        out.copy(body, copied_to..at)?;
                         copied_to = at;
                         if !split {
-                            out.push('\n');
+                            out.generate("\n", None);
                         }
-                        out.push_str(fragment.trim_end());
+                        out.generate(fragment.trim_end(), *token);
                     }
-                    None => pending.push(fragment),
+                    None => pending.push((fragment, *token)),
                 }
             }
             PatchOperation::Keep { segment_id }
@@ -1227,24 +1104,28 @@ fn splice_into_source(
                 }
 
                 if !pending.is_empty() {
-                    out.push_str(body.get(copied_to..start)?);
+                    out.copy(body, copied_to..start)?;
                     copied_to = start;
-                    for fragment in pending.drain(..) {
-                        out.push_str(fragment.trim_end());
-                        out.push('\n');
+                    for (fragment, token) in pending.drain(..) {
+                        out.generate(fragment.trim_end(), token);
+                        out.generate("\n", None);
                     }
                 }
 
                 match patch {
-                    PatchOperation::Modify { new_dsl, .. } => {
+                    PatchOperation::Modify { new_dsl, token, fresh, .. } => {
                         let segment = by_id.get(segment_id)?;
                         let source = body.get(start..end)?;
-                        let replacement = render_modify(segment, Some(source), new_dsl, compiler);
-                        out.push_str(body.get(copied_to..start)?);
-                        if keeps_word_data(segment, new_dsl) {
-                            edited_words.push(out.len());
+                        let replacement = if *fresh {
+                            render_insert(new_dsl, compiler)
+                        } else {
+                            render_modify(segment, Some(source), new_dsl, compiler)
+                        };
+                        out.copy(body, copied_to..start)?;
+                        if !fresh && keeps_word_data(segment, new_dsl) {
+                            edited_words.push(out.xml.len());
                         }
-                        out.push_str(replacement.trim_end());
+                        out.generate(replacement.trim_end(), *token);
                         copied_to = end;
                     }
                     PatchOperation::Delete { .. } => {
@@ -1256,10 +1137,15 @@ fn splice_into_source(
                             if close_start < copied_to || close_end > start {
                                 return None;
                             }
-                            out.push_str(body.get(copied_to..close_start)?);
-                            out.push_str(separator(body.get(close_end..start)?));
+                            out.copy(body, copied_to..close_start)?;
+                            // What separated them (words must stay apart)
+                            if close_end < start {
+                                out.copy(body, close_end..start)?;
+                            } else {
+                                out.generate("\n", None);
+                            }
                         } else {
-                            out.push_str(body.get(copied_to..start)?);
+                            out.copy(body, copied_to..start)?;
                         }
                         copied_to = end;
                     }
@@ -1274,17 +1160,17 @@ fn splice_into_source(
     if !pending.is_empty() {
         // Nothing to anchor to (empty body): insert before the closing body tag.
         let close = body.rfind("</").filter(|&i| i >= copied_to)?;
-        out.push_str(body.get(copied_to..close)?);
+        out.copy(body, copied_to..close)?;
         copied_to = close;
-        for fragment in pending.drain(..) {
-            out.push('\n');
-            out.push_str(fragment.trim_end());
+        for (fragment, token) in pending.drain(..) {
+            out.generate("\n", None);
+            out.generate(fragment.trim_end(), token);
         }
-        out.push('\n');
+        out.generate("\n", None);
     }
 
-    out.push_str(body.get(copied_to..)?);
-    Some(RenderedBody { xml: out, edited_words })
+    out.copy(body, copied_to..body.len())?;
+    Some(out.finish(edited_words))
 }
 
 /// The kind of the first token in a DSL fragment.
@@ -1470,7 +1356,7 @@ pub fn apply_patches_and_reconstruct(
 }
 
 fn reconstruct(segments: &[Segment], patches: &[PatchOperation], compiler: &mut Compiler) -> RenderedBody {
-    let mut xml = String::new();
+    let mut out = Output::with_capacity(0);
     let mut edited_words = Vec::new();
     let mut current_patch_idx = 0;
 
@@ -1490,12 +1376,12 @@ fn reconstruct(segments: &[Segment], patches: &[PatchOperation], compiler: &mut 
             // Interleave leading insertions
             while let Some(patch) = patches.get(current_patch_idx) {
                 match patch {
-                    PatchOperation::Insert { dsl } if dsl == PARAGRAPH => {
-                        xml.push_str("</p>\n<p>");
+                    PatchOperation::Insert { dsl, .. } if dsl == PARAGRAPH => {
+                        out.generate("</p>\n<p>", None);
                         current_patch_idx += 1;
                     }
-                    PatchOperation::Insert { dsl } => {
-                        xml.push_str(&render_insert(dsl, compiler));
+                    PatchOperation::Insert { dsl, token } => {
+                        out.generate(&render_insert(dsl, compiler), *token);
                         current_patch_idx += 1;
                     }
                     PatchOperation::Keep { segment_id }
@@ -1507,21 +1393,25 @@ fn reconstruct(segments: &[Segment], patches: &[PatchOperation], compiler: &mut 
                         }
                         match patch {
                             PatchOperation::Keep { .. } => {
-                                xml.push_str(&serialize_original_segment(seg));
+                                out.push(&serialize_original_segment(seg), Origin::Segment(seg_id));
                             }
-                            PatchOperation::Modify { new_dsl, .. } => {
-                                if keeps_word_data(seg, new_dsl) {
-                                    edited_words.push(xml.len());
+                            PatchOperation::Modify { new_dsl, token, fresh, .. } => {
+                                if *fresh {
+                                    out.generate(&render_insert(new_dsl, compiler), *token);
+                                } else {
+                                    if keeps_word_data(seg, new_dsl) {
+                                        edited_words.push(out.xml.len());
+                                    }
+                                    out.generate(&render_modify(seg, None, new_dsl, compiler), *token);
                                 }
-                                xml.push_str(&render_modify(seg, None, new_dsl, compiler));
                             }
                             PatchOperation::Delete { .. } if matches!(seg, Segment::Paragraph { .. }) => {
                                 // Merge with the previous paragraph: drop its `</p>`
-                                if let Some(close) = xml.rfind("</p>") {
-                                    if xml[close + 4..].trim().is_empty() {
-                                        let between = xml.split_off(close + 4);
-                                        xml.truncate(close);
-                                        xml.push_str(separator(&between));
+                                if let Some(close) = out.xml.rfind("</p>") {
+                                    if out.xml[close + 4..].trim().is_empty() {
+                                        let between = out.xml[close + 4..].to_string();
+                                        out.truncate(close);
+                                        out.generate(separator(&between), None);
                                     }
                                 }
                             }
@@ -1535,26 +1425,26 @@ fn reconstruct(segments: &[Segment], patches: &[PatchOperation], compiler: &mut 
             }
 
             if !handled {
-                xml.push_str(&serialize_original_segment(seg));
+                out.push(&serialize_original_segment(seg), Origin::Segment(seg_id));
             }
         } else {
             // Structural or whitespace segment
-            xml.push_str(&serialize_original_segment(seg));
+            out.push(&serialize_original_segment(seg), Origin::Segment(seg.id()));
         }
     }
 
     // 2. Consume any trailing insertions
     for patch in &patches[current_patch_idx.min(patches.len())..] {
-        if let PatchOperation::Insert { dsl } = patch {
+        if let PatchOperation::Insert { dsl, token } = patch {
             if dsl == PARAGRAPH {
-                xml.push_str("</p>\n<p>");
+                out.generate("</p>\n<p>", None);
             } else {
-                xml.push_str(&render_insert(dsl, compiler));
+                out.generate(&render_insert(dsl, compiler), *token);
             }
         }
     }
 
-    RenderedBody { xml, edited_words }
+    out.finish(edited_words)
 }
 
 fn serialize_original_segment(seg: &Segment) -> String {
@@ -1583,17 +1473,6 @@ fn format_tag(name: &str, attrs: &HashMap<String, String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_utf16_offsets_to_bytes() {
-        // þ: 1 unit, 2 bytes; 𝔞: 2 units (surrogate pair), 4 bytes
-        let s = "þ𝔞a";
-        let at = utf16_to_bytes(s, [0, 1, 3, 4].into_iter()).unwrap();
-        assert_eq!((at[&0], at[&1], at[&3], at[&4]), (0, 2, 6, 7));
-        // Inside the surrogate pair, or past the end: unusable
-        assert!(utf16_to_bytes(s, [2].into_iter()).is_none());
-        assert!(utf16_to_bytes(s, [5].into_iter()).is_none());
-    }
 
     fn tokens(s: &str) -> Vec<&str> {
         s.split_whitespace().collect()
@@ -1632,28 +1511,6 @@ mod tests {
         let edits = run(&a, &b);
         let changed = edits.iter().filter(|e| !matches!(e, Edit::Keep(_))).count();
         assert_eq!(changed, 3, "expected delete+insert of first word and one insert");
-    }
-
-    #[test]
-    fn test_pair_modifications_pairs_runs_in_order() {
-        let ops = vec![
-            PatchOperation::Delete { segment_id: 1 },
-            PatchOperation::Delete { segment_id: 2 },
-            PatchOperation::Insert { dsl: "x".into() },
-            PatchOperation::Insert { dsl: "y".into() },
-            PatchOperation::Insert { dsl: "z".into() },
-        ];
-        let paired = pair_modifications(ops);
-        let desc: Vec<String> = paired
-            .iter()
-            .map(|p| match p {
-                PatchOperation::Modify { segment_id, new_dsl } => format!("M{}{}", segment_id, new_dsl),
-                PatchOperation::Insert { dsl } => format!("I{}", dsl),
-                PatchOperation::Delete { segment_id } => format!("D{}", segment_id),
-                PatchOperation::Keep { segment_id } => format!("K{}", segment_id),
-            })
-            .collect();
-        assert_eq!(desc, vec!["M1x", "M2y", "Iz"]);
     }
 
     #[test]

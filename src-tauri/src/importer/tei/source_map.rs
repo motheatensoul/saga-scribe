@@ -212,7 +212,7 @@ impl SourceCursor {
 }
 
 /// Length of the tag starting at `s[0] == '<'`, honouring quoted attribute values.
-fn tag_length(s: &str) -> Option<usize> {
+pub fn tag_length(s: &str) -> Option<usize> {
     let mut quote: Option<char> = None;
     for (i, c) in s.char_indices().skip(1) {
         match quote {
@@ -261,6 +261,44 @@ pub fn set_tag_attribute(tag: &str, name: &str, value: Option<&str>) -> String {
         }
         None => tag.to_string(),
     }
+}
+
+/// The value of attribute `name` in a start or empty tag, with character and
+/// entity references resolved (named entities from the bundled MENOTA list;
+/// unknown ones are kept as written).
+pub fn tag_attribute(tag: &str, name: &str) -> Option<String> {
+    let range = find_attribute(tag, name)?;
+    let written = &tag[range];
+    let value = written[written.find(['"', '\''])? + 1..written.len() - 1].to_string();
+    Some(resolve_references(&value))
+}
+
+fn resolve_references(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        rest = &rest[amp..];
+        let Some(semi) = rest.find(';') else { break };
+        let name = &rest[1..semi];
+        let resolved = match name {
+            "lt" => Some("<".to_string()),
+            "gt" => Some(">".to_string()),
+            "amp" => Some("&".to_string()),
+            "quot" => Some("\"".to_string()),
+            "apos" => Some("'".to_string()),
+            _ if name.starts_with("#x") => u32::from_str_radix(&name[2..], 16).ok().and_then(char::from_u32).map(String::from),
+            _ if name.starts_with('#') => name[1..].parse().ok().and_then(char::from_u32).map(String::from),
+            _ => crate::entities::bundled().get(name).map(|e| e.text.clone()),
+        };
+        match resolved {
+            Some(text) => out.push_str(&text),
+            None => out.push_str(&rest[..=semi]),
+        }
+        rest = &rest[semi + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Finds the byte range of `name="value"` (either quote style) inside a tag.

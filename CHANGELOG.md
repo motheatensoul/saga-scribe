@@ -5,6 +5,31 @@ All notable changes to Saga-Scribe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-10-31
+
+### Added
+
+- **Lemmas are written into imported files**: confirming a lemma sets `lemma` and `me:msa` (or `msa`) on that word in the imported XML. Lemmas that came from the file leave it byte-identical. Notes and other annotations stay in the project, as they would add markup the file doesn't have
+- **Normalized forms without a lemma**: the word panel's normalized form field is always there (on multi-level transcriptions), starts from the word's current form, and saves with or without a lemma. Removing a lemma keeps a normalized form set by hand. On imported files, a changed normalized form is written into the word's `<me:norm>` (line breaks in it are kept)
+- **Performance log**: started with `--perf-log` (or the environment variable `SAGA_SCRIBE_PERF_LOG=1`), the app writes how long each stage of compiling, previewing and validating takes, and when the window stalled, to `perf-<time>.jsonl` in its log directory
+
+### Fixed
+
+- **Annotations moved to the wrong words** when words were inserted or deleted before them: lemmas and annotations are stored by word number, which shifted. The backend now keeps track of which word is which across edits (as imported mode did since 0.6), reports how word numbers moved after each compile, and the app moves lemmas, annotations, their undo history and the selection along
+- **Another word typed in place of a deleted one inherited the old word's lemma and normalized form** (in imported files, the normalized form stuck even when the old word was typed back). Only an edit of a word (differing in at most half its letters, like a typo fix) keeps its lemma, analysis and normalized form; another word in its place is a new word, written in the same place
+- **The word panel opens on the word's lemma**, ready to change; it opened empty, so a lemma could only be removed, not edited, when the word's form wasn't in the dictionary (e.g. after a typo fix)
+- **Removing a lemma**: the word panel has "Remove lemma"; its ✕ on known analyses removes the analysis from the dictionary (now labelled so), which left the word's lemma in place. On imported files, removing a lemma removes `lemma` and `me:msa` from the word in the file (and is kept in the project, undoable)
+- **Undo and redo** of lemmas were never enabled: the toolbar followed a history nothing was recorded in
+- **Analyses with their tags in another order** (`xNC gM nS` and `gM xNC nS`) counted as different analyses; they are the same, in the dictionary and when writing lemmas into imported files
+- **ONP unreachable**: when an entry's details can't be fetched (offline, or onp.ku.dk down), the word panel says so instead of waiting indefinitely; the analysis can still be entered
+- **Editor highlighting disagreed with the compiler** in places: gaps with supplied text (`[...<na>]`) and `|` or `~` right after some characters weren't highlighted, a lone `-`, `:` or `}` was marked as an error, `word.p` was shown as a paragraph break, and braces nested in `.supplied{}` ended it early. The editor now finds constructs exactly as the compiler does, checked against a shared corpus of over a thousand inputs (and HolmPerg)
+- **Lemmas after a heading were off by the heading's words**: words inside `.head{}`, `.supplied{}` and `.norm{}` weren't counted when lemmas and annotations were applied, though the previews count them
+- **The last lines of the editor hid under the horizontal scrollbar** when long lines made it appear: the editor's scrollbars now take up space of their own instead of overlaying the text
+- **Typing in large documents fell further and further behind**: every pause in typing queued a compile, and on a manuscript like HolmPerg they were requested faster than they finished, so the preview lagged by many seconds. Now only the newest waits, and each compile sends the app only the part of the XML that changed instead of the whole document (megabytes, for a large manuscript). The rendered view ran every update it had started at once; it now finishes the one running and then renders only the newest. It also re-read the whole manuscript (seconds, for HolmPerg) for any edit near a page break (typing or deleting a word there), instead of only the edited page
+- **Typing stalled for a fraction of a second after each preview update on lemmatized manuscripts**: the rendered text looked up each shown word's annotations by going through all of the document's annotations, three times per word (on HolmPerg, about 45,000 annotations for each of a thousand words shown), whenever it was redrawn. The previews now also wait for a pause in typing (200 ms) before showing new output, so redrawing them never holds up a keystroke
+- **Lemma marks flickered on the next words while typing**: after a word was added, the rendered text briefly marked the words after it with their neighbours' lemmas (the marks were renumbered before the text caught up). The marks now change together with the text they belong to
+- **The window was blank while the app started**: it now shows the theme's background and the logo with a loading ring until the app is drawn
+
 ## [0.6.1] - 2026-10-29
 
 ### Fixed

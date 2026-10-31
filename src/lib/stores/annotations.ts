@@ -11,9 +11,12 @@ import type {
     AnnotationValue,
     AnnotationMetadata,
 } from "$lib/types/annotations";
+import { renumberAnnotation, renumberSet, type Renumbering } from "./renumber";
 import {
     createEmptyAnnotationSet,
     createLemmaAnnotation,
+    getLemmaWrites,
+    isRemovedLemma,
     getAnnotationsForWord,
     getAnnotationsByType,
     getLemmaMap,
@@ -115,6 +118,21 @@ function createAnnotationHistoryStore() {
                 maxHistory: max,
                 undoStack: state.undoStack.slice(-max),
             })),
+
+        /** Moves every action to its words' new numbers; drops those whose word is gone. */
+        renumber: (map: Renumbering) =>
+            update((state) => {
+                const move = (actions: AnnotationAction[]) =>
+                    actions.flatMap((action) => {
+                        const annotation = renumberAnnotation(action.annotation, map);
+                        if (!annotation) return [];
+                        const previousAnnotation = action.previousAnnotation
+                            ? renumberAnnotation(action.previousAnnotation, map)
+                            : action.previousAnnotation;
+                        return [{ ...action, annotation, previousAnnotation }];
+                    });
+                return { ...state, undoStack: move(state.undoStack), redoStack: move(state.redoStack) };
+            }),
     };
 }
 
@@ -314,18 +332,53 @@ function createAnnotationStore() {
     }
 
     /**
-     * Remove a lemma confirmation (backward compatible)
+     * Remove a word's lemma. On an imported file (`keepRemoval`) the removal
+     * is kept as an empty lemma, so that it is written into the file. The
+     * word's normalized form, if set, stays.
      */
-    function unconfirmLemma(wordIndex: number, recordHistory = true): void {
-        const lemmaId = `lemma-${wordIndex}`;
-        removeAnnotation(lemmaId, recordHistory);
+    function unconfirmLemma(wordIndex: number, recordHistory = true, keepRemoval = false): void {
+        setLemmaValue(wordIndex, "", "", getLemmaMapping(wordIndex)?.normalized, recordHistory, keepRemoval);
+    }
+
+    /**
+     * Set a word's normalized form (`undefined`: the generated one, or on an
+     * imported file the file's), keeping its lemma, if any.
+     */
+    function setNormalized(wordIndex: number, normalized: string | undefined, keepRemoval = false): void {
+        const current = getLemmaMapping(wordIndex);
+        setLemmaValue(wordIndex, current?.lemma ?? "", current?.msa ?? "", normalized, true, keepRemoval);
+    }
+
+    /** An empty lemma with no normalized form is kept only as a removal (`keepRemoval`). */
+    function setLemmaValue(
+        wordIndex: number,
+        lemma: string,
+        msa: string,
+        normalized: string | undefined,
+        recordHistory: boolean,
+        keepRemoval: boolean,
+    ): void {
+        if (lemma || normalized || keepRemoval) {
+            addAnnotation(createLemmaAnnotation(wordIndex, lemma, msa, normalized), recordHistory);
+        } else {
+            removeAnnotation(`lemma-${wordIndex}`, recordHistory);
+        }
+    }
+
+    /** Lemmas to write into an imported file (see `getLemmaWrites`). */
+    function getLemmaWritesNow(): ReturnType<typeof getLemmaWrites> {
+        let result: ReturnType<typeof getLemmaWrites> = {};
+        subscribe((state) => {
+            result = getLemmaWrites(state.set);
+        })();
+        return result;
     }
 
     /**
      * Check if a word has a confirmed lemma
      */
     function isLemmaConfirmed(wordIndex: number): boolean {
-        return hasAnnotationType(wordIndex, "lemma");
+        return !!getLemmaMapping(wordIndex)?.lemma;
     }
 
     /**
@@ -420,11 +473,18 @@ function createAnnotationStore() {
         hasAnnotationType,
         loadSet,
         getSet,
+        getLemmaWrites: getLemmaWritesNow,
         clear,
+        /** Moves every annotation (and its undo history) to its word's new number. */
+        renumber: (map: Renumbering) => {
+            update((state) => ({ set: renumberSet(state.set, map) }));
+            annotationHistory.renumber(map);
+        },
 
         // Backward-compatible lemma methods
         confirmLemma,
         unconfirmLemma,
+        setNormalized,
         isLemmaConfirmed,
         getLemmaMapping,
         getLemmaMappings,
@@ -458,7 +518,8 @@ export const isWordConfirmed = derived(annotationStore, ($store) => {
             (a) =>
                 a.type === "lemma" &&
                 a.target.type === "word" &&
-                a.target.wordIndex === wordIndex,
+                a.target.wordIndex === wordIndex &&
+                !isRemovedLemma(a),
         );
     };
 });
@@ -470,6 +531,31 @@ export const annotationsForWord = derived(annotationStore, ($store) => {
     return (wordIndex: number): Annotation[] => {
         return getAnnotationsForWord($store.set, wordIndex);
     };
+});
+
+/**
+ * The annotation types on each word, by word number: one lookup per word
+ * for the rendered text, which asks for every word it shows (filtering all
+ * annotations per word took hundreds of milliseconds on a lemmatized
+ * manuscript, and froze typing whenever the text was redrawn).
+ */
+export const annotationTypesByWord = derived(annotationStore, ($store) => {
+    const types = new Map<number, Set<AnnotationType>>();
+    const add = (word: number, type: AnnotationType) => {
+        let set = types.get(word);
+        if (!set) types.set(word, (set = new Set()));
+        set.add(type);
+    };
+    for (const annotation of $store.set.annotations) {
+        if (isRemovedLemma(annotation)) continue;
+        const { target } = annotation;
+        if (target.type === "span") {
+            for (let word = target.startWord; word <= target.endWord; word++) add(word, annotation.type);
+        } else {
+            add(target.wordIndex, annotation.type);
+        }
+    }
+    return types;
 });
 
 /**
@@ -486,6 +572,7 @@ export const annotationCounts = derived(annotationStore, ($store) => {
         custom: 0,
     };
     for (const ann of $store.set.annotations) {
+        if (isRemovedLemma(ann)) continue;
         counts[ann.type]++;
     }
     return counts;
@@ -496,33 +583,20 @@ export const annotationCounts = derived(annotationStore, ($store) => {
  */
 export const totalAnnotations = derived(
     annotationStore,
-    ($store) => $store.set.annotations.length,
+    ($store) => $store.set.annotations.filter((a) => !isRemovedLemma(a)).length,
 );
 
 /**
  * Backward-compatible: mappings record (legacy format)
  * This is used by components that expect the old sessionLemmaStore format
  */
-export const lemmaMappings = derived(annotationStore, ($store) => {
-    const mappings: Record<
+export const lemmaMappings = derived(annotationStore, ($store) => ({
+    // Removed lemmas (see createRemovedLemma) count as none
+    mappings: Object.fromEntries(getLemmaMap($store.set)) as Record<
         number,
         { lemma: string; msa: string; normalized?: string }
-    > = {};
-    for (const ann of $store.set.annotations) {
-        if (
-            ann.type === "lemma" &&
-            ann.target.type === "word" &&
-            ann.value.kind === "lemma"
-        ) {
-            mappings[ann.target.wordIndex] = {
-                lemma: ann.value.lemma,
-                msa: ann.value.msa,
-                normalized: ann.value.normalized,
-            };
-        }
-    }
-    return { mappings };
-});
+    >,
+}));
 
 // ============================================================================
 // Re-export type helpers

@@ -18,9 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.create_release.outputs.id }}
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -44,15 +43,15 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version }}
-          release_name: Saga-Scribe ${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Saga-Scribe ${{ inputs.version }}
           body_path: changelog.txt
           draft: false
           prerelease: ${{ inputs.prerelease }}
+          token: ${{ secrets.PAT_TOKEN }}
 
   build-release:
     needs: create-release
@@ -63,7 +62,9 @@ jobs:
           - platform: 'macos-latest'
             args: '--target aarch64-apple-darwin'
             artifact_suffix: 'macos-arm64'
-          - platform: 'macos-latest'
+          # Built natively: on an arm64 runner it would be a cross-compile, and
+          # Homebrew's libxml2 there is arm64 only
+          - platform: 'macos-15-intel'
             args: '--target x86_64-apple-darwin'
             artifact_suffix: 'macos-x64'
           - platform: 'ubuntu-latest'
@@ -74,7 +75,7 @@ jobs:
             artifact_suffix: 'windows-x64'
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
@@ -82,7 +83,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
           cache-key: ${{ matrix.artifact_suffix }}
 
       - name: Install dependencies (ubuntu only)
@@ -92,7 +93,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libxml2-dev
 
       - name: Install dependencies (macos only)
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos')
         run: |
           brew install libxml2
           echo "PKG_CONFIG_PATH=$(brew --prefix libxml2)/lib/pkgconfig" >> $GITHUB_ENV
@@ -120,7 +121,7 @@ jobs:
       options: --privileged
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The app itself is compiled inside the GNOME SDK (see the manifest), so
       # it links the runtime's libraries; only the frontend is built here
@@ -142,12 +143,12 @@ jobs:
           bundle: saga-scribe.flatpak
           cache-key: flatpak-builder-${{ github.sha }}
 
+      - name: Name the Flatpak bundle
+        run: mv saga-scribe.flatpak saga-scribe-${{ inputs.version }}-linux-x64.flatpak
+
       - name: Upload Flatpak to Release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: saga-scribe.flatpak
-          asset_name: saga-scribe-${{ inputs.version }}-linux-x64.flatpak
-          asset_content_type: application/octet-stream
+          tag_name: ${{ inputs.version }}
+          files: saga-scribe-${{ inputs.version }}-linux-x64.flatpak
+          token: ${{ secrets.PAT_TOKEN }}

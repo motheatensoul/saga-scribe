@@ -8,6 +8,7 @@
         type AnnotationValue,
     } from "$lib/stores/annotations";
     import { templateStore } from "$lib/stores/template";
+    import { importedStore } from "$lib/stores/imported.svelte";
     import {
         SEMANTIC_CATEGORIES,
         NOTE_CATEGORIES,
@@ -326,8 +327,13 @@
         onsave?.();
     }
 
-    function handleRemoveAnnotation(id: string) {
-        annotationStore.remove(id);
+    function handleRemoveAnnotation(annotation: Annotation) {
+        if (annotation.type === "lemma" && annotation.target.type === "word") {
+            // On an imported file the removal is kept, so it reaches the file
+            annotationStore.unconfirmWithHistory(annotation.target.wordIndex, true, importedStore.isImportedMode);
+        } else {
+            annotationStore.remove(annotation.id);
+        }
         onsave?.();
     }
 
@@ -423,7 +429,7 @@
                                 <button
                                     type="button"
                                     class="btn btn-ghost btn-xs ml-auto"
-                                    onclick={() => handleRemoveAnnotation(ann.id)}
+                                    onclick={() => handleRemoveAnnotation(ann)}
                                     disabled={ann.type === "lemma"}
                                     title={ann.type === "lemma" ? "Remove via Lemmatizer" : "Remove annotation"}
                                 >

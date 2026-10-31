@@ -58,6 +58,26 @@ describe("renderUpdate", () => {
         expect(modes.incremental).toBeGreaterThan(50);
     });
 
+    it("re-parses only the edited page for an edit right next to a page break", async () => {
+        const xml = syntheticDocument(10);
+        const state = await renderFull(xml, testEntities);
+        const pb = xml.indexOf("<pb", xml.indexOf("<pb") + 1);
+        const pbEnd = xml.indexOf("/>", pb) + 2;
+        for (const edited of [
+            xml.slice(0, pbEnd) + word("next") + xml.slice(pbEnd),
+            xml.slice(0, pb) + word("prev") + xml.slice(pb),
+        ]) {
+            const next = await renderUpdate(state, edited, testEntities);
+            expect(next.mode).toBe("incremental");
+            expect(next.doc).toEqual((await renderFull(edited, testEntities)).doc);
+
+            // And the word deleted again
+            const back = await renderUpdate(next, xml, testEntities);
+            expect(back.mode).toBe("incremental");
+            expect(back.doc).toEqual(state.doc);
+        }
+    });
+
     it("returns the previous state when nothing changed", async () => {
         const state = await renderFull(syntheticDocument(3), testEntities);
         expect(await renderUpdate(state, state.content, testEntities)).toBe(state);
@@ -84,4 +104,13 @@ describe("renderUpdate", () => {
             await checkEquivalence(readFileSync(holmperg, "utf8"), menota, 10, 777);
         },
     );
+});
+
+describe("abandoned renders", () => {
+    it("stop at their next pause instead of finishing", async () => {
+        const controller = new AbortController();
+        const render = renderFull(syntheticDocument(40), testEntities, controller.signal);
+        controller.abort();
+        await expect(render).rejects.toThrow();
+    });
 });

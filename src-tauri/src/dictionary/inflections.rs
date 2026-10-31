@@ -84,7 +84,7 @@ impl InflectionStore {
 
         // Check if this exact mapping already exists
         let exists = forms.iter().any(|f| {
-            f.onp_id == inflection.onp_id && f.analysis == inflection.analysis
+            f.onp_id == inflection.onp_id && super::same_analysis(&f.analysis, &inflection.analysis)
         });
 
         if !exists {
@@ -96,7 +96,7 @@ impl InflectionStore {
     pub fn remove(&mut self, wordform: &str, onp_id: &str, analysis: &str) {
         let normalized = Self::normalize(wordform);
         if let Some(forms) = self.forms.get_mut(&normalized) {
-            forms.retain(|f| !(f.onp_id == onp_id && f.analysis == analysis));
+            forms.retain(|f| !(f.onp_id == onp_id && super::same_analysis(&f.analysis, analysis)));
             if forms.is_empty() {
                 self.forms.remove(&normalized);
             }
