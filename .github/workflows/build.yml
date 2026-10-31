@@ -15,8 +15,53 @@ on:
 env:
   PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
 
+# One build per branch at a time; a newer push waits rather than cancelling one
+# that may be halfway through replacing the nightly
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # Each nightly is a new release of the commit it was built from, so it lists
+  # above older releases and holds only this build's files. It's built as a
+  # draft and replaces the previous nightly only once every platform succeeded.
+  prepare-nightly:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.id }}
+    env:
+      GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Remove drafts left by failed nightly builds
+        if: env.PUBLISH == 'true'
+        run: |
+          gh api --paginate "repos/$REPO/releases" \
+            --jq '.[] | select(.draft and .tag_name == "nightly") | .id' |
+            while read -r id; do gh api -X DELETE "repos/$REPO/releases/$id"; done
+
+      - name: Create the draft nightly
+        id: draft
+        if: env.PUBLISH == 'true'
+        run: |
+          short="${GITHUB_SHA::7}"
+          date="$(date -u +%Y-%m-%d)"
+          stable="$(gh api "repos/$REPO/releases/latest" --jq .tag_name)"
+          body="Development build of $short from \`main\`, $date. Nightlies are untested and may be unstable; for everyday work use the [latest release](https://github.com/$REPO/releases/latest).
+
+          Changes since $stable: https://github.com/$REPO/compare/$stable...$GITHUB_SHA"
+          id="$(gh api "repos/$REPO/releases" \
+            -f tag_name=nightly \
+            -f target_commitish="$GITHUB_SHA" \
+            -f name="Saga-Scribe Nightly $date ($short)" \
+            -f body="$body" \
+            -F draft=true \
+            -F prerelease=true \
+            --jq .id)"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
   test-tauri:
+    needs: prepare-nightly
     strategy:
       fail-fast: false
       matrix:
@@ -59,17 +104,13 @@ jobs:
 
       - name: install frontend dependencies
         run: bun install
-       # If tagName and releaseId are omitted tauri-action will only build the app and won't try to upload any assets.
       - uses: tauri-apps/tauri-action@v0.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         with:
-          # Without a tag name the action only builds (manual runs without "publish")
-          tagName: ${{ env.PUBLISH == 'true' && 'nightly' || '' }}
-          releaseName: 'Saga-Scribe Nightly'
-          releaseBody: 'See the assets to download this version and install.'
-          releaseDraft: false
-          prerelease: true
+          # Uploads to the draft nightly; without a release (manual runs
+          # without "publish") the action only builds
+          releaseId: ${{ needs.prepare-nightly.outputs.release_id }}
           args: ${{ matrix.args }}
 
   build-flatpak:
@@ -102,10 +143,43 @@ jobs:
           bundle: saga-scribe-nightly.flatpak
           cache-key: flatpak-builder-${{ github.sha }}
 
-      - name: Upload Flatpak to Nightly Release
+      # Attached by publish-nightly: the container has no gh, and uploading by
+      # tag would find the previous nightly rather than the draft
+      - name: Keep the Flatpak for the nightly
         if: env.PUBLISH == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: actions/upload-artifact@v5
         with:
-          tag_name: nightly
-          files: saga-scribe-nightly.flatpak
-          token: ${{ secrets.PAT_TOKEN }}
+          name: flatpak-nightly
+          path: saga-scribe-nightly.flatpak
+          retention-days: 1
+
+  publish-nightly:
+    needs: [prepare-nightly, test-tauri, build-flatpak]
+    if: github.event_name == 'push' || inputs.publish
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+      REPO: ${{ github.repository }}
+      RELEASE_ID: ${{ needs.prepare-nightly.outputs.release_id }}
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: flatpak-nightly
+
+      - name: Attach the Flatpak
+        run: |
+          curl --fail-with-body -sS -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @saga-scribe-nightly.flatpak \
+            "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=saga-scribe-nightly.flatpak"
+
+      # Publishing the draft creates the nightly tag at the built commit
+      - name: Replace the previous nightly
+        run: |
+          if old="$(gh api "repos/$REPO/releases/tags/nightly" --jq .id 2>/dev/null)"; then
+            gh api -X DELETE "repos/$REPO/releases/$old"
+          fi
+          gh api -X DELETE "repos/$REPO/git/refs/tags/nightly" 2>/dev/null || true
+          gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" \
+            -F draft=false -F prerelease=true -f make_latest=false > /dev/null
