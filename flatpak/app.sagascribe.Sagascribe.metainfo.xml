@@ -67,6 +67,19 @@
   </keywords>
 
   <releases>
+    <release version="0.7.0" date="2026-10-31">
+      <description>
+        <p>Lemmas that stay on their words, lemmas written into imported files, and smooth typing in large manuscripts.</p>
+        <ul>
+          <li>Lemmas and annotations follow their words when words are inserted or deleted</li>
+          <li>Confirmed lemmas are written into imported TEI files; lemmas from the file leave it unchanged</li>
+          <li>Normalized forms can be set without a lemma, and lemmas can be edited or removed</li>
+          <li>Typing stays responsive in large manuscripts; previews update after a pause in typing</li>
+          <li>Editor highlighting matches the compiler exactly</li>
+          <li>The window shows the theme and a loading indicator while the app starts</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.1" date="2026-10-29">
       <description>
         <p>Faster XSLT preview: after an edit, only the changed pages are rendered again.</p>
