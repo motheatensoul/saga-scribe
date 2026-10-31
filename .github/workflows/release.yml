@@ -18,9 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.create_release.outputs.id }}
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -44,15 +43,15 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version }}
-          release_name: Saga-Scribe ${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Saga-Scribe ${{ inputs.version }}
           body_path: changelog.txt
           draft: false
           prerelease: ${{ inputs.prerelease }}
+          token: ${{ secrets.PAT_TOKEN }}
 
   build-release:
     needs: create-release
@@ -76,7 +75,7 @@ jobs:
             artifact_suffix: 'windows-x64'
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup bun
         uses: oven-sh/setup-bun@v2
@@ -122,7 +121,7 @@ jobs:
       options: --privileged
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The app itself is compiled inside the GNOME SDK (see the manifest), so
       # it links the runtime's libraries; only the frontend is built here
@@ -144,12 +143,12 @@ jobs:
           bundle: saga-scribe.flatpak
           cache-key: flatpak-builder-${{ github.sha }}
 
+      - name: Name the Flatpak bundle
+        run: mv saga-scribe.flatpak saga-scribe-${{ inputs.version }}-linux-x64.flatpak
+
       - name: Upload Flatpak to Release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: saga-scribe.flatpak
-          asset_name: saga-scribe-${{ inputs.version }}-linux-x64.flatpak
-          asset_content_type: application/octet-stream
+          tag_name: ${{ inputs.version }}
+          files: saga-scribe-${{ inputs.version }}-linux-x64.flatpak
+          token: ${{ secrets.PAT_TOKEN }}

@@ -31,7 +31,7 @@ jobs:
             args: ''
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: setup bun
         uses: oven-sh/setup-bun@v2
@@ -80,7 +80,7 @@ jobs:
       options: --privileged
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The app itself is compiled inside the GNOME SDK (see the manifest), so
       # it links the runtime's libraries; only the frontend is built here
@@ -104,7 +104,7 @@ jobs:
 
       - name: Upload Flatpak to Nightly Release
         if: env.PUBLISH == 'true'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: nightly
           files: saga-scribe-nightly.flatpak
