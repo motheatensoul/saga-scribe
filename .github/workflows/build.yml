@@ -1,24 +1,32 @@
 name: Build
 
+# Pushes to main and manual runs (e.g. to check a dev branch on every platform
+# before merging) only build. The nightly release is published by nightly.yml,
+# which calls this workflow.
 on:
   push:
     branches: [main]
-  # Manual runs (e.g. to check a dev branch on every platform before merging).
-  # They only build unless "publish" is set, so the nightly release isn't replaced.
   workflow_dispatch:
+  workflow_call:
     inputs:
+      ref:
+        description: Commit to build
+        type: string
+        required: true
+      branch:
+        description: Branch the commit is on, named in the release notes
+        type: string
+        required: true
       publish:
         description: Publish the build as the nightly release
         type: boolean
         default: false
 
 env:
-  PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+  PUBLISH: ${{ inputs.publish && 'true' || 'false' }}
 
-# One build per branch at a time; a newer push waits rather than cancelling one
-# that may be halfway through replacing the nightly
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ inputs.ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -32,6 +40,8 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.PAT_TOKEN }}
       REPO: ${{ github.repository }}
+      SHA: ${{ inputs.ref }}
+      BRANCH: ${{ inputs.branch }}
     steps:
       - name: Remove drafts left by failed nightly builds
         if: env.PUBLISH == 'true'
@@ -44,15 +54,15 @@ jobs:
         id: draft
         if: env.PUBLISH == 'true'
         run: |
-          short="${GITHUB_SHA::7}"
+          short="${SHA::7}"
           date="$(date -u +%Y-%m-%d)"
           stable="$(gh api "repos/$REPO/releases/latest" --jq .tag_name)"
-          body="Development build of $short from \`main\`, $date. Nightlies are untested and may be unstable; for everyday work use the [latest release](https://github.com/$REPO/releases/latest).
+          body="Development build of $short from \`$BRANCH\`, $date. Nightlies are untested and may be unstable; for everyday work use the [latest release](https://github.com/$REPO/releases/latest).
 
-          Changes since $stable: https://github.com/$REPO/compare/$stable...$GITHUB_SHA"
+          Changes since $stable: https://github.com/$REPO/compare/$stable...$SHA"
           id="$(gh api "repos/$REPO/releases" \
             -f tag_name=nightly \
-            -f target_commitish="$GITHUB_SHA" \
+            -f target_commitish="$SHA" \
             -f name="Saga-Scribe Nightly $date ($short)" \
             -f body="$body" \
             -F draft=true \
@@ -77,6 +87,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: setup bun
         uses: oven-sh/setup-bun@v2
@@ -108,8 +120,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         with:
-          # Uploads to the draft nightly; without a release (manual runs
-          # without "publish") the action only builds
+          # Uploads to the draft nightly; without a release (builds that
+          # aren't published) the action only builds
           releaseId: ${{ needs.prepare-nightly.outputs.release_id }}
           args: ${{ matrix.args }}
 
@@ -122,6 +134,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.ref }}
 
       # The app itself is compiled inside the GNOME SDK (see the manifest), so
       # it links the runtime's libraries; only the frontend is built here
@@ -141,7 +155,7 @@ jobs:
         with:
           manifest-path: flatpak/app.sagascribe.Sagascribe.yml
           bundle: saga-scribe-nightly.flatpak
-          cache-key: flatpak-builder-${{ github.sha }}
+          cache-key: flatpak-builder-${{ inputs.ref || github.sha }}
 
       # Attached by publish-nightly: the container has no gh, and uploading by
       # tag would find the previous nightly rather than the draft
@@ -155,7 +169,7 @@ jobs:
 
   publish-nightly:
     needs: [prepare-nightly, test-tauri, build-flatpak]
-    if: github.event_name == 'push' || inputs.publish
+    if: inputs.publish
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.PAT_TOKEN }}
