@@ -3,15 +3,6 @@
 Known problems and planned work that isn't scheduled for a version yet. Remove an entry
 when it is done (and record it in CHANGELOG.md if users notice).
 
-## Development
-
-- **Nix flake for the development environment**, so that building doesn't depend on one
-  maintainer's machine. Mainly pins bun and the Rust toolchain (read from
-  `rust-toolchain.toml`, e.g. with rust-overlay or fenix, so the two can't drift), plus the
-  Tauri system libraries (WebKitGTK 4.1, librsvg, libappindicator) and libxml2: `nix develop`
-  should give a working `bun run tauri dev` and `bun run check:all`. Mention it in the
-  README's build section (currently "planned") and in CONTRIBUTING.md once it exists.
-
 ## Features
 
 - **System notifications for long-running work**, such as a PDF or HTML export or an
