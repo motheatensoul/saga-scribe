@@ -5,19 +5,14 @@ when it is done (and record it in CHANGELOG.md if users notice).
 
 ## Interface
 
-- **Structure for toolbar and header actions.** The toolbar's actions (Open, Import, Save,
-  Export, template, lemma undo/redo, help, settings) and the editor header's icon buttons
-  are laid out one by one. Group them into containers (e.g. file actions, document
-  actions, application) with defined behaviour when the window is narrow (wrapping,
-  overflow menu), so that a new action has an obvious place and the layout holds up.
-  Document the groups in `docs/UI_STANDARDS.md`.
 - **Accessibility review** beyond Svelte's compile-time a11y checks (which pass):
   - keyboard: every action reachable and visible focus everywhere, including the word
     panel, entity browser, metadata editor, template manager and the export menu; focus
     moves into dialogs when they open and back when they close;
   - screen readers: try Orca (Linux), VoiceOver (macOS) and NVDA (Windows) on the main
     workflow (transcribe, open a word, lemmatize, export); icon-only buttons need
-    accessible names, not just `title`;
+    accessible names, not just `title` (done for the toolbar and editor header, not yet
+    elsewhere, e.g. the preview and the dialogs);
   - contrast: check both themes (caramellatte, coffee) against WCAG AA, e.g. disabled
     toolbar buttons and the faint marks for suggested lemmas;
   - zoom and font size: the layout at 200% zoom and with the largest editor font.

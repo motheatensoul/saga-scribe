@@ -39,6 +39,33 @@ Modals and floating panels (like Settings, Help, Error Log, Validation) should f
 *   **Header:** `border-b border-base-300` separator.
 *   **Close Button:** Always use `btn btn-ghost btn-sm btn-circle` with the `X` icon (`CloseButton`) from Lucide, size 16 or 18.
 
+### Toolbar and headers
+
+Actions are placed by what they act on, in groups (`role="group"` with an `aria-label`):
+
+*   **Toolbar** (`Toolbar.svelte`, across the window), left to right:
+    1.  **File**: Open, Import, Save, Export menu. Filled `btn-primary` buttons, except Export.
+    2.  **Document**: template select, template manager, Metadata, Validate.
+    3.  **Lemmatization**: lemma undo and redo.
+    4.  **Application** (pushed right with `ml-auto`): log, help, settings, then the file name
+        (truncated) and the unsaved-changes mark.
+*   **Pane headers** (editor, preview): only actions on that pane's content. The editor
+    header has text undo/redo, search, and the entity browser; the preview header switches views.
+
+A new action goes into the group whose scope it shares; a new kind of action gets a new group,
+not a button squeezed between groups.
+
+Narrow windows:
+
+*   Text labels are visually hidden below a breakpoint with `sr-only lg:not-sr-only` (or `xl:`,
+    `2xl:` for less important labels), so the button keeps its accessible name; give it a
+    `title` as well. Icon-only buttons always have an `aria-label`. Icons get `aria-hidden="true"`.
+*   Each group is a non-wrapping flex row; the toolbar itself wraps (`flex-wrap`), so groups
+    move to a second row whole, never button by button.
+*   Ghost buttons on the toolbar's `bg-neutral` use the toolbar's colours (`text-neutral-content`,
+    `hover:bg-neutral-content/15`, `disabled:text-neutral-content/40`): daisyUI's ghost colours
+    are meant for base backgrounds and are barely visible on neutral.
+
 ### Buttons
 
 *   **Primary Actions:** `btn btn-primary`

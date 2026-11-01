@@ -22,7 +22,7 @@
     import { wordNormalizedForm, wordsWithDiplomaticForm } from "$lib/utils/wordNorm";
     import { settings } from "$lib/stores/settings";
     import { stylesheetStore } from "$lib/stores/stylesheets";
-    import { errorStore, errorCounts } from "$lib/stores/errors";
+    import { errorStore } from "$lib/stores/errors";
     import { validationStore } from "$lib/stores/validation";
     import * as metadataStore from "$lib/stores/metadata.svelte";
     import { importedStore } from "$lib/stores/imported.svelte";
@@ -69,11 +69,6 @@
 
     //Icon imports
     import {
-        BookDashed,
-        ScrollText,
-        MessageCircleWarning,
-        FileCheck,
-        FileText,
         Undo,
         Redo,
         Search,
@@ -955,8 +950,12 @@
         onexportdict={handleExportDictionary}
         onexporthtml={handleExportHtml}
         onexportpdf={handleExportPdf}
+        ontemplates={() => (showTemplateManager = true)}
+        onmetadata={() => (showMetadataEditor = true)}
+        onvalidate={() => (showValidationPanel = true)}
         onundo={handleLemmaUndo}
         onredo={handleLemmaRedo}
+        onlogs={() => (showErrorPanel = true)}
         onsettings={() => (showSettings = true)}
         onhelp={() => (showHelp = true)}
     />
@@ -978,79 +977,46 @@
                                 </span>
                             {/if}
                         </div>
-                        <div class="flex gap-1">
+                        <!-- Only actions on the editor's text; document and
+                             application actions are in the toolbar -->
+                        <div class="flex items-center gap-1" role="group" aria-label="Editor">
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Undo (Ctrl+Z)"
+                                aria-label="Undo"
                                 onclick={() =>
                                     editorComponent?.triggerUndo()}
                             >
-                                <Undo class="size-3/4" />
+                                <Undo class="size-3/4" aria-hidden="true" />
                             </button>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Redo (Ctrl+Y)"
+                                aria-label="Redo"
                                 onclick={() =>
                                     editorComponent?.triggerRedo()}
                             >
-                                <Redo class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Search and Replace (Ctrl+F)"
-                                onclick={() =>
-                                    editorComponent?.triggerSearch()}
-                            >
-                                <Search class="size-3/4" />
+                                <Redo class="size-3/4" aria-hidden="true" />
                             </button>
                             <div
                                 class="divider divider-horizontal mx-0 h-4 self-center"
                             ></div>
                             <button
+                                class="btn btn-ghost btn-xs xl:btn-sm"
+                                title="Search and Replace (Ctrl+F)"
+                                aria-label="Search and replace"
+                                onclick={() =>
+                                    editorComponent?.triggerSearch()}
+                            >
+                                <Search class="size-3/4" aria-hidden="true" />
+                            </button>
+                            <button
                                 class="btn btn-ghost btn-xs xl:btn-sm text-xs xl:text-sm"
                                 title="Insert entity"
+                                aria-label="Insert entity"
                                 onclick={() => (showEntityBrowser = true)}
                             >
-                                ꝥ
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Manage templates"
-                                onclick={() => (showTemplateManager = true)}
-                            >
-                                <BookDashed class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Edit manuscript metadata"
-                                onclick={() => (showMetadataEditor = true)}
-                            >
-                                <FileText class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Validate XML"
-                                onclick={() => (showValidationPanel = true)}
-                            >
-                                <FileCheck class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                class:text-error={$errorCounts.error > 0}
-                                title="View logs"
-                                onclick={() => (showErrorPanel = true)}
-                            >
-                                {#if $errorCounts.error > 0}
-                                    <MessageCircleWarning
-                                        size="14"
-                                        color="var(--color-error)"
-                                    />
-                                {:else}
-                                    <ScrollText
-                                        class="size-3/4"
-                                        color="var(--color-success)"
-                                    />
-                                {/if}
+                                <span aria-hidden="true">ꝥ</span>
                             </button>
                         </div>
                     </div>

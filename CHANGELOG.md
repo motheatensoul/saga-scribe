@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **System notifications**: when an import or an HTML or PDF export finishes or fails while the window is in the background, the system shows a notification (the freedesktop notification service on Linux, including the Flatpak; toast notifications on Windows; Notification Center on macOS)
 - **Nix development environment**: `nix develop` provides bun, the pinned Rust toolchain and the system libraries for building
 
+### Changed
+
+- **Toolbar grouped by what the actions apply to**: file (Open, Import, Save, Export), document (template, template manager, **Metadata**, **Validate**), lemmatization (undo, redo) and application (log, help, settings). The template manager, metadata editor, validation and log moved there from the editor header, which now has only the actions on the text (undo, redo, search, entities). In a narrow window the toolbar shows icons only and wraps whole groups onto a second row
+
 ### Fixed
 
 - **Ctrl+Shift+Z in the editor did two things**: it redid a text change and undid a lemmatization. In the editor it now only redoes (on every platform); elsewhere it still undoes a lemmatization. Likewise **Ctrl+/** in the editor no longer also wrapped the selection in a note `^{…}`: it opens the help

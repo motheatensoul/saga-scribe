@@ -26,11 +26,15 @@ For installation, see the [README](../README.md#getting-started).
 
 The window is divided into three parts:
 
-- **Toolbar** (top): opening, importing, saving and exporting; the template in use; undo and
-  redo of lemmatization; help and settings.
+- **Toolbar** (top), in groups from left to right: the file (**Open**, **Import**, **Save**,
+  **Export**); the document (the template in use, the template manager, **Metadata** and
+  **Validate**); undo and redo of lemmatization; and, at the right, the application log,
+  help and settings, followed by the file's name. In a narrow window the buttons show only
+  their icons (hover over one for its name), and groups that don't fit move to a second
+  row.
 - **Editor** (left): the transcription, written in the shorthand described below. Its header
-  has buttons for undo and redo, search and replace, the entity browser (**ꝥ**), the
-  template manager, the metadata editor, XML validation and the application log.
+  has the buttons that act on the text: undo and redo, search and replace, and the entity
+  browser (**ꝥ**).
 - **Preview** (right): the compiled document, shown as reading text, through an XSLT
   stylesheet, or as XML.
 
@@ -130,7 +134,7 @@ the cursor.
 
 A template supplies the parts of the TEI document around the transcription (the header and
 the closing tags) and decides how the transcription is encoded. The template in use is
-chosen in the toolbar. Templates are managed with the template button in the editor header.
+chosen in the toolbar. Templates are managed with the template button next to it.
 
 Two templates are built in:
 
@@ -155,7 +159,7 @@ The default template for new projects is set in [Settings](#settings).
 
 ## Manuscript metadata
 
-The metadata editor (button in the editor header) records information about the edition
+The metadata editor (**Metadata** in the toolbar) records information about the edition
 and the manuscript, in collapsible sections:
 
 - **Title & Responsibility**: title, subtitle, author, editors (with ORCID) and other
@@ -376,7 +380,7 @@ Annotations are saved in the project. For imported TEI files, see
 
 ## Validation
 
-The validation button in the editor header checks the compiled document against a schema:
+**Validate** in the toolbar checks the compiled document against a schema:
 **TEI P5** (`tei_all`) or **MENOTA P5** (RelaxNG). Errors are listed with their line
 numbers where available.
 
@@ -493,7 +497,7 @@ margin or the keyboard:
 
 ## Logs and reporting problems
 
-The log button (at the right of the editor header) shows the application log: loading of
+The log button (at the right of the toolbar, before help and settings) shows the application log: loading of
 dictionaries and entities, compilation errors, and the results of imports and exports. It
 turns red when there are errors. Errors in the shorthand are also underlined in the editor.
 
