@@ -286,7 +286,8 @@ analysis that has not been confirmed for this occurrence are marked more faintly
 over a word shows its lemma and analysis.
 
 Lemmatization has its own undo and redo (toolbar, or **Ctrl+Shift+Z** / **Ctrl+Shift+Y**),
-separate from the editor's.
+separate from the editor's. In the editor, **Ctrl+Shift+Z** redoes a text change instead, so
+undo a lemma there with the toolbar's **Lemma Undo**.
 
 Lemmas are stored by word, and follow their words when text is inserted or deleted before
 them. If a word is edited slightly (for example to correct a typo, changing at most half
@@ -455,7 +456,7 @@ shortcuts and the shorthand.
 | ---------------- | ----------------------------- |
 | Ctrl+O           | Open project or shorthand file |
 | Ctrl+S           | Save project                  |
-| Ctrl+Shift+Z     | Undo lemmatization            |
+| Ctrl+Shift+Z     | Undo lemmatization (outside the editor) |
 | Ctrl+Shift+Y     | Redo lemmatization            |
 | F1 or Ctrl+/     | Help                          |
 | Escape           | Close dialog or panel         |
@@ -465,7 +466,7 @@ shortcuts and the shorthand.
 | Shortcut         | Action                                      |
 | ---------------- | ------------------------------------------- |
 | Ctrl+Z           | Undo                                        |
-| Ctrl+Y           | Redo                                        |
+| Ctrl+Y or Ctrl+Shift+Z | Redo                                  |
 | Ctrl+F           | Search and replace                          |
 | F3 or Ctrl+G     | Next match                                  |
 | Shift+F3 or Ctrl+Shift+G | Previous match                      |

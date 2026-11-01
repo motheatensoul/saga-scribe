@@ -30,10 +30,17 @@
     const shortcuts = [
         { keys: ["Ctrl", "S"], action: "Save project (.teis archive)" },
         { keys: ["Ctrl", "O"], action: "Open project or DSL file" },
-        { keys: ["Ctrl", "Shift", "Z"], action: "Undo lemmatization" },
+        {
+            keys: ["Ctrl", "Shift", "Z"],
+            action: "Undo lemmatization (outside the editor)",
+        },
         { keys: ["Ctrl", "Shift", "Y"], action: "Redo lemmatization" },
         { keys: ["Ctrl", "Z"], action: "Undo editor change" },
         { keys: ["Ctrl", "Y"], action: "Redo editor change" },
+        {
+            keys: ["Ctrl", "Shift", "Z"],
+            action: "Redo editor change (in the editor)",
+        },
         { keys: ["Ctrl", "F"], action: "Search and replace in editor" },
         { keys: ["F1"], action: "Open help" },
         { keys: ["Ctrl", "/"], action: "Open help (alternative)" },

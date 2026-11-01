@@ -21,7 +21,7 @@ the encoding recommendations of the [Medieval Nordic Text Archive (MENOTA)](http
 and was developed with Old Norse material in mind, though the shorthand itself is not
 specific to any language.
 
-**Status:** beta, version 0.7.0. Saga-Scribe is usable for full-length manuscripts, but
+**Status:** beta, version 0.8.0. Saga-Scribe is usable for full-length manuscripts, but
 features and the interface may still change between versions. Projects saved with older
 versions remain loadable. Please [report problems to the issue tracker](https://github.com/motheatensoul/saga-scribe/issues).
 

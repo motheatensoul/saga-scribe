@@ -100,10 +100,9 @@ const parserWithMetadata = parser.configure({
  * @lezer/lr and @codemirror/language's nested @lezer/lr dependency
  */
 export const teiDslLanguage = LRLanguage.define({
+  // No commentTokens: `^{…}` is a note, not a comment, and CodeMirror's comment
+  // toggle would take Ctrl+/ (Help) in the editor.
   parser: parserWithMetadata as any,
-  languageData: {
-    commentTokens: { block: { open: "^{", close: "}" } },
-  },
 });
 
 /**

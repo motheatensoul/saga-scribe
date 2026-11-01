@@ -3,15 +3,6 @@
 Known problems and planned work that isn't scheduled for a version yet. Remove an entry
 when it is done (and record it in CHANGELOG.md if users notice).
 
-## Bugs
-
-- **Ctrl+Shift+Z in the editor does two things.** CodeMirror's history keymap binds it to
-  redo, and the window's shortcut handler (`handleKeydown` in `src/routes/+page.svelte`)
-  binds it to "undo lemmatization" without checking whether the editor already handled the
-  key (`event.defaultPrevented`). Pressed in the editor, it redoes an editor change *and*
-  undoes a lemma. Decide which one owns the shortcut there (and likewise Ctrl+Shift+Y),
-  then update the Help dialog and `docs/user-guide.md`.
-
 ## Development
 
 - **Nix flake for the development environment**, so that building doesn't depend on one

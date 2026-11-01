@@ -5,6 +5,12 @@ All notable changes to Saga-Scribe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - Unreleased
+
+### Fixed
+
+- **Ctrl+Shift+Z in the editor did two things**: it redid a text change and undid a lemmatization. In the editor it now only redoes (on every platform); elsewhere it still undoes a lemmatization. Likewise **Ctrl+/** in the editor no longer also wrapped the selection in a note `^{…}`: it opens the help
+
 ## [0.7.0] - 2026-10-31
 
 ### Added

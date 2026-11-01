@@ -863,6 +863,10 @@
 
     // Keyboard shortcuts
     function handleKeydown(event: KeyboardEvent) {
+        // A key the editor (or a dialog) already handled is theirs: in the editor,
+        // Ctrl+Shift+Z redoes a text change rather than undoing a lemma.
+        if (event.defaultPrevented) return;
+
         // Escape: Close any open modal (a11y requirement)
         if (event.key === "Escape") {
             if (showLemmatizer) {
