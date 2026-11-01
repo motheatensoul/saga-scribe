@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/motheatensoul/saga-scribe/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/motheatensoul/saga-scribe"></a>
-  <a href="https://github.com/motheatensoul/saga-scribe/actions/workflows/test.yml"><img alt="Tests" src="https://github.com/motheatensoul/saga-scribe/actions/workflows/test.yml/badge.svg"></a>
+  <a href="https://github.com/motheatensoul/saga-scribe/actions/workflows/release.yml"><img alt="Release" src="https://github.com/motheatensoul/saga-scribe/actions/workflows/release.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/github/license/motheatensoul/saga-scribe"></a>
 </p>
 
