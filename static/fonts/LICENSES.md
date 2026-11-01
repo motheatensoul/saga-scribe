@@ -6,7 +6,7 @@ Junicode is a Unicode font for medievalists, designed by Peter S. Baker.
 
 **License:** SIL Open Font License, Version 1.1 (OFL-1.1)
 
-**Copyright:** Copyright (c) 2010-2024 Peter S. Baker
+**Copyright:** Copyright 2025 by Peter S. Baker
 
 **Source:** https://github.com/psb1558/Junicode-font
 
@@ -17,8 +17,8 @@ Junicode is a Unicode font for medievalists, designed by Peter S. Baker.
 - The font cannot be sold by itself, but can be bundled with software
 - The font is provided "as-is" without warranty
 
-For the full license text, see: https://scripts.sil.org/OFL
+The full licence text, as distributed with Junicode, is in [OFL.txt](OFL.txt).
 
 ---
 
-**Note:** Font files (Junicode.woff2, Junicode.ttf, etc.) need to be downloaded from the official source and placed in this directory.
+The bundled files are `Junicode.woff2` and `JunicodeVF-Italic.woff2`.

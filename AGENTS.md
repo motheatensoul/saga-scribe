@@ -22,18 +22,34 @@
   - *Critical:* When running cargo commands via the Bash tool, avoid `cd src-tauri && cargo ...`. Use `cd src-tauri; cargo ...` or `bash -c "cd src-tauri && cargo ..."` to avoid exit code 127 errors.
 
 ### Full Check (Required Before PRs)
-- **Verify everything:** `bun run check:all` (runs both `svelte-check` and `cargo clippy`)
+- **Verify everything:** `bun run check:all` (runs `check:versions`, `svelte-check` and `cargo clippy`)
 - **Always use this command** before committing or creating PRs. Both frontend and Rust clippy checks must pass for merging.
 
 ### Versioning (SemVer)
 The project follows [Semantic Versioning](https://semver.org/); while in 0.x, a **minor** bump (0.5 → 0.6) covers new features and breaking changes, a **patch** bump (0.6.0 → 0.6.1) covers fixes only.
-- **One version, four places:** `package.json`, `src-tauri/Cargo.toml` (then `cargo update -p saga-scribe` for `Cargo.lock`), `src-tauri/tauri.conf.json`, and the version line in `README.md`. Keep them identical.
+- **One version everywhere:** `package.json`, `src-tauri/Cargo.toml` (then `cargo update -p saga-scribe` for `Cargo.lock`), `src-tauri/tauri.conf.json`, the status line in `README.md` ("version X.Y.Z") and the newest heading in `CHANGELOG.md` (`## [X.Y.Z] - Unreleased` until release). `bun run check:versions` (`scripts/check-versions.ts`, part of `check:all`, run on every PR) checks all of these, plus the Flatpak metainfo and `SECURITY.md` below. When a bump adds a new place the version is written, add it to the script.
 - **Bump on the first change after a release:** once `vX.Y.Z` is tagged, the next commit that isn't purely a fix bumps the minor version; a fixes-only follow-up bumps the patch. Check `git tag` / `gh release list` before starting work.
 - **Branch names follow the target version:** work towards 0.6.0 happens on `dev/0.6.0` (or `dev/0.6.0-<topic>`).
 - **Third-party licences:** after adding, removing or upgrading dependencies, run `bun run licenses` to regenerate the tables in `THIRD_PARTY_LICENSES.md`; describe new bundled fonts or data there by hand.
 - **Changelog:** record user-visible changes under the unreleased version in `CHANGELOG.md` (Keep a Changelog format) as they land.
-- **At release time:** set the release date in `CHANGELOG.md` and add a `<release>` entry to `flatpak/app.sagascribe.Sagascribe.metainfo.xml`.
+- **At release time**, in the same commit:
+  - set the release date in `CHANGELOG.md` (`## [X.Y.Z] - YYYY-MM-DD`);
+  - add a `<release version="X.Y.Z" date="YYYY-MM-DD">` entry, with the same date and a short plain-language summary, at the top of `<releases>` in `flatpak/app.sagascribe.Sagascribe.metainfo.xml` (Flatpak and software centres show the version and notes from there; `flatpak/app.sagascribe.Sagascribe.yml` itself has no version);
+  - on a minor release, move the supported version in `SECURITY.md` to `X.Y.x`.
+  The release workflow refuses to publish unless `check-versions.ts --release vX.Y.Z` passes.
 - **Project file format** (`.teis`, see `src-tauri/src/commands/file.rs`) is versioned separately; bump it whenever the archive contents change, and keep older versions loadable.
+
+### Documentation
+Docs drift silently, so update them in the same change as the code:
+- **`docs/user-guide.md`:** whenever something users see or do changes (a dialog, a button's place or label, a shortcut, a menu, an export, a setting, shorthand syntax). Name UI elements by their labels in the app. It is written for textual scholars: plain, neutral prose, no marketing.
+- **`README.md`:** when a feature it describes, the install files, or the build prerequisites change (CI's `apt-get`/`brew` lines are the source of truth for the latter). Same tone as the user guide.
+- **`CONTRIBUTING.md`:** when the project layout or the contributor workflow changes; it points here for conventions rather than repeating them.
+- **`SECURITY.md`:** when a protection it lists changes (sanitizing, parsing, CSP, file writing), and the supported version (see Versioning).
+- **`docs/UI_STANDARDS.md`:** when UI conventions or libraries change; update its "Verified" date when you check it.
+- **`flatpak/…metainfo.xml` `<description>`:** when the feature summary changes. Run `appstreamcli validate --no-net` on it if available.
+- **Help dialog** (`src/lib/components/HelpDialog.svelte`): its shortcut and syntax lists must match the keymaps and the shorthand, like the user guide.
+- When touching a doc, check it against the code rather than only appending to it; remove what no longer exists.
+- **`TODO.md`:** known bugs and planned work without a version yet. Add to it when you find a problem you don't fix in the current change; remove entries when they are done.
 
 ## 2. Code Style Guidelines
 

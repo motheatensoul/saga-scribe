@@ -28,7 +28,7 @@ Licence: MIT.
 
 - **Files:** `static/fonts/Junicode.woff2`, `static/fonts/JunicodeVF-Italic.woff2`
 - **Author:** Peter S. Baker
-- **Licence:** SIL Open Font License 1.1 (see [static/fonts/LICENSES.md](static/fonts/LICENSES.md))
+- **Licence:** SIL Open Font License 1.1 ([static/fonts/OFL.txt](static/fonts/OFL.txt); see also [static/fonts/LICENSES.md](static/fonts/LICENSES.md))
 - **Source:** https://github.com/psb1558/Junicode-font
 
 ## Data

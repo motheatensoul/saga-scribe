@@ -1,126 +1,75 @@
 # Contributing to Saga-Scribe
 
-Thank you for your interest in contributing to Saga-Scribe! This document provides guidelines and instructions for setting up your development environment and submitting contributions.
+Thank you for your interest in contributing to Saga-Scribe. Bug reports, feature requests
+and documentation fixes are as welcome as code: please use the
+[issue templates](https://github.com/motheatensoul/saga-scribe/issues/new/choose).
+Security problems are reported privately, as described in [SECURITY.md](SECURITY.md).
 
-## Getting Started
+## Setting up
 
-### Prerequisites
+The prerequisites (bun, Rust, the system libraries Tauri and libxml2 need) and the build
+commands are in the README under [Building from source](README.md#building-from-source).
+In short:
 
-- **Package Manager:** [bun](https://bun.sh/) (Required)
-- **Rust Toolchain:** Stable release
-- **Tauri CLI:** v2.9+
+```bash
+git clone https://github.com/motheatensoul/saga-scribe
+cd saga-scribe
+bun install
+bun run tauri dev
+```
 
-### Build & Run
+The Rust toolchain is pinned in `rust-toolchain.toml`; rustup installs it automatically.
 
-1.  **Clone the repository:**
-
-    ```bash
-    git clone https://github.com/motheatensoul/saga-scribe
-    cd saga-scribe
-    ```
-
-2.  **Install dependencies:**
-
-    ```bash
-    bun install
-    ```
-
-3.  **Run Development Server:**
-
-    ```bash
-    bun run tauri dev
-    ```
-
-4.  **Build for Production:**
-    ```bash
-    bun run tauri build
-    ```
-
-## Project Structure
+## Where things are
 
 ```
 saga-scribe/
-├── src/                          # Frontend (Svelte 5 + TypeScript)
+├── src/                      # Frontend (Svelte 5 + TypeScript)
 │   ├── lib/
-│   │   ├── components/           # UI Components
-│   │   ├── parser/               # DSL syntax highlighting (Lezer)
-│   │   ├── stores/               # Svelte stores (Runes)
-│   │   ├── tauri.ts              # IPC Bridge
-│   │   └── types/                # TypeScript definitions
-│   └── routes/+page.svelte       # Main Entry
-├── src-tauri/                    # Backend (Rust)
-│   ├── src/
-│   │   ├── commands/             # Tauri Commands
-│   │   ├── dictionary/           # Dictionary modules (ONP, etc.)
-│   │   ├── entities/             # Entity registry
-│   │   ├── importer/             # Import logic (TEI, text)
-│   │   ├── normalizer/           # MENOTA Normalization
-│   │   ├── parser/               # DSL Compiler (Lexer, AST)
-│   │   ├── validator/            # Validation logic
-│   │   └── lib.rs                # Lib entry point
-│   └── tauri.conf.json
-└── static/                       # Assets (Fonts, JSON dictionaries)
+│   │   ├── components/       # UI components
+│   │   ├── editor/           # Editor support (theme, edit history, typing)
+│   │   ├── parser/           # Editor highlighting grammar (Lezer)
+│   │   ├── rendered/         # Rendered-text preview
+│   │   ├── stores/           # Svelte stores
+│   │   ├── utils/            # XSLT, export, PDF pagination, …
+│   │   └── tauri.ts          # Calls into the backend
+│   └── routes/               # Main window and the print window
+├── src-tauri/src/            # Backend (Rust)
+│   ├── parser/               # Shorthand compiler (lexer, AST, word tokenizer)
+│   ├── importer/             # TEI-XML and text import, round-trip patching
+│   ├── commands/             # Tauri commands
+│   ├── annotations/, metadata/, dictionary/, entities/, normalizer/,
+│   │   settings/, stylesheet/, template/, validator/
+│   └── identity.rs           # Which word is which across edits
+├── static/                   # Fonts, entity and dictionary data, schemas, XSLT
+├── docs/                     # User guide, UI standards
+├── flatpak/                  # Flatpak manifest and AppStream metadata
+└── tests/fixtures/           # Shared test inputs (e.g. the shorthand corpus)
 ```
 
-## Development Workflow
+## Making changes
 
-### Frontend (Svelte/TypeScript)
+[AGENTS.md](AGENTS.md) is the reference for conventions, for human contributors as much as
+for AI agents: code style, accessibility, the async patterns that keep large manuscripts
+responsive, the round-trip guarantees for imported files, and how releases and versions
+work. [docs/UI_STANDARDS.md](docs/UI_STANDARDS.md) describes the look of the interface.
 
-- **Install:** `bun install`
-- **Lint/Check:** `bun run check` (Runs `svelte-check`; must show 0 warnings)
-- **Format:** 4 spaces indentation
-
-### Backend (Rust)
-
-_Run these commands inside `src-tauri/` or use the provided wrapper scripts._
-
-- **Lint:** `cd src-tauri; cargo clippy -- -D warnings` (or `bun run check:rust`)
-- **Test:** `cd src-tauri; cargo test` (or `bun run test:rust`)
-
-### Pull Requests
-
-Before submitting a PR, you **MUST** verify everything passes:
+Before opening a pull request:
 
 ```bash
-bun run check:all
+bun run test        # frontend (Vitest) and Rust tests
+bun run check:all   # versions, svelte-check (0 warnings) and cargo clippy
 ```
 
-This ensures both Svelte type checks and Rust clippy lints pass.
-
-## Code Style Guidelines
-
-### General
-
-- **Conventions:** Adhere strictly to existing conventions. Analyze surrounding code first.
-- **Dependencies:** Keep external dependencies to an absolute minimum.
-
-### Frontend (Svelte 5 + TypeScript)
-
-- **Framework:** Svelte 5 with Runes (`$props`, `$state`, `$derived`).
-- **Components:** Use `lang="ts"`. Define props with `let { prop }: { prop: Type } = $props();`.
-- **Formatting:** 4 spaces indentation.
-- **Naming:** PascalCase for components (`Editor.svelte`).
-- **Accessibility:** All components MUST pass a11y checks. Use semantic HTML.
-
-### Backend (Rust)
-
-- **Style:** Standard Rust idioms (`rustfmt`). 4 spaces indentation.
-- **Error Handling:** Propagate errors using `Result`. Avoid `unwrap()`/`expect()` in production.
-- **Async:** Use `#[tauri::command(async)]` and `spawn_blocking()` for heavy CPU operations.
-
-## Architecture Notes
-
-### Async Processing
-
-Large manuscripts can have 50k+ tokens.
-
-- **Frontend:** Use chunked async processing with `yieldToMain` to keep UI responsive.
-- **Backend:** Offload heavy work to `spawn_blocking`.
-
-### DSL Syntax
-
-See `README.md` or `docs/user-guide.md` for DSL syntax details.
+- Record user-visible changes in [CHANGELOG.md](CHANGELOG.md), under the unreleased version.
+- Update the [user guide](docs/user-guide.md) when you change what users see or do, and the
+  [README](README.md) when you change a feature it describes or how the app is built.
+- If you change the shorthand syntax, change the editor's grammar with it and regenerate
+  the shared corpus (see "Key Files" and "Testing" in AGENTS.md).
+- Branches are named after the version they work towards, e.g. `dev/0.8.0` or
+  `dev/0.8.0-<topic>`.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [GPL-v3-or-later](LICENSE).
+By contributing, you agree that your contributions will be licensed under the
+[GPL-3.0-or-later](LICENSE).

@@ -1,186 +1,91 @@
 # Saga-Scribe User Guide
 
-This guide explains how to use Saga-Scribe for manuscript transcription.
+This guide describes how to transcribe, annotate and export a manuscript with Saga-Scribe.
+For installation, see the [README](../README.md#getting-started).
 
-## Getting Started
+## Contents
 
-Saga-Scribe provides a split-pane interface:
-- **Left pane**: DSL Editor for entering your transcription
-- **Right pane**: Preview showing rendered text or raw XML output
+- [The window](#the-window)
+- [Projects and files](#projects-and-files)
+- [Transcription shorthand](#transcription-shorthand)
+- [Templates](#templates)
+- [Manuscript metadata](#manuscript-metadata)
+- [MENOTA transcription levels](#menota-transcription-levels)
+- [Special characters](#special-characters)
+- [Preview](#preview)
+- [Lemmatization](#lemmatization)
+- [Annotations](#annotations)
+- [Validation](#validation)
+- [Importing existing files](#importing-existing-files)
+- [Exporting](#exporting)
+- [Settings](#settings)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Logs and reporting problems](#logs-and-reporting-problems)
 
-### Basic Workflow
+## The window
 
-1. Select a template from the toolbar dropdown
-2. Type your transcription using the DSL syntax
-3. Click words in the rendered view to add lemma annotations
-4. Save your project with Ctrl+S
-5. Export the TEI-XML when ready for publication
+The window is divided into three parts:
 
-### Project Files
+- **Toolbar** (top): opening, importing, saving and exporting; the template in use; undo and
+  redo of lemmatization; help and settings.
+- **Editor** (left): the transcription, written in the shorthand described below. Its header
+  has buttons for undo and redo, search and replace, the entity browser (**ꝥ**), the
+  template manager, the metadata editor, XML validation and the application log.
+- **Preview** (right): the compiled document, shown as reading text, through an XSLT
+  stylesheet, or as XML.
 
-Saga-Scribe uses `.teis` project archives (ZIP format) that bundle:
-- Your DSL source text
-- Compiled TEI-XML output
-- Per-word lemma confirmations
-- Project metadata
+A typical session:
 
-This means you never lose your lemmatization work when saving and reopening projects.
+1. Choose a template in the toolbar (see [Templates](#templates)).
+2. Transcribe in the editor. The preview is updated after each pause in typing.
+3. Click words in the preview to lemmatize or annotate them.
+4. Save the project (**Ctrl+S**).
+5. Export TEI-XML, HTML or PDF.
 
-## Importing Files
+## Projects and files
 
-Saga-Scribe can import transcriptions from other formats, converting them to DSL for editing.
+Work is saved as a project file with the extension `.teis`. It is a ZIP archive containing:
 
-### Import from TEI-XML
+- the transcription in shorthand (`source.dsl`);
+- the compiled TEI-XML (`output.xml`);
+- confirmed lemmas and analyses, word by word;
+- annotations;
+- manuscript metadata;
+- for imported TEI files, the original XML, so that it can be written back unchanged.
 
-1. Click **File > Import** or use the import button in the toolbar
-2. Select a `.xml` file containing TEI-encoded text
-3. The importer extracts text content from the `<body>` element
-4. Line breaks (`<lb/>`) are converted to `//` syntax
-5. Page breaks (`<pb/>`) are converted to `///` syntax with folio numbers
-6. Each paragraph (`<p>`) starts with `.p`. Add a `.p` to split a paragraph, remove one to join two. A split has to fall between elements such as sentences (`<s>`), not inside one
+**Open** (**Ctrl+O**) opens a project, or a plain shorthand file (`.dsl` or `.txt`).
+**Save** (**Ctrl+S**) saves the project; the first save asks for a location. Projects saved
+with older versions of Saga-Scribe can still be opened.
 
-**Note**: Complex TEI markup is simplified during import. Review the result and add DSL markup as needed.
+## Transcription shorthand
 
-### Import from Plain Text
+The shorthand is plain text with inline markers. Each marker corresponds to a TEI element;
+the compiler adds the surrounding structure, including the division into words.
 
-1. Click **File > Import** or use the import button in the toolbar
-2. Select a `.txt` file
-3. The text is imported directly into the editor
-4. Add DSL markup manually for line breaks, page breaks, and editorial marks
-
-### Import Behavior
-
-- Importing replaces the current editor content
-- A confirmation dialog appears if you have unsaved changes
-- Session lemmatization data is cleared on import (start fresh with the new text)
-
-## Settings
-
-Click the ⚙️ (gear) icon in the toolbar to open the Settings dialog.
-
-### Appearance Settings
-
-- **Theme**: Choose between Light, Dark, or System color schemes
-  - **System**: Automatically follows your operating system's theme preference
-    - On Linux: Uses xdg-desktop-portal (works with GNOME, KDE, XFCE, etc.)
-    - On macOS/Windows: Uses native system APIs
-  - **Light**: Always use the light theme (caramellatte)
-  - **Dark**: Always use the dark theme (coffee)
-- **Editor Font Size**: Adjust the font size in the DSL editor (10-24px)
-
-### Editor Settings
-
-- **Auto-preview**: Toggle automatic preview updates as you type
-- **Preview Delay**: Set the debounce delay (100-2000ms) before preview updates
-  - Only visible when auto-preview is enabled
-  - Lower values update faster but may impact performance on large documents
-
-### Default Template
-
-- **Active Template**: Select which template to use by default for new projects
-- Changes to the active template take effect immediately
-
-Settings are automatically saved when you click "Save Changes". Click "Reset to Defaults" to restore all settings to their original values.
-
-## Help System
-
-Press **F1** or click the **?** button in the toolbar to open the Help dialog. You can also use **Ctrl+/** (or **Cmd+/** on macOS).
-
-## Template Editor
-
-Click the **⚙** (gear) icon in the editor header to open the Template Editor. Templates define the TEI-XML structure that wraps your transcription.
-
-### Built-in Templates
-
-Saga-Scribe includes two built-in templates:
-
-- **TEI P5**: Standard TEI P5 document structure with basic header
-- **Menota**: MENOTA handbook compatible structure with multi-level transcription support
-
-Built-in templates cannot be modified or deleted, but you can clone them to create custom versions.
-
-### Creating a Custom Template
-
-1. Click **+ New Template** in the Template Editor
-2. Fill in the template details:
-   - **Name**: Display name for the template
-   - **Description**: Brief explanation of the template's purpose
-   - **Header XML**: TEI-XML content before your transcription (up to and including `<body>`)
-   - **Footer XML**: TEI-XML content after your transcription (closing tags)
-3. Configure options:
-   - **Word wrapping**: Wrap words in `<w>` tags
-   - **Auto line numbers**: Add `n="..."` attributes to `<lb/>` elements
-   - **Multi-level (MENOTA)**: Enable facs/dipl/norm transcription levels
-4. Click **Create Template**
-
-### Editing Templates
-
-- Click the **✏️** icon to edit a custom template
-- Click the **🔧** icon on a built-in template to clone and customize it
-- Click the **📋** icon to duplicate any template
-- Click the **🗑️** icon to delete a custom template
-
-### Template Options Explained
-
-| Option | Effect |
-|--------|--------|
-| Word wrapping | Each word is wrapped in `<w>` tags, punctuation in `<pc>` tags |
-| Auto line numbers | Line breaks (`//`) automatically get sequential numbers |
-| Multi-level | Words contain `<me:facs>`, `<me:dipl>`, `<me:norm>` child elements |
-
-
-The Help dialog contains three tabs:
-
-### Keyboard Shortcuts
-
-A complete reference of all keyboard shortcuts for:
-- **Application shortcuts**: Save, Open, Undo/Redo lemmatization
-- **Editor shortcuts**: Standard CodeMirror editing commands
-
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+S | Save project |
-| Ctrl+O | Open project |
-| Ctrl+Shift+Z | Undo lemmatization |
-| Ctrl+Shift+Y | Redo lemmatization |
-| F1 | Open help |
-| Escape | Close dialog |
-
-### DSL Syntax
-
-A quick reference table showing all DSL syntax elements and their TEI-XML output. Useful when you need to look up the correct notation for a specific element.
-
-### About
-
-Version information, feature summary, and license details.
-
-## DSL Syntax
-
-The Domain-Specific Language (DSL) uses short notation that compiles to TEI-XML.
-
-### Line and Page Breaks
+### Line and page breaks
 
 ```
-//           Line break (auto-numbered if enabled)
-//5          Line break with explicit number
-///1v        Page break with folio number
-.p           New paragraph (on its own, between spaces: "word.p" stays text)
+//           Line break (numbered automatically if the template says so)
+//5          Line break with an explicit number
+///1v        Page break, with the folio or page number
+.p           New paragraph
 ```
 
-A paragraph can start anywhere, also mid-line: `//4 ſina . .p þer vitið …`. The
-pilcrow ¶ itself is a character the scribe wrote (`:para:`), not a paragraph break.
+`.p` has to stand on its own between spaces (`word.p` is ordinary text). A paragraph can
+begin anywhere, also mid-line: `//4 ſina . .p þer vitið …`. The pilcrow `¶` is a character
+written by the scribe (`:para:`), not a paragraph break.
 
-### Editorial Marks
+### Editorial marks
 
 ```
-[...]        Gap/lacuna (illegible text)
-[...3]       Gap of approximately 3 characters
-[...3<ab>]   Gap with supplied reading
-<abc>        Supplied/reconstructed text
--{abc}-      Deleted text
-+{abc}+      Added text
+[...]        Gap (illegible or lost text)
+[...3]       Gap of about three characters
+[...3<ab>]   Gap with supplied text
+<abc>        Supplied text
+-{abc}-      Deletion
++{abc}+      Addition
 ?{abc}?      Unclear reading
-^{note}      Marginal note
+^{note}      Note
 ```
 
 ### Abbreviations
@@ -189,132 +94,256 @@ pilcrow ¶ itself is a character the scribe wrote (`:para:`), not a paragraph br
 .abbr[abbreviation]{expansion}
 ```
 
-Example: `.abbr[d.]{deus}` produces an abbreviation mark for "d." expanding to "deus".
+For example, `.abbr[kgs]{konungs}` is encoded as
+`<choice><abbr>kgs</abbr><expan>konungs</expan></choice>`.
 
-### Word Boundaries
+### Word division
 
-```
-|            Explicit word boundary
-upp~haf      One word written as two (one <w>, "upp haf" in facs/dipl, "upphaf" in norm)
-~//5         Word continues across line break (to line 5): hel~//5lo
-~///1v       Word continues across page break
-```
-
-Punctuation written as an entity is a separate `<pc>` when it stands alone
-between spaces (`þa :middot: þo`); glued to letters it is part of the word
-(`:middot:Q:middot:` is the numeral ·Q·). A lone letter entity such as
-`:inodot:` (the word í) stays a word.
-
-### Special Characters
-
-Use entity references for medieval characters:
+Words are separated by spaces. The following markers override that:
 
 ```
-:rrot:       Rotunda r
-:thorn:      Thorn (þ)
-:eth:        Eth (ð)
-:aelig:      Ligature ae (æ)
+|            Word boundary where there is no space
+upp~haf      One word written as two (one <w>; "upp haf" in facs/dipl, "upphaf" in norm)
+hel~//5lo    Word continuing across a line break (here, to line 5)
+hel~///1vlo  Word continuing across a page break
 ```
 
-## Entity Browser
+Punctuation written as an entity is a separate `<pc>` element when it stands alone between
+spaces (`þa :middot: þo`). Attached to letters, it is part of the word (`:middot:Q:middot:`
+is the numeral ·Q·). A single letter entity such as `:inodot:` (the word í) is a word.
 
-Click the "ꝥ" button in the editor header to open the Entity Browser.
+### Special characters
 
-### Searching Entities
+Characters outside the ordinary alphabet are written as MENOTA/MUFI entities between colons:
 
-- Type in the search box to filter by name or description
-- Use the category dropdown to browse by type
-- Click an entity to select it
-- Click "+" to insert the entity at cursor position
+```
+:rrot:       r rotunda
+:thorn:      þ
+:eth:        ð
+:aelig:      æ
+```
 
-### Custom Entity Mappings
+The [entity browser](#special-characters) lists all available entities and inserts them at
+the cursor.
 
-When you select an entity, you can customize how it normalizes:
+## Templates
 
-1. Select an entity from the list
-2. Edit the "Translation" field to set the diplomatic normalization
-3. Press Enter or click away to save
-4. Click "Reset" to restore the default mapping
+A template supplies the parts of the TEI document around the transcription (the header and
+the closing tags) and decides how the transcription is encoded. The template in use is
+chosen in the toolbar. Templates are managed with the template button in the editor header.
 
-Custom mappings appear with an "custom" badge and affect how entities render in the diplomatic and normalized levels.
+Two templates are built in:
 
-## Lemmatizer
+- **TEI P5**: a TEI P5 document with a minimal header.
+- **Menota**: a document following the MENOTA handbook, with the MENOTA namespace and
+  entity declarations, and the three transcription levels enabled.
 
-Click any word in the rendered text view to open the Lemmatizer.
+Each template has three options:
 
-### Adding Lemma Mappings
+| Option            | Effect                                                                      |
+| ----------------- | --------------------------------------------------------------------------- |
+| Word wrapping     | Each word is wrapped in `<w>`, punctuation in `<pc>`. Required for lemmatization and annotations |
+| Auto line numbers | Line breaks without a number (`//`) are numbered consecutively              |
+| Multi-level (MENOTA) | Each word contains `<me:facs>`, `<me:dipl>` and `<me:norm>` (see [below](#menota-transcription-levels)) |
 
-1. Click a word in the rendered text
-2. Search for the lemma in the ONP dictionary
-3. Select the correct headword from results
-4. Select the word class (noun, verb, adjective, etc.)
-5. Fill in the relevant morphological fields that appear
-6. Click "Save"
+To create a template, click **+ New Template**, enter a name and description, the XML before
+the transcription (up to and including `<body>`) and after it, and choose the options.
+Built-in templates cannot be changed; their edit button creates a copy that can be. Any
+template can be duplicated, and your own templates can be edited and deleted.
 
-### Editing Existing Mappings
+The default template for new projects is set in [Settings](#settings).
 
-When you click an existing mapping from the list:
-- The form fields populate with the saved values
-- You can modify the word class, morphology, or normalized form
-- Click "Save" to update the mapping
+## Manuscript metadata
 
-### Viewing Lemma Info
+The metadata editor (button in the editor header) records information about the edition
+and the manuscript, in collapsible sections:
 
-- **Confirmed words** (green border): This specific word instance has a confirmed lemma
-- **Suggested words** (faded border): The dictionary knows this wordform but it hasn't been confirmed for this instance
-- Hover over a word to see its lemma and analysis in the tooltip
+- **Title & Responsibility**: title, subtitle, author, editors (with ORCID) and other
+  contributors with their roles.
+- **Publication Information**: publisher, place and date, identifiers (DOI, URN, URL) and
+  licence.
+- **Manuscript Identifier**: country, city, repository, collection, shelfmark and other
+  identifiers.
+- **Manuscript Contents**: summary and main language.
+- **Physical Description**: material, extent, foliation, layout, condition and scribal hands.
+- **History**: date and place of origin, provenance and acquisition.
+- **Languages Used**: all languages occurring in the transcription.
 
-### MENOTA Morphological Analysis Format (me:msa)
+The metadata is written into the document's `<teiHeader>` and saved with the project. When a
+TEI file is imported, its header is read into the metadata editor.
 
-The Lemmatizer uses the MENOTA me:msa format for morphological tagging. Analyses are stored as space-separated name tokens.
+## MENOTA transcription levels
 
-#### Word Classes
+With the **Multi-level** option, each word is given in three forms, as the MENOTA handbook
+describes:
 
-| Code | Meaning |
-|------|---------|
-| xNC | Common noun |
-| xNP | Proper noun |
-| xAJ | Adjective |
-| xVB | Verb |
-| xPE | Personal pronoun |
-| xPR | Reflexive pronoun |
-| xPQ | Interrogative pronoun |
-| xPI | Indefinite pronoun |
-| xDD | Demonstrative determiner |
-| xDQ | Quantifying determiner |
-| xDP | Possessive determiner |
-| xAV | Adverb |
-| xAQ | Interrogative adverb |
-| xAP | Preposition |
-| xCC | Coordinating conjunction |
-| xCS | Subordinating conjunction |
-| xIT | Interjection |
-| xIM | Infinitive marker |
+- **Facsimile** (`me:facs`): close to the manuscript, with special characters as entities.
+- **Diplomatic** (`me:dipl`): special characters resolved to their usual forms.
+- **Normalized** (`me:norm`): the standardized form, set during
+  [lemmatization](#lemmatization).
 
-#### Morphological Categories
+For example, `:rrot:egn` becomes
 
-| Category | Values |
-|----------|--------|
-| Case | cN (nom), cG (gen), cD (dat), cA (acc) |
-| Number | nS (singular), nD (dual), nP (plural) |
-| Gender | gM (masc), gF (fem), gN (neut) |
-| Definiteness | sI (indefinite), sD (definite) |
-| Grade | rP (positive), rC (comparative), rS (superlative) |
-| Person | p1, p2, p3 |
-| Tense | tPS (present), tPT (preterite) |
-| Mood | mIN (indicative), mSU (subjunctive), mIP (imperative) |
-| Voice | vA (active), vR (reflexive/middle) |
-| Finiteness | fF (finite), fP (participle), fS (supine), fI (infinitive) |
+```xml
+<w>
+  <me:facs>&rrot;egn</me:facs>
+  <me:dipl>regn</me:dipl>
+  <me:norm>regn</me:norm>
+</w>
+```
 
-#### Examples
+How an entity appears on the diplomatic level is set in the entity browser (see
+[Diplomatic forms](#diplomatic-forms)).
 
-- `xNC cN nS gF` = common noun, nominative, singular, feminine
-- `xVB fF p3 nS tPT mIN vA` = verb, finite, 3rd person, singular, preterite, indicative, active
-- `xAJ rC cA nP gM` = adjective, comparative, accusative, plural, masculine
+## Special characters
 
-### TEI Output
+The entity browser (**ꝥ** in the editor header) lists the roughly 2,000 MENOTA and MUFI
+characters, displayed in the Junicode font.
 
-When you save lemma mappings, the TEI output will include `lemma` and `me:msa` attributes on word elements:
+- Search by name or description, or choose a category.
+- Click **Insert entity** to insert `:name:` at the cursor.
+
+### Diplomatic forms
+
+Selecting an entity shows its **Translation**: the form it takes on the diplomatic and
+normalized levels. Change it and press Enter to save; **Reset to default** restores the
+original. Changed entities are marked "custom".
+
+### Your own entities
+
+Characters that are not in the MENOTA/MUFI set can be added with the **+** button in the
+browser's header: give the name used in the shorthand (without colons), the character, and
+optionally its Unicode code point, a category and a description. Your own entities can be
+edited and deleted from the list.
+
+Your own entities and diplomatic forms are stored with the application, not in projects:
+they apply to all your projects, and are not included when a project is given to someone
+else. Changing an entity affects every document compiled afterwards; deleting one leaves
+`:name:` in the transcription without a definition.
+
+## Preview
+
+The buttons in the preview header switch between three views.
+
+### Text
+
+The reading text, with clickable words for [lemmatization](#lemmatization) and
+[annotations](#annotations). Manuscripts with page breaks are shown one page at a time;
+use the navigation bar (first, previous, next, last, or the page list) to move between
+pages. The navigation bar also shows the number of words and tokens.
+
+### XSLT
+
+The compiled document transformed by an XSLT stylesheet and shown as HTML. The stylesheet
+is chosen in [Settings](#settings), where your own stylesheets can also be imported; the
+same stylesheet is used for HTML and PDF export. Stylesheets are XSLT 1.0, as supported by
+the system's web engine.
+
+#### Faster previews with your own stylesheets
+
+Applying a stylesheet to a whole manuscript can take seconds, which delays the preview
+after each edit. If your stylesheet's output for an element depends only on that element
+and its ancestors (no `preceding::` or `following::` axes, keys, or counting across the
+document), add this line inside `<xsl:stylesheet>`:
+
+```xml
+<?saga-scribe render="page"?>
+```
+
+The preview then applies the stylesheet one page at a time and, after an edit, only to the
+pages that changed. Each page is passed as a small TEI document of its own: elements that
+continue from the previous page are repeated at its start with `saga-continued="true"`
+(so that, for example, a paragraph mark can be skipped there), and the parameter
+`lineBased` is `"1"` when the text has line breaks. Exports always apply the stylesheet to
+the whole document. The built-in stylesheet uses this declaration.
+
+### XML
+
+The compiled TEI-XML.
+
+## Lemmatization
+
+Lemmatization requires a template with word wrapping. Click a word in the Text or XSLT
+preview to open the word panel; its **Lemmatize** tab shows:
+
+- **Known analyses** of the same word form, from earlier work. Click one to apply it to
+  this word. The ✕ next to an analysis removes it from the list of known analyses (for all
+  words); lemmas already given to words are kept.
+- **Search ONP dictionary**: search the
+  [Dictionary of Old Norse Prose](https://onp.ku.dk/) by headword and choose the entry.
+  The link next to an entry opens it on the ONP website. If ONP cannot be reached, the
+  panel says so; the analysis can still be entered.
+- **Word class** and the morphological categories that apply to it (case, number, gender,
+  definiteness, grade, person, tense, mood, voice, finiteness).
+- **Normalized form** (`me:norm`), on multi-level transcriptions. It starts from the word's
+  current form and can be saved with or without a lemma.
+
+**Save** confirms the lemma and analysis for this occurrence of the word. **Remove lemma**
+removes them again; a normalized form entered by hand is kept.
+
+In the Text view, words with a confirmed lemma are marked; words whose form has a known
+analysis that has not been confirmed for this occurrence are marked more faintly. Hovering
+over a word shows its lemma and analysis.
+
+Lemmatization has its own undo and redo (toolbar, or **Ctrl+Shift+Z** / **Ctrl+Shift+Y**),
+separate from the editor's.
+
+Lemmas are stored by word, and follow their words when text is inserted or deleted before
+them. If a word is edited slightly (for example to correct a typo, changing at most half
+its letters), it keeps its lemma; a different word typed in its place does not.
+
+### Morphological analysis (me:msa)
+
+Analyses use MENOTA's `me:msa` codes, separated by spaces. The order of the codes does not
+matter.
+
+#### Word classes
+
+| Code | Meaning                   |
+| ---- | ------------------------- |
+| xNC  | Common noun               |
+| xNP  | Proper noun               |
+| xAJ  | Adjective                 |
+| xVB  | Verb                      |
+| xPE  | Personal pronoun          |
+| xPR  | Reflexive pronoun         |
+| xPQ  | Interrogative pronoun     |
+| xPI  | Indefinite pronoun        |
+| xDD  | Demonstrative determiner  |
+| xDQ  | Quantifying determiner    |
+| xDP  | Possessive determiner     |
+| xAV  | Adverb                    |
+| xAQ  | Interrogative adverb      |
+| xAP  | Preposition               |
+| xCC  | Coordinating conjunction  |
+| xCS  | Subordinating conjunction |
+| xIT  | Interjection              |
+| xIM  | Infinitive marker         |
+
+#### Morphological categories
+
+| Category     | Values                                                    |
+| ------------ | --------------------------------------------------------- |
+| Case         | cN (nominative), cG (genitive), cD (dative), cA (accusative) |
+| Number       | nS (singular), nD (dual), nP (plural)                     |
+| Gender       | gM (masculine), gF (feminine), gN (neuter)                |
+| Definiteness | sI (indefinite), sD (definite)                            |
+| Grade        | rP (positive), rC (comparative), rS (superlative)         |
+| Person       | p1, p2, p3                                                |
+| Tense        | tPS (present), tPT (preterite)                            |
+| Mood         | mIN (indicative), mSU (subjunctive), mIP (imperative)     |
+| Voice        | vA (active), vR (reflexive/middle)                        |
+| Finiteness   | fF (finite), fP (participle), fS (supine), fI (infinitive) |
+
+Examples:
+
+- `xNC cN nS gF`: common noun, nominative singular feminine
+- `xVB fF p3 nS tPT mIN vA`: verb, finite, 3rd person singular preterite indicative active
+- `xAJ rC cA nP gM`: adjective, comparative, accusative plural masculine
+
+### In the TEI output
+
+Confirmed lemmas appear as `lemma` and `me:msa` attributes on the word:
 
 ```xml
 <w lemma="kona" me:msa="xNC cN nP gF">
@@ -324,293 +353,146 @@ When you save lemma mappings, the TEI output will include `lemma` and `me:msa` a
 </w>
 ```
 
-## Templates
+## Annotations
 
-Templates define the TEI-XML header and footer that wrap your content.
+The word panel's **Annotate** tab lists a word's annotations and adds new ones. There are
+three types:
 
-### Built-in Templates
+- **Note**: free text, optionally with a category. Written as a `<note>` after the word.
+- **Semantic category**: a category and subcategory (for example a personal name), with an
+  optional label. Written into the word's `ana` attribute.
+- **Paleographic**: an observation about the writing (unclear reading, addition, deletion,
+  supplied text, or a feature of the letters), with details such as reason, placement and
+  hand. It can apply to the whole word or to selected characters. Written into the word's
+  `ana` attribute.
 
-- **TEI P5**: Standard TEI with minimal header
-- **MENOTA**: Full MENOTA-compliant template with multi-level support
+An annotation can cover several words: with the panel open, Shift-click another word to
+extend the span. A single-word annotation can be applied to every occurrence of the same
+form at once ("Apply to all").
 
-### Template Options
+Annotations are saved in the project. For imported TEI files, see
+[Importing existing files](#importing-existing-files).
 
-- **Word wrapping**: Wrap words in `<w>` and punctuation in `<pc>` tags
-- **Auto line numbers**: Automatically number line breaks
-- **Multi-level output**: Generate MENOTA `<me:facs>`, `<me:dipl>`, `<me:norm>` levels
+## Validation
 
-### Creating Custom Templates
+The validation button in the editor header checks the compiled document against a schema:
+**TEI P5** (`tei_all`) or **MENOTA P5** (RelaxNG). Errors are listed with their line
+numbers where available.
 
-1. Click the gear icon in the editor header
-2. Click "+ Create Template"
-3. Fill in the template fields:
-   - Name and description
-   - Header XML (before content)
-   - Footer XML (after content)
-   - Options checkboxes
-4. Click "Save"
+## Importing existing files
 
-## Multi-Level Transcription
+**Import** in the toolbar reads a TEI-XML file (`.xml`, `.tei`) or a plain text file
+(`.txt`) and replaces the current document with it.
 
-When using a MENOTA template with multi-level output enabled, each word generates three levels:
+### TEI-XML
 
-- **Facsimile (`me:facs`)**: Exact manuscript appearance with entity references
-- **Diplomatic (`me:dipl`)**: Resolved entities, expanded abbreviations
-- **Normalized (`me:norm`)**: Standardized spelling
+The body of the document is converted to shorthand, which you then edit as usual:
+line breaks become `//`, page breaks `///`, each paragraph starts with `.p`, and so on.
+Lemmas, analyses and normalized forms in the file are taken over, and its header is read
+into the [metadata editor](#manuscript-metadata).
 
-### Example Output
+An imported document is marked **Imported** in the editor header. In this mode, the
+original file is kept and only edited passages are rewritten when the document is saved or
+exported:
 
-Input:
-```
-:rrot:egn
-```
+- Everything you have not edited is written out exactly as it was, byte for byte,
+  including the header, comments, namespaces and markup the shorthand cannot express.
+- Changes that do not affect the encoding (whitespace in the shorthand, for instance) do
+  not change the file.
+- Lemmas confirmed in Saga-Scribe are written into the words' `lemma` and `me:msa` (or
+  `msa`) attributes; a changed normalized form is written into the word's `<me:norm>`.
+  Removing a lemma removes these attributes.
+- Notes and other annotations are kept in the project only, since they would add markup the
+  file does not have.
+- A paragraph can be split by adding `.p` and joined by removing one. A split has to fall
+  between elements such as sentences (`<s>`), not inside one.
+- If the shorthand contains an error, the document is not saved or exported, rather than
+  written incomplete.
 
-Output:
-```xml
-<w>
-  <me:facs>&rrot;egn</me:facs>
-  <me:dipl>regn</me:dipl>
-  <me:norm>regn</me:norm>
-</w>
-```
+### Plain text
 
-## Preview Modes
+The text is placed in the editor as it is. Add line and page breaks and other markers by
+hand.
 
-Toggle between views using the buttons in the preview header:
+## Exporting
 
-- **Text**: Rendered view with clickable words for lemmatization
-- **XSLT**: Apply custom XSLT stylesheets to transform the XML output
-- **XML**: Raw TEI-XML output
+The **Export** menu in the toolbar offers:
 
-### Page Navigation (Text View)
+- **TEI-XML**: the complete document, including the header, lemmas, annotations, entity
+  references and the MENOTA levels if enabled.
+- **HTML**: the document transformed by the stylesheet chosen in [Settings](#settings), as
+  a single file with its styles and the Junicode font embedded. It needs no network
+  connection or other files.
+- **PDF**: the same output, set in A4 pages with margins and page numbers. On Linux and
+  Windows it is saved directly to the file you choose; on macOS the system print dialog
+  opens, where **Save as PDF** creates the file.
+- **Dictionary JSON**: your confirmed word forms with their lemmas, analyses and normalized
+  forms, for backup or analysis.
 
-For manuscripts with multiple pages (defined by `///` page breaks), the Text view shows a page navigation bar:
+Exports are refused while the shorthand contains errors.
 
-- Use **First/Prev/Next/Last** buttons to navigate between pages
-- Use the **dropdown menu** to jump directly to any page
-- The status bar shows total word count, token count, and page count
+## Settings
 
-Page navigation enables smooth browsing of large manuscripts without performance issues, as only the visible pages are rendered at a time.
+The **Settings** dialog (gear icon in the toolbar) has these sections:
 
-### XSLT Preview Mode
+- **Appearance**: the colour theme (light, dark, or following the system) and the editor's
+  font size.
+- **Editor**: whether the preview is updated automatically, and how long it waits after
+  typing stops.
+- **Stylesheets**: the XSLT stylesheet used for the XSLT preview and for HTML and PDF export.
+  **Import Stylesheet** adds your own; **Remove Selected** removes it again (the built-in
+  stylesheet cannot be removed).
+- **Default Template**: the template used for new projects.
 
-The XSLT tab allows you to apply custom stylesheets to transform your TEI-XML:
+## Keyboard shortcuts
 
-1. Click the **XSLT** tab in the preview header
-2. Use the **Select XSLT File** button to load a stylesheet (.xsl or .xslt)
-3. The XML is automatically transformed and displayed as HTML
-4. The selected stylesheet persists during your session
+On macOS, use **Cmd** instead of **Ctrl**. **F1** opens the help dialog, which lists these
+shortcuts and the shorthand.
 
-This is useful for:
-- Previewing how your TEI will render in different publication formats
-- Testing transformations before export
-- Applying project-specific display conventions
+### Application
 
-**Note**: XSLT transformation uses the browser's built-in XSLTProcessor and supports XSLT 1.0.
-
-#### Faster previews for your own stylesheets
-
-Applying a stylesheet to a whole manuscript can take seconds, so the preview
-lags while you type. If your stylesheet's output for an element depends only on
-that element and its ancestors (no `preceding::`/`following::` axes, keys or
-counting across the document), add this line inside `<xsl:stylesheet>`:
-
-```xml
-<?saga-scribe render="page"?>
-```
-
-The preview then applies it one page at a time and, after an edit, only to the
-pages that changed. Each page is a small TEI document of its own: elements that
-continue from the previous page are repeated at its start with
-`saga-continued="true"` (to skip, say, a paragraph mark there), and the
-parameter `lineBased` is `"1"` when the text has line breaks. Exports always
-apply the stylesheet to the whole document. The built-in stylesheet does this.
-
-## Keyboard Shortcuts
-
-### Project
-
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+S / Cmd+S | Save project (.teis archive) |
-| Ctrl+O / Cmd+O | Open project or DSL file |
+| Shortcut         | Action                        |
+| ---------------- | ----------------------------- |
+| Ctrl+O           | Open project or shorthand file |
+| Ctrl+S           | Save project                  |
+| Ctrl+Shift+Z     | Undo lemmatization            |
+| Ctrl+Shift+Y     | Redo lemmatization            |
+| F1 or Ctrl+/     | Help                          |
+| Escape           | Close dialog or panel         |
 
 ### Editor
 
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+F / Cmd+F | Find in editor |
-| Ctrl+H / Cmd+H | Find and replace |
-| Ctrl+G / Cmd+G | Find next match |
-| Ctrl+Shift+G / Cmd+Shift+G | Find previous match |
-| Ctrl+Z / Cmd+Z | Undo |
-| Ctrl+Y / Cmd+Y | Redo |
-| Tab | Indent |
-| Shift+Tab | Unindent |
+| Shortcut         | Action                                      |
+| ---------------- | ------------------------------------------- |
+| Ctrl+Z           | Undo                                        |
+| Ctrl+Y           | Redo                                        |
+| Ctrl+F           | Search and replace                          |
+| F3 or Ctrl+G     | Next match                                  |
+| Shift+F3 or Ctrl+Shift+G | Previous match                      |
+| Ctrl+D           | Select next occurrence of the selection     |
+| Alt+↑ / Alt+↓    | Move line up / down                         |
 
-### Folding (Collapsible Sections)
+### Folding
 
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+Shift+[ / Cmd+Shift+[ | Fold section at cursor |
-| Ctrl+Shift+] / Cmd+Shift+] | Unfold section at cursor |
+Pages can be folded at their page breaks (`///`), using the markers in the editor's
+margin or the keyboard:
 
-You can also click the fold markers in the gutter (▶/▼) next to page breaks (`///`) to collapse or expand sections.
+| Shortcut         | Action                       |
+| ---------------- | ---------------------------- |
+| Ctrl+Shift+[     | Fold the page at the cursor  |
+| Ctrl+Shift+]     | Unfold the page at the cursor |
+| Ctrl+Alt+[       | Fold all                     |
+| Ctrl+Alt+]       | Unfold all                   |
 
-### Lemmatization
+## Logs and reporting problems
 
-| Shortcut | Action |
-|----------|--------|
-| Ctrl+Shift+Z / Cmd+Shift+Z | Undo lemmatization |
-| Ctrl+Shift+Y / Cmd+Shift+Y | Redo lemmatization |
+The log button (at the right of the editor header) shows the application log: loading of
+dictionaries and entities, compilation errors, and the results of imports and exports. It
+turns red when there are errors. Errors in the shorthand are also underlined in the editor.
 
-## Error Panel
+When reporting a problem, please include the relevant log entries. If Saga-Scribe becomes
+slow, start it with the option `--perf-log`; it then records how long each step takes in a
+file `perf-<time>.jsonl` in its log directory, which helps locate the cause.
 
-Click the "☰" button to view the application log. This shows:
-- Loading status for dictionaries and entities
-- Errors during parsing or compilation
-- Debug information
-
-## Exporting Your Work
-
-Saga-Scribe supports multiple export formats for different publication and archival needs.
-
-### TEI-XML Export
-
-Export your transcription as a standalone TEI-XML document:
-
-1. Click **File > Export XML** in the toolbar menu
-2. Choose a location and filename (`.xml` extension)
-3. The complete TEI document is saved, including header metadata
-
-The exported XML includes all lemma annotations, entity references, and multi-level transcription data if enabled.
-
-### HTML Export
-
-Export a standalone HTML file for web publication or archiving:
-
-1. Click **File > Export HTML** in the toolbar menu
-2. Choose a location and filename (`.html` extension)
-3. The HTML file includes embedded styles for display
-
-The HTML export:
-- Includes all necessary CSS for medieval character display
-- Embeds the Junicode font for MUFI characters
-- Works offline without external dependencies
-- Preserves clickable word structure when applicable
-
-### PDF Export
-
-Create a PDF for printing or sharing:
-
-1. Click **File > Export PDF** in the toolbar menu
-2. Your system's print dialog opens with "Save as PDF" option
-3. Select your PDF settings and save
-
-**Note**: PDF export uses your browser's print functionality. The print dialog settings (margins, scaling, etc.) affect the final PDF appearance.
-
-### Dictionary Export
-
-Export your lemmatization data as JSON for backup or analysis:
-
-1. Click **File > Export Dictionary** in the toolbar menu
-2. Choose a location and filename (`.json` extension)
-3. All confirmed word-to-lemma mappings are exported
-
-The JSON format includes:
-- Word forms (facsimile and diplomatic)
-- Lemma assignments
-- Morphological analysis codes (me:msa)
-- Normalized forms
-
-## Working with Imported Documents
-
-When you import a TEI-XML file, Saga-Scribe enters **Imported Mode** to preserve the original structure during round-trip editing.
-
-### The Imported Badge
-
-Documents opened from TEI-XML show an "Imported" badge in the toolbar. This indicates:
-- The document retains its original XML structure
-- Segments not editable in DSL are preserved exactly
-- Re-exporting maintains fidelity with the source file
-
-### Segment Preservation
-
-Imported documents track which XML segments came from the original file. When you compile:
-
-1. **Editable segments**: Your DSL changes compile normally
-2. **Preserved segments**: Original XML is kept verbatim
-3. **New content**: Added material follows your template settings
-
-This allows you to edit specific passages while keeping complex markup (like existing apparatus entries) intact.
-
-### Round-Trip Fidelity
-
-The imported mode ensures that:
-- Original namespace declarations are preserved
-- Processing instructions remain intact
-- Attributes not expressible in DSL are not lost
-- Comments and whitespace in preserved sections stay unchanged
-
-### Clearing Import State
-
-To start fresh without preservation:
-1. Create a new document (File > New)
-2. Copy your DSL content to the new document
-3. The new document uses your template settings exclusively
-
-## Managing Custom Entities
-
-The Entity Browser supports creating and managing custom entities beyond the built-in MENOTA/MUFI character set.
-
-### Adding Custom Entities
-
-1. Open the Entity Browser (click "ꝥ" in the editor header)
-2. Click the **+** button in the header to create a new entity
-3. Fill in:
-   - **Name**: The identifier used in DSL (e.g., `mychar` for `:mychar:`)
-   - **Character**: The Unicode character or characters to insert
-   - **Description**: Optional explanatory text
-4. Click **Save**
-
-Custom entities appear in the entity list with an "custom" indicator and can be used immediately in your transcription.
-
-### Editing Custom Entities
-
-1. Click the **pencil icon** next to any custom entity
-2. Modify the character or description
-3. Click **Save**
-
-**Note**: Changing an entity's character affects all future uses of that entity in your documents.
-
-### Removing Custom Entities
-
-1. Click the **trash icon** next to the custom entity
-2. Confirm the deletion
-
-Removing a custom entity does not affect already-compiled XML, but the entity reference will become invalid for new compilations.
-
-### Custom Entity Persistence
-
-Custom entities are stored locally and persist across sessions. They are independent of your project files, meaning:
-- All projects on your system share the same custom entity set
-- Custom entities are not included in `.teis` project archives
-- Export your entity mappings separately for backup if needed
-
-### Custom Diplomatic Mappings
-
-Beyond creating new entities, you can customize how built-in entities normalize:
-
-1. Select any entity in the browser
-2. Edit the **Translation** field
-3. Press Enter to save
-
-This affects the diplomatic and normalized levels without changing the entity definition itself.
-
-## Tips
-
-1. **Start simple**: Use basic syntax first, add markup incrementally
-2. **Use templates**: Let templates handle the XML boilerplate
-3. **Check the preview**: Watch the XML output as you type
-4. **Build your dictionary**: Lemmatize words as you encounter them
-5. **Customize entities**: Set up diplomatic normalizations for your text's conventions
+Problems can be reported on
+[GitHub](https://github.com/motheatensoul/saga-scribe/issues).

@@ -23,6 +23,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+
+      # The tag must be the app's version, dated in CHANGELOG.md and in the
+      # Flatpak metainfo, with the same version everywhere
+      - name: Check versions
+        run: bun scripts/check-versions.ts --release "${{ inputs.version }}"
+
       - name: Generate changelog
         id: changelog
         run: |
