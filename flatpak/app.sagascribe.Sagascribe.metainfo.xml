@@ -2,26 +2,26 @@
 <component type="desktop-application">
   <id>app.sagascribe.Sagascribe</id>
   <name>Saga Scribe</name>
-  <summary>TEI-XML manuscript transcription editor with custom DSL shorthand</summary>
+  <summary>Transcribe manuscripts into TEI-XML from a readable shorthand</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
 
   <description>
     <p>
-      Saga Scribe is a desktop application for manuscript transcription that uses a custom
-      domain-specific language (DSL) to generate TEI-XML output with MENOTA support.
+      Saga Scribe is a desktop application for transcribing manuscripts into TEI-XML, intended
+      for textual scholars preparing digital editions. Transcriptions are entered in a
+      plain-text shorthand, from which the application generates the corresponding TEI markup,
+      including the MENOTA transcription levels.
     </p>
-    <p>Features include:</p>
     <ul>
-      <li>Custom DSL for efficient transcription with syntax highlighting</li>
-      <li>Real-time preview with XSLT rendering</li>
-      <li>TEI-XML export with MENOTA compatibility</li>
-      <li>XML validation against TEI P5, MENOTA, and MENOTA P5 schemas</li>
-      <li>ONP (Dictionary of Old Norse Prose) integration for lemmatization</li>
-      <li>MUFI character support with Junicode font</li>
-      <li>Import existing TEI-XML documents</li>
-      <li>Export to HTML and PDF formats</li>
-      <li>Word and character-level annotations</li>
+      <li>Line-by-line shorthand for line and page breaks, abbreviations, gaps, supplied text, deletions and additions</li>
+      <li>Preview of the reading text, the XML, or the output of an XSLT stylesheet, updated while typing</li>
+      <li>Lemmatization with the Dictionary of Old Norse Prose (ONP) and MENOTA morphological analysis</li>
+      <li>Notes, semantic and paleographic annotations on words and characters</li>
+      <li>MENOTA facsimile, diplomatic and normalized levels; MENOTA/MUFI characters in the Junicode font</li>
+      <li>Editing of existing TEI-XML files, leaving unedited parts unchanged</li>
+      <li>Validation against TEI P5 and MENOTA P5</li>
+      <li>Export to TEI-XML, HTML and PDF</li>
     </ul>
   </description>
 
@@ -99,18 +99,21 @@
         </ul>
       </description>
     </release>
-    <release version="0.5.0" date="2026-01-28">
+    <release version="0.5.0" date="2026-01-29">
       <description>
-        <p>Current development release with full feature set.</p>
+        <p>Imported mode for editing existing TEI-XML files, manuscript metadata, annotations and custom entities.</p>
       </description>
     </release>
   </releases>
 
   <screenshots>
-    <!-- Add screenshots when available -->
-    <!-- <screenshot type="default">
-      <image>https://raw.githubusercontent.com/isaksolheim/saga-scribe/main/screenshots/editor.png</image>
-      <caption>Main editor view with DSL syntax highlighting</caption>
-    </screenshot> -->
+    <screenshot type="default">
+      <caption>Transcription in shorthand, with the reading text of an imported MENOTA file</caption>
+      <image>https://raw.githubusercontent.com/motheatensoul/saga-scribe/main/docs/screenshots/transcription.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Lemmatizing a word with the Dictionary of Old Norse Prose</caption>
+      <image>https://raw.githubusercontent.com/motheatensoul/saga-scribe/main/docs/screenshots/lemmatization.png</image>
+    </screenshot>
   </screenshots>
 </component>

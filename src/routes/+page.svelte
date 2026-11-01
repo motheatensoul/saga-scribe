@@ -984,7 +984,7 @@
                             </button>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Search and Replace (Ctrl+Shift+F)"
+                                title="Search and Replace (Ctrl+F)"
                                 onclick={() =>
                                     editorComponent?.triggerSearch()}
                             >

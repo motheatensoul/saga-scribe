@@ -34,20 +34,21 @@
         { keys: ["Ctrl", "Shift", "Y"], action: "Redo lemmatization" },
         { keys: ["Ctrl", "Z"], action: "Undo editor change" },
         { keys: ["Ctrl", "Y"], action: "Redo editor change" },
-        { keys: ["Ctrl", "F"], action: "Find in editor" },
+        { keys: ["Ctrl", "F"], action: "Search and replace in editor" },
         { keys: ["F1"], action: "Open help" },
         { keys: ["Ctrl", "/"], action: "Open help (alternative)" },
         { keys: ["Escape"], action: "Close dialog" },
     ];
 
     const editorShortcuts = [
-        { keys: ["Tab"], action: "Indent selection" },
-        { keys: ["Shift", "Tab"], action: "Unindent selection" },
+        { keys: ["F3"], action: "Next search match" },
+        { keys: ["Shift", "F3"], action: "Previous search match" },
         { keys: ["Ctrl", "A"], action: "Select all" },
         { keys: ["Ctrl", "D"], action: "Select word / next occurrence" },
-        { keys: ["Ctrl", "/"], action: "Toggle comment" },
         { keys: ["Alt", "↑"], action: "Move line up" },
         { keys: ["Alt", "↓"], action: "Move line down" },
+        { keys: ["Ctrl", "Shift", "["], action: "Fold page at cursor" },
+        { keys: ["Ctrl", "Shift", "]"], action: "Unfold page at cursor" },
     ];
 
     const dslSyntax = [

@@ -6,7 +6,7 @@ To ensure a consistent user experience, please adhere to the following UI standa
 
 *   **DaisyUI & Tailwind:** Exclusively use Tailwind CSS utility classes and DaisyUI component classes.
 *   **Theming:** Never hardcode colors (e.g., `bg-white`, `text-black`). Use semantic color variables (`bg-base-100`, `text-base-content`, `text-primary`, `bg-error`, etc.) to ensure compatibility with both light ("caramellatte") and dark ("coffee") themes.
-*   **Icons:** Use `lucide-svelte` for all icons.
+*   **Icons:** Use `@lucide/svelte` for all icons (e.g. `import { X as CloseButton } from "@lucide/svelte"`).
 
 ## Components
 
@@ -65,4 +65,4 @@ Modals and floating panels (like Settings, Help, Error Log, Validation) should f
 *   Avoid legacy `export let` or `$:`.
 
 ---
-*Verified: 2026-01-11*
+*Verified: 2026-11-01*
