@@ -432,6 +432,12 @@ The **Export** menu in the toolbar offers:
 
 Exports are refused while the shorthand contains errors.
 
+HTML and PDF exports show their progress and can be cancelled. If you switch to another
+window while an HTML or PDF export or an import is running, a system notification tells
+you when it has finished or failed. On macOS, the system asks once whether Saga-Scribe may
+show notifications; this and the notifications themselves can be changed in the system
+settings.
+
 ## Settings
 
 The **Settings** dialog (gear icon in the toolbar) has these sections:

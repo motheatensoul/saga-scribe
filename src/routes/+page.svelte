@@ -39,6 +39,7 @@
         exportHtml,
         exportPdf,
         cancelPdfExport,
+        notifyInBackground,
         pdfExportSupported,
         openFile,
         importFile,
@@ -647,24 +648,28 @@
 
     /**
      * Runs an export behind the progress overlay. The work yields between steps,
-     * so the UI stays painted and the user can cancel.
+     * so the UI stays painted and the user can cancel. A task that finishes the export
+     * itself returns where it went, for a system notification if the window is in the
+     * background meanwhile.
      */
     async function withExportProgress(
         what: string,
-        task: (signal: AbortSignal) => Promise<void>,
+        task: (signal: AbortSignal) => Promise<string | void>,
     ) {
         const controller = new AbortController();
         exportController = controller;
         exportProgress = "Starting…";
         const started = performance.now();
         try {
-            await task(controller.signal);
+            const done = await task(controller.signal);
             perfRecord("export", performance.now() - started, { format: what });
+            if (done) void notifyInBackground(`${what} export finished`, done);
         } catch (e) {
             if (controller.signal.aborted) {
                 errorStore.info("Export", `${what} export cancelled`);
             } else {
                 errorStore.error("Export", `Failed to export ${what}: ${e}`);
+                void notifyInBackground(`${what} export failed`, String(e));
             }
         } finally {
             exportProgress = null;
@@ -716,6 +721,7 @@
             exportProgress = "Writing file…";
             await exportHtml(path, fullHtml);
             errorStore.info("Export", `Exported HTML to ${path}`);
+            return `Exported HTML to ${path}`;
         });
     }
 
@@ -761,6 +767,7 @@
                 }
                 signal.throwIfAborted();
                 errorStore.info("Export", `Exported PDF to ${path}`);
+                return `Exported PDF to ${path}`;
             } else {
                 exportProgress = "Laying out pages…";
                 await printToPdf(fullHtml, { pageSize: "A4" });
@@ -850,12 +857,14 @@
             } else {
                 errorStore.info("Import", `Imported content from ${pathStr}`);
             }
+            void notifyInBackground("Import finished", `Imported ${pathStr}`);
 
             if (compiled !== null) {
                 previewContent = compiled;
             }
         } catch (e) {
             errorStore.error("Import", `Failed to import: ${e}`);
+            void notifyInBackground("Import failed", String(e));
         } finally {
             isImporting = false;
         }

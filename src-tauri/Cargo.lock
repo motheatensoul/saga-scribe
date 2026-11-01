@@ -2350,6 +2350,8 @@ version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9df9128cbbfef73cda168416ccf7f837b62737d748333bfe9ab71c245d76613e"
 dependencies = [
+ "bitflags 2.13.2",
+ "block2",
  "objc2",
  "objc2-foundation",
 ]
@@ -2961,10 +2963,15 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 name = "saga-scribe"
 version = "0.8.0"
 dependencies = [
+ "block2",
+ "dbus",
  "glib",
  "gtk",
  "libxml",
  "log",
+ "objc2",
+ "objc2-foundation",
+ "objc2-user-notifications",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -2976,6 +2983,7 @@ dependencies = [
  "tokio",
  "webkit2gtk",
  "webview2-com",
+ "windows",
  "windows-core",
  "windows-strings",
  "zip",

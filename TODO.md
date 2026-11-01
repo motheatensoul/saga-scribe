@@ -3,18 +3,6 @@
 Known problems and planned work that isn't scheduled for a version yet. Remove an entry
 when it is done (and record it in CHANGELOG.md if users notice).
 
-## Features
-
-- **System notifications for long-running work**, such as a PDF or HTML export or an
-  import finishing, or failing, while the window is in the background. Use each platform's
-  own mechanism: the freedesktop notification service over D-Bus
-  (`org.freedesktop.Notifications`) on Linux, through the notification portal inside the
-  Flatpak (check whether the manifest's `finish-args` need a permission); the
-  UserNotifications framework on macOS; toast notifications on Windows.
-  `tauri-plugin-notification` covers all three, but weigh it against the
-  keep-dependencies-minimal rule. Only notify when the window isn't focused, and keep the
-  in-app message (log and progress overlay) as it is.
-
 ## Interface
 
 - **Structure for toolbar and header actions.** The toolbar's actions (Open, Import, Save,

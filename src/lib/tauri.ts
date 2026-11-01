@@ -688,6 +688,15 @@ export async function cancelPdfExport(): Promise<void> {
   return invoke("cancel_pdf_export");
 }
 
+/**
+ * Shows a system notification if the window doesn't have focus, e.g. when an export
+ * finishes in the background. Never fails: a notification that can't be shown is
+ * only logged.
+ */
+export async function notifyInBackground(title: string, body: string): Promise<void> {
+  await invoke("notify", { title, body }).catch(() => {});
+}
+
 /** Used by the hidden print window only. */
 export async function takePrintDocument(): Promise<string> {
   return invoke("take_print_document");

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **System notifications**: when an import or an HTML or PDF export finishes or fails while the window is in the background, the system shows a notification (the freedesktop notification service on Linux, including the Flatpak; toast notifications on Windows; Notification Center on macOS)
 - **Nix development environment**: `nix develop` provides bun, the pinned Rust toolchain and the system libraries for building
 
 ### Fixed
