@@ -210,7 +210,7 @@
             aria-label={$errorCounts.error > 0 ? "View logs (contains errors)" : "View logs"}
         >
             {#if $errorCounts.error > 0}
-                <MessageCircleWarning size="18" class="text-error" aria-hidden="true" />
+                <MessageCircleWarning size="18" aria-hidden="true" />
             {:else}
                 <ScrollText size="18" aria-hidden="true" />
             {/if}
@@ -231,11 +231,11 @@
         >
             <SettingsIcon size="18" aria-hidden="true" />
         </button>
-        <span class="ml-2 text-sm opacity-70 xl:text-md truncate max-w-48 xl:max-w-80" title={$fileName}>
+        <span class="ml-2 text-sm xl:text-md truncate max-w-48 xl:max-w-80" title={$fileName}>
             {$fileName}
         </span>
         {#if $editor.isDirty}
-            <span class="text-warning font-bold" title="Unsaved changes">*<span class="sr-only">(unsaved changes)</span></span>
+            <span class="font-bold" title="Unsaved changes">*<span class="sr-only">(unsaved changes)</span></span>
         {/if}
     </div>
 </div>

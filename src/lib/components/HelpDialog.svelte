@@ -1,4 +1,6 @@
 <script lang="ts">
+    import { dialogFocus } from "$lib/utils/dialogFocus";
+    import { tablist } from "$lib/utils/tabs";
     //Icons
     import { X as CloseButton } from "@lucide/svelte";
 
@@ -45,6 +47,7 @@
         { keys: ["F1"], action: "Open help" },
         { keys: ["Ctrl", "/"], action: "Open help (alternative)" },
         { keys: ["Escape"], action: "Close dialog" },
+        { keys: ["← / →"], action: "Previous / next tab" },
     ];
 
     const editorShortcuts = [
@@ -140,6 +143,7 @@
         aria-modal="true"
         aria-labelledby="help-title"
         tabindex="-1"
+        {@attach dialogFocus}
     >
         <div
             class="bg-base-100 rounded-lg shadow-xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col"
@@ -159,10 +163,20 @@
             </div>
 
             <!-- Tabs -->
-            <div class="tabs tabs-border px-5 py-2 xl:px-6 xl:py-4 justify-center">
+            <div
+                class="tabs tabs-border px-5 py-2 xl:px-6 xl:py-4 justify-center"
+                role="tablist"
+                aria-label="Help topics"
+                {@attach tablist}
+            >
                 <button
                     class="tab text-md xl:text-lg font-semibold"
                     class:tab-active={activeTab === "shortcuts"}
+                    role="tab"
+                    id="help-tab-shortcuts"
+                    aria-selected={activeTab === "shortcuts"}
+                    aria-controls="help-panel"
+                    tabindex={activeTab === "shortcuts" ? 0 : -1}
                     onclick={() => (activeTab = "shortcuts")}
                 >
                     Keyboard Shortcuts
@@ -170,6 +184,11 @@
                 <button
                     class="tab text-md xl:text-lg font-semibold"
                     class:tab-active={activeTab === "dsl"}
+                    role="tab"
+                    id="help-tab-dsl"
+                    aria-selected={activeTab === "dsl"}
+                    aria-controls="help-panel"
+                    tabindex={activeTab === "dsl" ? 0 : -1}
                     onclick={() => (activeTab = "dsl")}
                 >
                     DSL Syntax
@@ -177,6 +196,11 @@
                 <button
                     class="tab text-md xl:text-lg font-semibold"
                     class:tab-active={activeTab === "about"}
+                    role="tab"
+                    id="help-tab-about"
+                    aria-selected={activeTab === "about"}
+                    aria-controls="help-panel"
+                    tabindex={activeTab === "about" ? 0 : -1}
                     onclick={() => (activeTab = "about")}
                 >
                     About
@@ -184,7 +208,13 @@
             </div>
 
             <!-- Content -->
-            <div class="py-4 px-8 overflow-y-auto flex-1">
+            <div
+                id="help-panel"
+                class="py-4 px-8 overflow-y-auto flex-1"
+                role="tabpanel"
+                aria-labelledby="help-tab-{activeTab}"
+                tabindex="0"
+            >
                 {#if activeTab === "shortcuts"}
                     <div class="space-y-6">
                         <!-- Application Shortcuts -->
@@ -216,7 +246,7 @@
                                                             >
                                                             {#if i < shortcut.keys.length - 1}
                                                                 <span
-                                                                    class="text-base-content/50"
+                                                                    class="text-base-content/80"
                                                                     >+</span
                                                                 >
                                                             {/if}
@@ -258,7 +288,7 @@
                                                             >
                                                             {#if i < shortcut.keys.length - 1}
                                                                 <span
-                                                                    class="text-base-content/50"
+                                                                    class="text-base-content/80"
                                                                     >+</span
                                                                 >
                                                             {/if}
@@ -275,7 +305,7 @@
                             </div>
                         </section>
 
-                        <p class="text-sm text-base-content/70 mt-4 xl:text-md">
+                        <p class="text-sm text-base-content/80 mt-4 xl:text-md">
                             <strong>Note:</strong> On macOS, use
                             <kbd class="kbd kbd-xs">Cmd</kbd> instead of
                             <kbd class="kbd kbd-xs">Ctrl</kbd>.
@@ -283,7 +313,7 @@
                     </div>
                 {:else if activeTab === "dsl"}
                     <div class="space-y-4">
-                        <p class="text-sm text-base-content/70 xl:text-md">
+                        <p class="text-sm text-base-content/80 xl:text-md">
                             The DSL (Domain-Specific Language) provides
                             shorthand notation for TEI-XML transcription. Type
                             DSL syntax in the editor and it compiles to TEI-XML.
@@ -322,7 +352,7 @@
 
                         <div class="mt-4 p-3 bg-base-200 rounded-lg">
                             <h4 class="font-semibold mb-2">Entity Browser</h4>
-                            <p class="text-sm text-base-content/70">
+                            <p class="text-sm text-base-content/80">
                                 Click the <strong>ꝥ</strong> button in the editor
                                 header to browse and insert MENOTA/MUFI character
                                 entities. Use the search box to filter by name or
@@ -334,7 +364,7 @@
                             <h4 class="font-semibold mb-2">
                                 Multi-Level Transcription
                             </h4>
-                            <p class="text-sm text-base-content/70">
+                            <p class="text-sm text-base-content/80">
                                 When using the MENOTA template, each word is
                                 automatically wrapped with three transcription
                                 levels: <code class="text-xs"
@@ -352,7 +382,7 @@
                     <div class="space-y-4">
                         <div class="text-center py-4">
                             <h3 class="text-2xl font-bold">Saga-Scribe</h3>
-                            <p class="text-base-content/70">
+                            <p class="text-base-content/80">
                                 Version 0.3.0 (alpha)
                             </p>
                         </div>
@@ -391,21 +421,21 @@
 
                         <div class="space-y-2">
                             <h4 class="font-semibold">License</h4>
-                            <p class="text-sm text-base-content/70">
+                            <p class="text-sm text-base-content/80">
                                 GPL-3.0-or-later
                             </p>
                         </div>
 
                         <div class="space-y-2">
                             <h4 class="font-semibold">Documentation</h4>
-                            <p class="text-sm text-base-content/70">
+                            <p class="text-sm text-base-content/80">
                                 See <code>docs/user-guide.md</code> for detailed
                                 documentation.
                             </p>
                         </div>
 
                         <div
-                            class="text-center text-sm text-base-content/50 mt-6"
+                            class="text-center text-sm text-base-content/80 mt-6"
                         >
                             Made with ❤️ in Norway
                         </div>

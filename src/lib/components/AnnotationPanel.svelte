@@ -388,7 +388,7 @@
     <div class="flex justify-between items-center p-3 border-b border-base-300">
         <div>
             <h2 class="font-bold">Annotations</h2>
-            <div class="text-xs opacity-70">
+            <div class="text-xs opacity-80">
                 {#if isSpan}
                     <span class="badge badge-sm badge-secondary mr-1">Span</span>
                     <span>Words #{spanStart} - #{spanEnd}</span>
@@ -398,7 +398,7 @@
                 {/if}
             </div>
             {#if isSpan}
-                <p class="text-xs opacity-50 mt-1">Shift-click another word to adjust span</p>
+                <p class="text-xs opacity-80 mt-1">Shift-click another word to adjust span</p>
             {/if}
         </div>
         <button
@@ -414,7 +414,7 @@
     <!-- Existing annotations -->
     <div class="flex-1 overflow-y-auto p-3">
         {#if wordAnnotations.length === 0}
-            <p class="text-center opacity-60 py-4">No annotations for this word</p>
+            <p class="text-center opacity-80 py-4">No annotations for this word</p>
         {:else}
             <div class="flex flex-col gap-2">
                 {#each wordAnnotations as ann}
@@ -432,13 +432,14 @@
                                     onclick={() => handleRemoveAnnotation(ann)}
                                     disabled={ann.type === "lemma"}
                                     title={ann.type === "lemma" ? "Remove via Lemmatizer" : "Remove annotation"}
+                                    aria-label={ann.type === "lemma" ? "Remove via Lemmatizer" : "Remove annotation"}
                                 >
-                                    <Trash2 size={12} />
+                                    <Trash2 size={12} aria-hidden="true" />
                                 </button>
                             </div>
                             <p class="text-sm">{getAnnotationSummary(ann)}</p>
                             {#if ann.metadata?.note}
-                                <p class="text-xs opacity-60">{ann.metadata.note}</p>
+                                <p class="text-xs opacity-80">{ann.metadata.note}</p>
                             {/if}
                         </div>
                     </div>
@@ -609,13 +610,13 @@
                             {/each}
                         </div>
                         {#if getCharRange()}
-                            <p class="text-xs opacity-70 mt-1">
+                            <p class="text-xs opacity-80 mt-1">
                                 Selected: "{facsimile.slice(getCharRange()![0], getCharRange()![1] + 1)}" (chars {getCharRange()![0]}-{getCharRange()![1]})
                             </p>
                         {:else if isSelectingChars}
-                            <p class="text-xs opacity-50 mt-1">Click characters to select range</p>
+                            <p class="text-xs opacity-80 mt-1">Click characters to select range</p>
                         {:else}
-                            <p class="text-xs opacity-50 mt-1">Applies to whole word</p>
+                            <p class="text-xs opacity-80 mt-1">Applies to whole word</p>
                         {/if}
                     </div>
                     {#if isMenotaSchema}

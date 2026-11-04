@@ -243,6 +243,10 @@ is chosen in [Settings](#settings), where your own stylesheets can also be impor
 same stylesheet is used for HTML and PDF export. Stylesheets are XSLT 1.0, as supported by
 the system's web engine.
 
+The XSLT view shows the document as the stylesheet will produce it, so its words can be
+clicked but not reached with the keyboard. To open the word panel from the keyboard, use
+the Text view, where Tab moves from word to word and Enter opens the word panel.
+
 #### Faster previews with your own stylesheets
 
 Applying a stylesheet to a whole manuscript can take seconds, which delays the preview
@@ -285,9 +289,9 @@ preview to open the word panel; its **Lemmatize** tab shows:
 **Save** confirms the lemma and analysis for this occurrence of the word. **Remove lemma**
 removes them again; a normalized form entered by hand is kept.
 
-In the Text view, words with a confirmed lemma are marked; words whose form has a known
-analysis that has not been confirmed for this occurrence are marked more faintly. Hovering
-over a word shows its lemma and analysis.
+In the Text view, words with a confirmed lemma have a green outline and background; words
+whose form has a known analysis that has not been confirmed for this occurrence have a
+dotted line underneath. Hovering over a word shows its lemma and analysis.
 
 Lemmatization has its own undo and redo (toolbar, or **Ctrl+Shift+Z** / **Ctrl+Shift+Y**),
 separate from the editor's. In the editor, **Ctrl+Shift+Z** redoes a text change instead, so
@@ -470,6 +474,11 @@ shortcuts and the shorthand.
 | Ctrl+Shift+Y     | Redo lemmatization            |
 | F1 or Ctrl+/     | Help                          |
 | Escape           | Close dialog or panel         |
+| ← / →            | Previous / next tab (in the preview, the word panel and the help) |
+
+When a dialog or panel opens, the keyboard focus moves into it (to the search field in the
+word panel and the entity browser); Tab and Shift+Tab stay within it until it closes, and
+focus then returns to where it was, such as the word that opened the word panel.
 
 ### Editor
 
@@ -498,8 +507,8 @@ margin or the keyboard:
 ## Logs and reporting problems
 
 The log button (at the right of the toolbar, before help and settings) shows the application log: loading of
-dictionaries and entities, compilation errors, and the results of imports and exports. It
-turns red when there are errors. Errors in the shorthand are also underlined in the editor.
+dictionaries and entities, compilation errors, and the results of imports and exports. Its icon
+changes to a warning sign when there are errors. Errors in the shorthand are also underlined in the editor.
 
 When reporting a problem, please include the relevant log entries. If Saga-Scribe becomes
 slow, start it with the option `--perf-log`; it then records how long each step takes in a

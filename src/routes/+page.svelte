@@ -51,6 +51,8 @@
     import { loadAppResources } from "$lib/startup";
     import { perfEnabled, perfRecord, perfTime, perfTimeSync } from "$lib/perf";
     import { importedLemmas } from "$lib/utils/importedLemmas";
+    import { dialogFocus } from "$lib/utils/dialogFocus";
+    import { tablist } from "$lib/utils/tabs";
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
     import { printToPdf, withPrintStyles } from "$lib/utils/pdfExport";
     import {
@@ -874,7 +876,7 @@
         // Escape: Close any open modal (a11y requirement)
         if (event.key === "Escape") {
             if (showLemmatizer) {
-                showLemmatizer = false;
+                handleLemmatizerClose();
                 return;
             }
             if (showEntityBrowser) {
@@ -1055,7 +1057,14 @@
                 role="none"
                 onclick={() => (showEntityBrowser = false)}
             ></div>
-            <div class="modal-box max-w-4xl">
+            <div
+                class="modal-box max-w-4xl"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-labelledby="entity-browser-title"
+            >
                 <EntityBrowser
                     oninsert={handleEntityInsert}
                     onclose={() => (showEntityBrowser = false)}
@@ -1072,7 +1081,14 @@
                 role="none"
                 onclick={() => (showErrorPanel = false)}
             ></div>
-            <div class="modal-box max-w-3xl">
+            <div
+                class="modal-box max-w-3xl"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-labelledby="log-title"
+            >
                 <ErrorPanel onclose={() => (showErrorPanel = false)} />
             </div>
         </div>
@@ -1086,7 +1102,14 @@
                 role="none"
                 onclick={() => (showValidationPanel = false)}
             ></div>
-            <div class="modal-box max-w-3xl">
+            <div
+                class="modal-box max-w-3xl"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-labelledby="validation-title"
+            >
                 <ValidationPanel
                     xmlContent={previewContent}
                     onclose={() => (showValidationPanel = false)}
@@ -1103,21 +1126,43 @@
                 role="none"
                 onclick={handleLemmatizerClose}
             ></div>
-            <div class="modal-box max-w-2xl p-0">
+            <div
+                class="modal-box max-w-2xl p-0"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-label="Word: {selectedWordFacsimile || selectedWordDiplomatic}"
+            >
                 <!-- Tabs -->
-                <div class="tabs tabs-boxed bg-base-200 rounded-none">
+                <div
+                    class="tabs tabs-boxed bg-base-200 rounded-none"
+                    role="tablist"
+                    aria-label="Word panel"
+                    {@attach tablist}
+                >
                     <button
                         type="button"
+                        id="word-tab-lemmatize"
                         class="tab"
                         class:tab-active={wordPanelTab === "lemmatize"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "lemmatize"}
+                        aria-controls="word-panel-lemmatize"
+                        tabindex={wordPanelTab === "lemmatize" ? 0 : -1}
                         onclick={() => wordPanelTab = "lemmatize"}
                     >
                         Lemmatize
                     </button>
                     <button
                         type="button"
+                        id="word-tab-annotate"
                         class="tab"
                         class:tab-active={wordPanelTab === "annotate"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "annotate"}
+                        aria-controls="word-panel-annotate"
+                        tabindex={wordPanelTab === "annotate" ? 0 : -1}
                         onclick={() => wordPanelTab = "annotate"}
                     >
                         Annotate
@@ -1125,7 +1170,12 @@
                 </div>
                 <!-- Tab content -->
                 <div class="p-4">
-                    <div class:hidden={wordPanelTab !== "lemmatize"}>
+                    <div
+                        id="word-panel-lemmatize"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-lemmatize"
+                        class:hidden={wordPanelTab !== "lemmatize"}
+                    >
                         {#key selectedWordIndex}
                             <Lemmatizer
                                 facsimile={selectedWordFacsimile || ""}
@@ -1137,7 +1187,12 @@
                             />
                         {/key}
                     </div>
-                    <div class:hidden={wordPanelTab !== "annotate"}>
+                    <div
+                        id="word-panel-annotate"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-annotate"
+                        class:hidden={wordPanelTab !== "annotate"}
+                    >
                         <AnnotationPanel
                             facsimile={selectedWordFacsimile || ""}
                             diplomatic={selectedWordDiplomatic}
@@ -1182,17 +1237,42 @@
         flex-shrink: 0;
     }
 
+    /* A grip in the middle: base-300 alone is too close to the panes' background to be
+       seen (needs 3:1); base-content at 60% keeps 3:1 in both themes */
+    :global(.splitpanes.themed .splitpanes__splitter::after) {
+        content: "";
+        position: absolute;
+        inset: 0;
+        margin: auto;
+        border-radius: 1px;
+        background-color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+    }
+
+    :global(.splitpanes.themed .splitpanes__splitter:hover::after) {
+        background-color: var(--color-primary-content);
+    }
+
+    :global(.splitpanes.themed.splitpanes--vertical > .splitpanes__splitter::after) {
+        width: 2px;
+        height: 2rem;
+    }
+
+    :global(.splitpanes.themed.splitpanes--horizontal > .splitpanes__splitter::after) {
+        width: 2rem;
+        height: 2px;
+    }
+
     :global(.splitpanes.themed .splitpanes__splitter:hover) {
         background-color: var(--color-primary);
     }
 
     :global(.splitpanes.themed.splitpanes--vertical > .splitpanes__splitter) {
-        width: 6px;
+        width: 8px;
         cursor: col-resize;
     }
 
     :global(.splitpanes.themed.splitpanes--horizontal > .splitpanes__splitter) {
-        height: 6px;
+        height: 8px;
         cursor: row-resize;
     }
 </style>

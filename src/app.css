@@ -204,13 +204,26 @@ body {
 
 .cm-search .cm-close-search:hover {
     opacity: 1;
-    color: var(--color-error);
+    color: var(--error-text);
     background-color: color-mix(in oklch, var(--color-base-content) 10%, transparent);
 }
 
-/* CodeMirror syntax highlighting - theme aware */
+/*
+ * Status colours as text. The themes' error and warning are too light for text in
+ * caramellatte, so text in those colours is blended towards base-content just enough
+ * for 4.5:1 in both themes (docs/UI_STANDARDS.md, Accessibility). They stay a brick
+ * red and an amber brown there, and change little in coffee.
+ */
+:root {
+	--error-text: color-mix(in oklch, var(--color-error) 55%, var(--color-base-content));
+	--warning-text: color-mix(in oklch, var(--color-warning) 35%, var(--color-base-content));
+}
+
+/* CodeMirror syntax highlighting - theme aware. These rules win over
+   daisyHighlightStyle (src/lib/editor/theme.ts), whose styles CodeMirror inserts
+   at the start of <head>; that one shows only where these set no colour */
 .cmt-keyword {
-	color: var(--color-error);
+	color: var(--error-text);
 	font-weight: bold;
 }
 
@@ -223,12 +236,12 @@ body {
 }
 
 .cmt-comment {
-	color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+	color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
 	font-style: italic;
 }
 
 .cmt-emphasis {
-	color: var(--color-warning);
+	color: var(--warning-text);
 	font-style: italic;
 }
 
@@ -237,7 +250,7 @@ body {
 }
 
 .cmt-deleted {
-	color: var(--color-error);
+	color: var(--error-text);
 	text-decoration: line-through;
 }
 
@@ -252,7 +265,7 @@ body {
 }
 
 .cmt-separator {
-	color: var(--color-warning);
+	color: var(--warning-text);
 	font-weight: bold;
 }
 

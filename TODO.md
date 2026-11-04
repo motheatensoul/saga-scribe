@@ -5,18 +5,15 @@ when it is done (and record it in CHANGELOG.md if users notice).
 
 ## Interface
 
-- **Accessibility review** beyond Svelte's compile-time a11y checks (which pass):
-  - keyboard: every action reachable and visible focus everywhere, including the word
-    panel, entity browser, metadata editor, template manager and the export menu; focus
-    moves into dialogs when they open and back when they close;
+- **Accessibility review, remaining parts.** Done so far (dialog focus, tab keys, names,
+  contrast) and the rules that follow are in "Accessibility" in
+  `docs/UI_STANDARDS.md`; record new findings there too. Still to do:
+  - keyboard: work through the main workflow in the running app with the keyboard alone,
+    to confirm what code review and unit tests found (e.g. that focus lands well in each
+    dialog and returns to the opener);
   - screen readers: try Orca (Linux), VoiceOver (macOS) and NVDA (Windows) on the main
-    workflow (transcribe, open a word, lemmatize, export); icon-only buttons need
-    accessible names, not just `title` (done for the toolbar and editor header, not yet
-    elsewhere, e.g. the preview and the dialogs);
-  - contrast: check both themes (caramellatte, coffee) against WCAG AA, e.g. disabled
-    toolbar buttons and the faint marks for suggested lemmas;
-  - zoom and font size: the layout at 200% zoom and with the largest editor font.
-  Record what's checked and the rules that follow from it in `docs/UI_STANDARDS.md`.
+    workflow (transcribe, open a word, lemmatize, export);
+  - zoom and font size: the layout at 200% zoom and with the largest editor font (24 px).
 
 ## Distribution
 
