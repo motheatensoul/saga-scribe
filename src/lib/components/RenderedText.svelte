@@ -1,5 +1,6 @@
 <script lang="ts">
     import { tick } from 'svelte';
+    import { CircleX } from '@lucide/svelte';
     import { entityStore } from '$lib/stores/entities';
     import { getInflections } from '$lib/stores/dictionary';
     import type { AnnotationType } from '$lib/stores/annotations';
@@ -212,7 +213,8 @@
 
 <div class="rendered-text font-serif text-lg leading-loose relative">
     {#if validationState.lastResult && !validationState.lastResult.valid}
-         <div class="absolute top-0 right-0 p-2 text-xs text-error opacity-50 hover:opacity-100 transition-opacity z-10">
+         <div class="absolute top-0 right-0 m-1 px-2 py-1 rounded bg-base-100/95 text-xs flex items-center gap-1 z-10">
+            <CircleX size={14} class="text-error" aria-hidden="true" />
             {validationState.lastResult.errors.length} schema errors
          </div>
     {/if}
@@ -243,7 +245,7 @@
                     />
                 </circle>
             </svg>
-            <p class="mt-4 text-base-content/70">Rendering preview...</p>
+            <p class="mt-4 text-base-content/80">Rendering preview...</p>
         </div>
     {:else if document && document.pages.length > 0}
         <!-- Page navigation header -->
@@ -256,8 +258,9 @@
                         onclick={() => goToPage(0)}
                         disabled={currentPageIndex === 0}
                         title="First page"
+                        aria-label="First page"
                     >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" aria-hidden="true" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M15.707 15.707a1 1 0 01-1.414 0l-5-5a1 1 0 010-1.414l5-5a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 010 1.414zm-6 0a1 1 0 01-1.414 0l-5-5a1 1 0 010-1.414l5-5a1 1 0 011.414 1.414L5.414 10l4.293 4.293a1 1 0 010 1.414z" clip-rule="evenodd" />
                         </svg>
                     </button>
@@ -267,8 +270,9 @@
                         onclick={goToPrevPage}
                         disabled={currentPageIndex === 0}
                         title="Previous page"
+                        aria-label="Previous page"
                     >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" aria-hidden="true" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
                         </svg>
                     </button>
@@ -277,13 +281,14 @@
                 <div class="flex items-center gap-2">
                     <select
                         class="select select-bordered select-xs"
+                        aria-label="Page"
                         bind:value={currentPageIndex}
                     >
                         {#each document.pages as page, i}
                             <option value={i}>{page.pageNumber}</option>
                         {/each}
                     </select>
-                    <span class="text-xs text-base-content/60">
+                    <span class="text-xs text-base-content/80">
                         of {document.pages.length}
                     </span>
                 </div>
@@ -295,8 +300,9 @@
                         onclick={goToNextPage}
                         disabled={currentPageIndex === document.pages.length - 1}
                         title="Next page"
+                        aria-label="Next page"
                     >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" aria-hidden="true" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
                         </svg>
                     </button>
@@ -306,8 +312,9 @@
                         onclick={() => document && goToPage(document.pages.length - 1)}
                         disabled={!document || currentPageIndex === document.pages.length - 1}
                         title="Last page"
+                        aria-label="Last page"
                     >
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" aria-hidden="true" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M4.293 15.707a1 1 0 010-1.414L8.586 10 4.293 5.707a1 1 0 011.414-1.414l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0zm6 0a1 1 0 010-1.414L14.586 10l-4.293-4.293a1 1 0 011.414-1.414l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0z" clip-rule="evenodd" />
                         </svg>
                     </button>
@@ -316,7 +323,7 @@
         {/if}
 
         <!-- Document stats bar -->
-        <div class="px-4 py-1 text-xs text-base-content/50 border-b border-base-200">
+        <div class="px-4 py-1 text-xs text-base-content/80 border-b border-base-200">
             {document.totalWords.toLocaleString()} words / {document.totalTokens.toLocaleString()} tokens
             {#if document.pages.length > 1}
                 / {document.pages.length} pages
@@ -365,7 +372,7 @@
             {/each}
         </div>
     {:else}
-        <div class="p-4 text-base-content/50 text-center">
+        <div class="p-4 text-base-content/80 text-center">
             No content to display
         </div>
     {/if}
@@ -394,15 +401,27 @@
         background-color: color-mix(in oklch, var(--color-base-200) 50%, transparent);
     }
 
+    /* An outline, not the border: the state classes below (confirmed, suggestion,
+       annotations) set the border and would hide the focus otherwise */
     .word-token:focus {
         outline: none;
-        border-color: var(--color-primary);
-        background-color: color-mix(in oklch, var(--color-primary) 10%, transparent);
     }
 
-    /* Confirmed words - solid success styling */
+    .word-token:focus-visible {
+        outline: 2px solid var(--color-primary);
+        outline-offset: 1px;
+    }
+
+    /*
+     * Lemma state: assigned is a solid green outline, thicker underneath, on a green
+     * tint; suggested is a dotted line underneath. Notes have a dashed one, so the three
+     * line styles stay apart. Top and bottom borders don't change the line height; the
+     * sides stay 1px so words don't get wider. Marks need 3:1 against the background
+     * (docs/UI_STANDARDS.md, Accessibility).
+     */
     .word-token.is-confirmed {
         border-color: var(--color-success);
+        border-bottom-width: 2px;
         background-color: color-mix(in oklch, var(--color-success) 15%, transparent);
     }
 
@@ -411,32 +430,45 @@
         background-color: color-mix(in oklch, var(--color-success) 25%, transparent);
     }
 
-    /* Edited since import: lemma and normalized form are the original's */
+    /* Edited since import: lemma and normalized form are the original's. The wave tells
+       it apart; base-content at 60% keeps 3:1, which the light theme's warning doesn't */
     .word-token.is-edited {
-        text-decoration: underline wavy var(--color-warning);
+        text-decoration: underline wavy color-mix(in oklch, var(--color-base-content) 60%, transparent);
         text-underline-offset: 0.25em;
     }
 
-    /* Unconfirmed words with suggestions - faded styling */
+    /* Suggested lemma (known form, not confirmed). The line is base-content at 60%,
+       the faintest that keeps 3:1 in both themes; theme's warning is too light in the
+       light theme. The text no fainter than 0.8, which keeps 4.5:1 */
     .word-token.has-suggestion {
-        border-color: color-mix(in oklch, var(--color-warning) 30%, transparent);
-        opacity: 0.75;
+        border-bottom: 2px dotted color-mix(in oklch, var(--color-base-content) 60%, transparent);
+        opacity: 0.8;
     }
 
     .word-token.has-suggestion:hover {
-        border-color: var(--color-warning);
+        border-bottom-color: var(--color-base-content);
         background-color: color-mix(in oklch, var(--color-warning) 15%, transparent);
         opacity: 1;
     }
 
-    /* Words with notes - accent underline */
-    .word-token.has-note {
-        border-bottom: 2px dashed var(--color-accent);
+    /*
+     * Annotation marks. accent and secondary are too dark against the dark theme's
+     * background, so they are blended towards base-content just enough to keep 3:1 in
+     * both themes (accent 70%, secondary 55%; see docs/UI_STANDARDS.md)
+     */
+    .word-token {
+        --mark-note: color-mix(in oklch, var(--color-accent) 70%, var(--color-base-content));
+        --mark-semantic: color-mix(in oklch, var(--color-secondary) 55%, var(--color-base-content));
     }
 
-    /* Words with semantic annotations - secondary indicator */
+    /* Words with notes - dashed line underneath */
+    .word-token.has-note {
+        border-bottom: 2px dashed var(--mark-note);
+    }
+
+    /* Words with semantic annotations - solid line over */
     .word-token.has-semantic {
-        border-top: 2px solid var(--color-secondary);
+        border-top: 2px solid var(--mark-semantic);
     }
 
     /* Words with paleographic observations - info indicator */
@@ -446,8 +478,8 @@
 
     /* Combined states - show multiple indicators */
     .word-token.has-note.has-semantic {
-        border-bottom: 2px dashed var(--color-accent);
-        border-top: 2px solid var(--color-secondary);
+        border-bottom: 2px dashed var(--mark-note);
+        border-top: 2px solid var(--mark-semantic);
     }
 
     .word-token.has-paleographic.is-confirmed {

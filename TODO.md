@@ -3,21 +3,17 @@
 Known problems and planned work that isn't scheduled for a version yet. Remove an entry
 when it is done (and record it in CHANGELOG.md if users notice).
 
-## Bugs
+## Interface
 
-- **Ctrl+Shift+Z in the editor does two things.** CodeMirror's history keymap binds it to
-  redo, and the window's shortcut handler (`handleKeydown` in `src/routes/+page.svelte`)
-  binds it to "undo lemmatization" without checking whether the editor already handled the
-  key (`event.defaultPrevented`). Pressed in the editor, it redoes an editor change *and*
-  undoes a lemma. Decide which one owns the shortcut there (and likewise Ctrl+Shift+Y),
-  then update the Help dialog and `docs/user-guide.md`.
-
-## Development
-
-- **Nix flake for the development environment**: bun, the pinned Rust toolchain
-  (`rust-toolchain.toml`), the Tauri system libraries (WebKitGTK 4.1, librsvg,
-  libappindicator) and libxml2, so `nix develop` gives a working `bun run tauri dev`.
-  The README mentions it as planned.
+- **Accessibility review, remaining parts.** Done so far (dialog focus, tab keys, names,
+  contrast) and the rules that follow are in "Accessibility" in
+  `docs/UI_STANDARDS.md`; record new findings there too. Still to do:
+  - keyboard: work through the main workflow in the running app with the keyboard alone,
+    to confirm what code review and unit tests found (e.g. that focus lands well in each
+    dialog and returns to the opener);
+  - screen readers: try Orca (Linux), VoiceOver (macOS) and NVDA (Windows) on the main
+    workflow (transcribe, open a word, lemmatize, export);
+  - zoom and font size: the layout at 200% zoom and with the largest editor font (24 px).
 
 ## Distribution
 

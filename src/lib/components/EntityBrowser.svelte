@@ -10,7 +10,7 @@
     } from '$lib/tauri';
     
     //Icons
-    import { X as CloseButton, Plus, Trash2, Pencil } from '@lucide/svelte';
+    import { X as CloseButton, Plus, Trash2, Pencil, CircleX } from '@lucide/svelte';
 
     let { oninsert, onclose }: { oninsert?: (text: string) => void; onclose?: () => void } = $props();
 
@@ -94,13 +94,6 @@
     function handleKeydown(e: KeyboardEvent, name: string) {
         if (e.key === 'Enter') {
             handleSaveMapping(name);
-        }
-    }
-
-    function handleEntityKeydown(e: KeyboardEvent, name: string) {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            handleSelect(name);
         }
     }
 
@@ -220,7 +213,7 @@
 
 <div>
     <div class="flex justify-between items-center mb-4">
-        <h2 class="text-lg font-bold">Entity Browser</h2>
+        <h2 id="entity-browser-title" class="text-lg font-bold">Entity Browser</h2>
         <div class="flex gap-2">
             <button
                 class="btn btn-sm btn-ghost gap-2"
@@ -310,7 +303,9 @@
             </div>
 
             {#if creationError}
-                <div class="text-error text-xs">{creationError}</div>
+                <div role="alert" class="flex items-center gap-1 text-xs">
+                    <CircleX size={14} class="text-error shrink-0" aria-hidden="true" />{creationError}
+                </div>
             {/if}
 
             <div class="flex justify-end gap-2 mt-2">
@@ -336,10 +331,12 @@
         <input
             type="text"
             placeholder="Search entities..."
+            aria-label="Search entities"
+            data-autofocus
             bind:value={searchQuery}
             class="input input-bordered input-sm flex-1"
         />
-        <select bind:value={selectedCategory} class="select select-bordered select-sm min-w-32">
+        <select bind:value={selectedCategory} class="select select-bordered select-sm min-w-32" aria-label="Category">
             <option value={null}>All categories</option>
             {#each categories as category}
                 <option value={category}>{category}</option>
@@ -348,28 +345,36 @@
     </div>
 
     {#if !$entityStore.loaded}
-        <div class="text-center py-8 opacity-70">Loading entities...</div>
+        <div class="text-center py-8 opacity-80">Loading entities...</div>
     {:else if $entityStore.error}
-        <div class="text-center py-8 text-error">{$entityStore.error}</div>
+        <div class="alert alert-error alert-soft text-base-content my-4">
+            <CircleX size={18} class="text-error shrink-0" aria-hidden="true" />
+            <span>{$entityStore.error}</span>
+        </div>
     {:else}
-        <div class="overflow-y-auto max-h-96 -mx-2" role="listbox" aria-label="Entity list">
+        <!-- A list, not a listbox: each row holds buttons and, when open, a text field -->
+        <ul class="overflow-y-auto max-h-96 -mx-2" aria-label="Entities">
             {#each filteredEntities as [name, entity]}
                 {@const hasCustomMapping = name in $entityStore.customMappings}
                 {@const isSelected = selectedEntity === name}
-                <div class="border-b border-base-200 last:border-b-0">
+                <li class="border-b border-base-200 last:border-b-0">
+                    <!-- Clicking anywhere on the row is a mouse shortcut for the name button -->
+                    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
                     <div
                         class="grid grid-cols-[2rem_1fr_auto] grid-rows-2 gap-x-2 gap-y-0.5 w-full p-2 text-left rounded-lg hover:bg-base-200 cursor-pointer group"
-                        role="option"
-                        aria-selected={isSelected}
-                        tabindex="0"
                         class:bg-base-200={isSelected}
                         onclick={() => handleSelect(name)}
-                        onkeydown={(e) => handleEntityKeydown(e, name)}
                         title={entity.description}
                     >
-                        <span class="row-span-2 text-2xl flex items-center justify-center" style="font-family: 'Junicode', serif;">{entity.char}</span>
+                        <span class="row-span-2 text-2xl flex items-center justify-center" style="font-family: 'Junicode', serif;" aria-hidden="true">{entity.char}</span>
                         <span class="font-mono text-sm text-primary font-medium flex items-center gap-2">
-                            :{name}:
+                            <button
+                                type="button"
+                                class="text-left rounded focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 cursor-pointer"
+                                aria-expanded={isSelected}
+                                aria-controls={isSelected ? `entity-details-${name}` : undefined}
+                                onclick={(e) => { e.stopPropagation(); handleSelect(name); }}
+                            >:{name}:</button>
                             {#if name in $entityStore.customEntities}
                                 <span class="badge badge-xs badge-secondary">user</span>
                             {/if}
@@ -380,36 +385,40 @@
                         <div class="row-span-2 flex items-center gap-1">
                             {#if name in $entityStore.customEntities}
                                 <button
-                                    class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                                    class="btn btn-ghost btn-xs opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
                                     onclick={(e) => { e.stopPropagation(); handleEditEntity(name); }}
                                     title="Edit custom entity"
+                                    aria-label="Edit custom entity {name}"
                                 >
-                                    <Pencil size="14" />
+                                    <Pencil size="14" aria-hidden="true" />
                                 </button>
                                 <button
-                                    class="btn btn-ghost btn-xs text-error opacity-0 group-hover:opacity-100 transition-opacity"
+                                    class="btn btn-ghost btn-xs hover:bg-error/15 focus-visible:bg-error/15 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
                                     onclick={(e) => { e.stopPropagation(); handleDeleteEntity(name); }}
                                     title="Delete custom entity"
+                                    aria-label="Delete custom entity {name}"
                                 >
-                                    <Trash2 size="14" />
+                                    <Trash2 size="14" aria-hidden="true" />
                                 </button>
                             {/if}
                             <button
                                 class="btn btn-ghost btn-xs"
                                 onclick={(e) => { e.stopPropagation(); handleInsert(name); }}
                                 title="Insert entity"
+                                aria-label="Insert entity {name}"
                             >
-                                <Plus size="16" />
+                                <Plus size="16" aria-hidden="true" />
                             </button>
                         </div>
-                        <span class="text-xs opacity-70 truncate">{entity.description}</span>
+                        <span class="text-xs opacity-80 truncate">{entity.description}</span>
                     </div>
 
                     {#if isSelected}
-                        <div class="px-2 pb-2 pt-1 bg-base-200 rounded-b-lg">
+                        <div id="entity-details-{name}" class="px-2 pb-2 pt-1 bg-base-200 rounded-b-lg">
                             <div class="flex items-center gap-2">
-                                <span class="text-xs opacity-70 whitespace-nowrap">Translation:</span>
+                                <span class="text-xs opacity-80 whitespace-nowrap">Translation:</span>
                                 <input
+                                    aria-label="Translation of {name}"
                                     type="text"
                                     bind:value={editingTranslation}
                                     onblur={() => handleSaveMapping(name)}
@@ -427,19 +436,19 @@
                                     </button>
                                 {/if}
                             </div>
-                            <div class="text-xs opacity-50 mt-1">
+                            <div class="text-xs opacity-80 mt-1">
                                 Default: {$entityStore.baseMappings[name] ?? entity.char} | Char: {entity.char} | Unicode: {entity.unicode}
                             </div>
                         </div>
                     {/if}
-                </div>
+                </li>
             {:else}
-                <div class="text-center py-8 opacity-70">No entities found</div>
+                <li class="text-center py-8 opacity-80">No entities found</li>
             {/each}
-        </div>
+        </ul>
     {/if}
 
-    <div class="pt-4 border-t border-base-300 text-xs opacity-70">
+    <div class="pt-4 border-t border-base-300 text-xs opacity-80">
         {filteredEntities.length} entities
         {#if Object.keys($entityStore.customMappings).length > 0}
             | {Object.keys($entityStore.customMappings).length} custom mappings

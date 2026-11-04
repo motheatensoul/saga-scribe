@@ -1,5 +1,6 @@
 <script lang="ts">
     import { untrack } from 'svelte';
+    import { CircleX } from '@lucide/svelte';
     import { createXsltProcessor, loadStylesheetText, runXsltTransform } from '$lib/utils/xslt';
     import { entityStore } from '$lib/stores/entities';
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
@@ -264,7 +265,8 @@
 
 <div class="xslt-rendered p-4 text-lg leading-loose" bind:this={containerEl}>
     {#if error}
-        <div class="alert alert-error">
+        <div class="alert alert-error alert-soft text-base-content">
+            <CircleX size={18} class="text-error shrink-0" aria-hidden="true" />
             <span>{error}</span>
         </div>
     {:else if !xslProcessor}
@@ -288,7 +290,7 @@
             <span class="ml-2">Transforming XML...</span>
         </div>
     {:else if !renderedHtml}
-        <div class="text-base-content/50 italic">(No content to render)</div>
+        <div class="text-base-content/80 italic">(No content to render)</div>
     {:else}
         {@html renderedHtml}
     {/if}
@@ -336,37 +338,42 @@
         background-color: color-mix(in oklch, var(--color-base-200) 50%, transparent);
     }
 
+    /* Lemma marks as in RenderedText.svelte: solid for confirmed, dotted for suggested */
     .xslt-rendered :global(.word.is-confirmed) {
         border-color: var(--color-success);
+        border-bottom-width: 2px;
         background-color: color-mix(in oklch, var(--color-success) 15%, transparent);
     }
 
     .xslt-rendered :global(.word.has-suggestion) {
-        border-color: color-mix(in oklch, var(--color-warning) 30%, transparent);
-        opacity: 0.75;
+        border-bottom: 2px dotted color-mix(in oklch, var(--color-base-content) 60%, transparent);
+        opacity: 0.8;
     }
 
     .xslt-rendered :global(.word.has-suggestion:hover) {
-        border-color: var(--color-warning);
+        border-bottom-color: var(--color-base-content);
         background-color: color-mix(in oklch, var(--color-warning) 15%, transparent);
         opacity: 1;
     }
 
     /* Edited since import: lemma and normalized form are the original's */
     .xslt-rendered :global(.word.is-edited) {
-        text-decoration: underline wavy var(--color-warning);
+        text-decoration: underline wavy color-mix(in oklch, var(--color-base-content) 60%, transparent);
         text-underline-offset: 0.25em;
     }
 
+    /* Editorial marks: set off from the text by opacity, but no fainter than 0.8,
+       which keeps 4.5:1 in both themes */
+
     /* Hyphen at the end of a line that breaks a word */
     .xslt-rendered :global(.word-break-mark) {
-        opacity: 0.5;
+        opacity: 0.8;
         user-select: none;
     }
 
     /* Start of a paragraph; paragraphs run inline, as lines decide the layout */
     .xslt-rendered :global(.paragraph-mark) {
-        opacity: 0.35;
+        opacity: 0.8;
         margin-right: 0.25rem;
         user-select: none;
     }
@@ -389,7 +396,7 @@
     }
 
     .xslt-rendered :global(.char[data-rend*="cRed"]) {
-        color: var(--color-error);
+        color: var(--error-text);
     }
 
     .xslt-rendered :global(.char[data-rend*="cGreen"]) {

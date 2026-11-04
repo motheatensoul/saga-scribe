@@ -62,7 +62,7 @@ export const daisyHighlightStyle = HighlightStyle.define([
   { tag: [t.definition(t.name), t.separator], color: "var(--color-base-content)" },
   { tag: [t.typeName, t.className, t.number, t.changed, t.annotation, t.modifier, t.self, t.namespace], color: "var(--color-info)" },
   { tag: [t.operator, t.operatorKeyword, t.url, t.escape, t.regexp, t.link, t.special(t.string)], color: "var(--color-success)" },
-  { tag: [t.meta, t.comment], color: "color-mix(in oklch, var(--color-base-content) 50%, transparent)", fontStyle: "italic" },
+  { tag: [t.meta, t.comment], color: "color-mix(in oklch, var(--color-base-content) 80%, transparent)", fontStyle: "italic" },
   { tag: t.strong, fontWeight: "bold" },
   { tag: t.emphasis, fontStyle: "italic" },
   { tag: t.strikethrough, textDecoration: "line-through" },
@@ -70,7 +70,7 @@ export const daisyHighlightStyle = HighlightStyle.define([
   { tag: t.heading, fontWeight: "bold", color: "var(--color-primary)" },
   { tag: [t.atom, t.bool, t.special(t.variableName)], color: "var(--color-warning)" },
   { tag: [t.processingInstruction, t.string, t.inserted], color: "var(--color-success)" },
-  { tag: t.invalid, color: "var(--color-error)" },
+  { tag: t.invalid, color: "var(--error-text)" },
 ]);
 
 export const daisyExtensions = [

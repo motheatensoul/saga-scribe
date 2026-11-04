@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { tablist } from "$lib/utils/tabs";
     import RenderedText from './RenderedText.svelte';
     import XsltRenderer from './XsltRenderer.svelte';
     import XmlPreview from './XmlPreview.svelte';
@@ -64,11 +65,14 @@
                 Rendered Text
             {/if}
         </span>
-        <div class="flex gap-1" role="tablist" aria-label="Preview mode">
+        <div class="flex gap-1" role="tablist" aria-label="Preview mode" {@attach tablist}>
             <button
                 type="button"
                 role="tab"
+                id="preview-tab-rendered"
                 aria-selected={viewMode === 'rendered'}
+                aria-controls="preview-panel-rendered"
+                tabindex={viewMode === 'rendered' ? 0 : -1}
                 class="btn btn-xs xl:btn-sm text-xs xl:text-sm"
                 class:btn-primary={viewMode === 'rendered'}
                 class:btn-ghost={viewMode !== 'rendered'}
@@ -79,7 +83,10 @@
             <button
                 type="button"
                 role="tab"
+                id="preview-tab-xslt"
                 aria-selected={viewMode === 'xslt'}
+                aria-controls="preview-panel-xslt"
+                tabindex={viewMode === 'xslt' ? 0 : -1}
                 class="btn btn-xs xl:btn-sm text-xs xl:text-sm"
                 class:btn-primary={viewMode === 'xslt'}
                 class:btn-ghost={viewMode !== 'xslt'}
@@ -91,7 +98,10 @@
             <button
                 type="button"
                 role="tab"
+                id="preview-tab-xml"
                 aria-selected={viewMode === 'xml'}
+                aria-controls="preview-panel-xml"
+                tabindex={viewMode === 'xml' ? 0 : -1}
                 class="btn btn-xs xl:btn-sm text-xs xl:text-sm"
                 class:btn-primary={viewMode === 'xml'}
                 class:btn-ghost={viewMode !== 'xml'}
@@ -104,17 +114,35 @@
     <div class="flex-1 overflow-hidden h-full relative">
         <!-- Lazy mount + keep alive: only mount when first visited, then keep mounted but hidden -->
         {#if visited.rendered}
-            <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'rendered'}>
+            <div
+                id="preview-panel-rendered"
+                class="absolute inset-0 overflow-auto"
+                class:hidden={viewMode !== 'rendered'}
+                role="tabpanel"
+                aria-labelledby="preview-tab-rendered"
+            >
                 <RenderedText content={shown} marks={shownMarks} active={viewMode === 'rendered'} {onwordclick} />
             </div>
         {/if}
         {#if visited.xslt}
-            <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'xslt'}>
+            <div
+                id="preview-panel-xslt"
+                class="absolute inset-0 overflow-auto"
+                class:hidden={viewMode !== 'xslt'}
+                role="tabpanel"
+                aria-labelledby="preview-tab-xslt"
+            >
                 <XsltRenderer content={shown} {xslPath} active={viewMode === 'xslt'} {onwordclick} />
             </div>
         {/if}
         {#if visited.xml}
-            <div class="absolute inset-0 overflow-auto" class:hidden={viewMode !== 'xml'}>
+            <div
+                id="preview-panel-xml"
+                class="absolute inset-0 overflow-auto"
+                class:hidden={viewMode !== 'xml'}
+                role="tabpanel"
+                aria-labelledby="preview-tab-xml"
+            >
                 <XmlPreview content={shown} active={viewMode === 'xml'} />
             </div>
         {/if}

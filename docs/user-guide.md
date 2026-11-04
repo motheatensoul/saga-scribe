@@ -26,11 +26,15 @@ For installation, see the [README](../README.md#getting-started).
 
 The window is divided into three parts:
 
-- **Toolbar** (top): opening, importing, saving and exporting; the template in use; undo and
-  redo of lemmatization; help and settings.
+- **Toolbar** (top), in groups from left to right: the file (**Open**, **Import**, **Save**,
+  **Export**); the document (the template in use, the template manager, **Metadata** and
+  **Validate**); undo and redo of lemmatization; and, at the right, the application log,
+  help and settings, followed by the file's name. In a narrow window the buttons show only
+  their icons (hover over one for its name), and groups that don't fit move to a second
+  row.
 - **Editor** (left): the transcription, written in the shorthand described below. Its header
-  has buttons for undo and redo, search and replace, the entity browser (**ꝥ**), the
-  template manager, the metadata editor, XML validation and the application log.
+  has the buttons that act on the text: undo and redo, search and replace, and the entity
+  browser (**ꝥ**).
 - **Preview** (right): the compiled document, shown as reading text, through an XSLT
   stylesheet, or as XML.
 
@@ -130,7 +134,7 @@ the cursor.
 
 A template supplies the parts of the TEI document around the transcription (the header and
 the closing tags) and decides how the transcription is encoded. The template in use is
-chosen in the toolbar. Templates are managed with the template button in the editor header.
+chosen in the toolbar. Templates are managed with the template button next to it.
 
 Two templates are built in:
 
@@ -155,7 +159,7 @@ The default template for new projects is set in [Settings](#settings).
 
 ## Manuscript metadata
 
-The metadata editor (button in the editor header) records information about the edition
+The metadata editor (**Metadata** in the toolbar) records information about the edition
 and the manuscript, in collapsible sections:
 
 - **Title & Responsibility**: title, subtitle, author, editors (with ORCID) and other
@@ -239,6 +243,10 @@ is chosen in [Settings](#settings), where your own stylesheets can also be impor
 same stylesheet is used for HTML and PDF export. Stylesheets are XSLT 1.0, as supported by
 the system's web engine.
 
+The XSLT view shows the document as the stylesheet will produce it, so its words can be
+clicked but not reached with the keyboard. To open the word panel from the keyboard, use
+the Text view, where Tab moves from word to word and Enter opens the word panel.
+
 #### Faster previews with your own stylesheets
 
 Applying a stylesheet to a whole manuscript can take seconds, which delays the preview
@@ -281,12 +289,13 @@ preview to open the word panel; its **Lemmatize** tab shows:
 **Save** confirms the lemma and analysis for this occurrence of the word. **Remove lemma**
 removes them again; a normalized form entered by hand is kept.
 
-In the Text view, words with a confirmed lemma are marked; words whose form has a known
-analysis that has not been confirmed for this occurrence are marked more faintly. Hovering
-over a word shows its lemma and analysis.
+In the Text view, words with a confirmed lemma have a green outline and background; words
+whose form has a known analysis that has not been confirmed for this occurrence have a
+dotted line underneath. Hovering over a word shows its lemma and analysis.
 
 Lemmatization has its own undo and redo (toolbar, or **Ctrl+Shift+Z** / **Ctrl+Shift+Y**),
-separate from the editor's.
+separate from the editor's. In the editor, **Ctrl+Shift+Z** redoes a text change instead, so
+undo a lemma there with the toolbar's **Lemma Undo**.
 
 Lemmas are stored by word, and follow their words when text is inserted or deleted before
 them. If a word is edited slightly (for example to correct a typo, changing at most half
@@ -375,7 +384,7 @@ Annotations are saved in the project. For imported TEI files, see
 
 ## Validation
 
-The validation button in the editor header checks the compiled document against a schema:
+**Validate** in the toolbar checks the compiled document against a schema:
 **TEI P5** (`tei_all`) or **MENOTA P5** (RelaxNG). Errors are listed with their line
 numbers where available.
 
@@ -431,6 +440,12 @@ The **Export** menu in the toolbar offers:
 
 Exports are refused while the shorthand contains errors.
 
+HTML and PDF exports show their progress and can be cancelled. If you switch to another
+window while an HTML or PDF export or an import is running, a system notification tells
+you when it has finished or failed. On macOS, the system asks once whether Saga-Scribe may
+show notifications; this and the notifications themselves can be changed in the system
+settings.
+
 ## Settings
 
 The **Settings** dialog (gear icon in the toolbar) has these sections:
@@ -455,17 +470,22 @@ shortcuts and the shorthand.
 | ---------------- | ----------------------------- |
 | Ctrl+O           | Open project or shorthand file |
 | Ctrl+S           | Save project                  |
-| Ctrl+Shift+Z     | Undo lemmatization            |
+| Ctrl+Shift+Z     | Undo lemmatization (outside the editor) |
 | Ctrl+Shift+Y     | Redo lemmatization            |
 | F1 or Ctrl+/     | Help                          |
 | Escape           | Close dialog or panel         |
+| ← / →            | Previous / next tab (in the preview, the word panel and the help) |
+
+When a dialog or panel opens, the keyboard focus moves into it (to the search field in the
+word panel and the entity browser); Tab and Shift+Tab stay within it until it closes, and
+focus then returns to where it was, such as the word that opened the word panel.
 
 ### Editor
 
 | Shortcut         | Action                                      |
 | ---------------- | ------------------------------------------- |
 | Ctrl+Z           | Undo                                        |
-| Ctrl+Y           | Redo                                        |
+| Ctrl+Y or Ctrl+Shift+Z | Redo                                  |
 | Ctrl+F           | Search and replace                          |
 | F3 or Ctrl+G     | Next match                                  |
 | Shift+F3 or Ctrl+Shift+G | Previous match                      |
@@ -486,9 +506,9 @@ margin or the keyboard:
 
 ## Logs and reporting problems
 
-The log button (at the right of the editor header) shows the application log: loading of
-dictionaries and entities, compilation errors, and the results of imports and exports. It
-turns red when there are errors. Errors in the shorthand are also underlined in the editor.
+The log button (at the right of the toolbar, before help and settings) shows the application log: loading of
+dictionaries and entities, compilation errors, and the results of imports and exports. Its icon
+changes to a warning sign when there are errors. Errors in the shorthand are also underlined in the editor.
 
 When reporting a problem, please include the relevant log entries. If Saga-Scribe becomes
 slow, start it with the option `--perf-log`; it then records how long each step takes in a

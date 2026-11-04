@@ -21,7 +21,7 @@ the encoding recommendations of the [Medieval Nordic Text Archive (MENOTA)](http
 and was developed with Old Norse material in mind, though the shorthand itself is not
 specific to any language.
 
-**Status:** beta, version 0.7.0. Saga-Scribe is usable for full-length manuscripts, but
+**Status:** beta, version 0.8.0. Saga-Scribe is usable for full-length manuscripts, but
 features and the interface may still change between versions. Projects saved with older
 versions remain loadable. Please [report problems to the issue tracker](https://github.com/motheatensoul/saga-scribe/issues).
 
@@ -198,7 +198,9 @@ bun run test        # frontend (Vitest) and Rust tests
 bun run check:all   # svelte-check and cargo clippy
 ```
 
-A Nix flake for the development environment is planned.
+With [Nix](https://nixos.org/) (flakes enabled), `nix develop` gives a shell with bun, the
+pinned Rust toolchain and the system libraries, on Linux and Apple Silicon macOS; run
+`bun install` and the commands above in it.
 
 Saga-Scribe is written in Svelte 5 and TypeScript (frontend, with CodeMirror 6 as the
 editor) and Rust (the shorthand compiler, TEI import and everything else on the backend),
