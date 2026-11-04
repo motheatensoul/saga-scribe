@@ -6,6 +6,11 @@ To ensure a consistent user experience, please adhere to the following UI standa
 
 *   **DaisyUI & Tailwind:** Exclusively use Tailwind CSS utility classes and DaisyUI component classes.
 *   **Theming:** Never hardcode colors (e.g., `bg-white`, `text-black`). Use semantic color variables (`bg-base-100`, `text-base-content`, `text-primary`, `bg-error`, etc.) to ensure compatibility with both light ("caramellatte") and dark ("coffee") themes.
+*   **Theme changes:** the themes are daisyUI's, with one change in `src/app.css`: in caramellatte,
+    whose `primary` is pure black, `primary` takes the theme's own `secondary` (dark brown) and
+    `secondary` its `accent` (medium brown). Such overrides are plain rules outside any CSS layer:
+    a `@plugin 'daisyui/theme'` override loses to daisyUI's own theme selector. Don't otherwise
+    change theme colours to fix contrast; change how they are used (see Accessibility).
 *   **Icons:** Use `@lucide/svelte` for all icons (e.g. `import { X as CloseButton } from "@lucide/svelte"`).
 
 ## Components

@@ -3,6 +3,24 @@
 	themes: caramellatte --default, coffee --prefersdark;
 }
 
+/*
+ * caramellatte's primary is pure black, which makes buttons, the active tab and
+ * focus rings harsh on its cream background. Shift its colours one step: primary
+ * takes the theme's own secondary (dark coffee brown), secondary its accent (so a
+ * primary button turning secondary on hover still changes). Values copied from
+ * daisyUI's caramellatte; all pairs keep WCAG AA (docs/UI_STANDARDS.md).
+ *
+ * A plain rule, outside any layer, on purpose: daisyUI's themes live in
+ * `@layer base` behind an `:is()` selector of high specificity, which a
+ * `@plugin 'daisyui/theme'` override in the same layer doesn't beat.
+ */
+[data-theme='caramellatte'] {
+	--color-primary: oklch(22.45% 0.075 37.85);
+	--color-primary-content: oklch(90% 0.076 70.697);
+	--color-secondary: oklch(46.44% 0.111 37.85);
+	--color-secondary-content: oklch(90% 0.076 70.697);
+}
+
 /* Junicode variable font for MENOTA/MUFI medieval characters */
 /* The variable font supports weight range 300-700, width 75-125, and ENLA axis */
 @font-face {

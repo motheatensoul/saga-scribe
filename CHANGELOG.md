@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Toolbar grouped by what the actions apply to**: file (Open, Import, Save, Export), document (template, template manager, **Metadata**, **Validate**), lemmatization (undo, redo) and application (log, help, settings). The template manager, metadata editor, validation and log moved there from the editor header, which now has only the actions on the text (undo, redo, search, entities). In a narrow window the toolbar shows icons only and wraps whole groups onto a second row
+- **Light theme without black buttons**: buttons, the active tab, focus outlines and other accents use a dark coffee brown instead of black, and turn a lighter brown when pointed at
 
 ### Fixed
 
