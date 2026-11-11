@@ -1283,7 +1283,8 @@ fn is_entity_punctuation(dsl: &str) -> bool {
 ///   punctuation (`:middot:`), which is set off by spaces
 /// - Paragraph starts: `.p`, set off by spaces
 /// - Line breaks: newline + `//n` + space
-/// - Page breaks: newline + `///n`
+/// - Page breaks: newline + `///n`; from rules 2 on, a word or punctuation
+///   right after one starts a new line, so the page number doesn't run into it
 /// - Structural elements are skipped (not represented in DSL)
 ///
 /// `dsl_rules` is the document's [`DSL_RULES`](super::segments::DSL_RULES) version.
@@ -1295,6 +1296,9 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
     for segment in segments {
         match segment {
             Segment::Word { dsl_content, .. } => {
+                if last_was_linebreak && dsl_rules >= 2 {
+                    dsl.push('\n');
+                }
                 // Only add space if there was whitespace in the source XML
                 if pending_space && !last_was_linebreak {
                     dsl.push(' ');
@@ -1315,6 +1319,9 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 pending_space = true;
             }
             Segment::Punctuation { dsl_content, .. } => {
+                if last_was_linebreak && dsl_rules >= 2 {
+                    dsl.push('\n');
+                }
                 // Punctuation typically follows immediately after word (no space)
                 dsl.push_str(dsl_content);
                 last_was_linebreak = false;

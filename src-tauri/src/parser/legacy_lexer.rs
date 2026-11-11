@@ -174,7 +174,8 @@ impl<'a> LegacyLexer<'a> {
             if remaining.starts_with("^{") {
                 self.flush_text(&mut doc, &mut text_buf);
                 self.pos += 2;
-                let text = self.consume_bracketed('}')?;
+                // Since 0.8.0 notes nest on braces only, like the syntax tree's
+                let text = self.consume_braced_block()?;
                 doc.nodes.push(Node::Note(text));
                 continue;
             }

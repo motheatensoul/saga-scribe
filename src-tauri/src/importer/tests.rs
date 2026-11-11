@@ -25,8 +25,9 @@ fn test_import_lb() {
 fn test_import_pb() {
     let xml = "<body>page 1<pb/>page 2<pb n=\"10v\"/>page 3</body>";
     let result = parse(xml).unwrap();
-    // pb adds a newline BEFORE the marker
-    assert_eq!(result.dsl, "page 1\n///page 2\n///10vpage 3");
+    // pb adds a newline before the marker, and the text after it starts a new
+    // line (glued, "///10vpage" would read as the page number)
+    assert_eq!(result.dsl, "page 1\n///\npage 2\n///10v\npage 3");
 }
 
 #[test]
@@ -1345,6 +1346,32 @@ fn test_dsl_compiled_and_reimported_reads_the_same() {
             "multi_level={multi_level}\nXML: {xml}\nDSL: {reread}"
         );
     }
+}
+
+#[test]
+fn test_content_after_a_page_break_is_set_off_from_its_number() {
+    // A note right after the page break (Holm A 49) became part of the number
+    let xml = r#"<body><p><pb ed="ms" n="109r"/><note>Förekomst <hi>av</hi></note>
+<w>jn</w>.</p></body>"#;
+    let import = parse(xml).unwrap();
+    assert!(import.dsl.contains("///109r\n^{"), "{}", import.dsl);
+    let (original, body) = imported_roundtrip(xml, |d| d.to_string()).unwrap();
+    assert_eq!(original, body);
+
+    // Documents imported with rules 1 keep their glued DSL
+    let doc = import.imported_document.unwrap();
+    let stored = crate::importer::tei::extraction::segments_to_dsl(&doc.segments, 1);
+    assert!(stored.contains("///109r^{"), "{}", stored);
+}
+
+#[test]
+fn test_note_with_angle_bracket_imports_as_valid_dsl() {
+    // AM 243 b α: "ð < t" records what a letter was corrected from
+    let xml = r#"<body><p><w>seð</w><note>ð &lt; t</note> <w>annarra</w></p></body>"#;
+    let import = parse(xml).unwrap();
+    assert!(crate::parser::syntax::parse(&import.dsl).diagnostics.is_empty(), "{}", import.dsl);
+    let (original, body) = imported_roundtrip(xml, |d| d.to_string()).unwrap();
+    assert_eq!(original, body);
 }
 
 #[test]

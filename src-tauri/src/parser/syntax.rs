@@ -21,7 +21,8 @@
 //! Constructs are recognized by prefix, longest first, as the original lexer
 //! did; see [`Parser::parse_sequence`] for the order. Content of inline
 //! constructs (`-{}-`, `+{}+`, `?{}?`, `^{}`, `<>`, `.abbr[]{}`) is plain text;
-//! content of block constructs is DSL.
+//! content of block constructs is DSL. In notes, as in blocks, only braces
+//! nest, so editorial prose like `^{ð < g}` closes at its brace.
 
 use super::ast::Node;
 use std::ops::Range;
@@ -279,8 +280,13 @@ impl<'a> Parser<'a> {
                     flush_text!(start);
                     Some((2, self.inline(start, Some('+'), |content| SyntaxKind::Addition { content })))
                 } else if rest.starts_with("^{") {
+                    // Free prose ("ð < g"): only braces nest, as in blocks
                     flush_text!(start);
-                    Some((2, self.inline(start, None, |content| SyntaxKind::Note { content })))
+                    self.pos += 2;
+                    let result = self
+                        .consume_braced_block()
+                        .map(|content| vec![self.node(SyntaxKind::Note { content }, start)]);
+                    Some((2, result))
                 } else if rest.starts_with("?{") {
                     flush_text!(start);
                     Some((2, self.inline(start, Some('?'), |content| SyntaxKind::Unclear { content })))
@@ -516,6 +522,23 @@ mod tests {
             texts,
             vec!["//1", " maþr ", ".abbr[k]{konungr}", " ", "-{x}-", " ", ":et:", " ", "~", "//2"]
         );
+    }
+
+    #[test]
+    fn test_notes_nest_on_braces_only() {
+        // Editors' notes say what a letter was corrected from: "ð < g"
+        let source = "seð^{ð < t} a ^{< ꝩarðingi} b ^{x {y} z}";
+        let tree = parse(source);
+        assert!(tree.diagnostics.is_empty(), "{:?}", tree.diagnostics);
+        let notes: Vec<&str> = tree
+            .nodes
+            .iter()
+            .filter_map(|n| match &n.kind {
+                SyntaxKind::Note { content } => Some(&source[content.clone()]),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(notes, vec!["ð < t", "< ꝩarðingi", "x {y} z"]);
     }
 
     #[test]

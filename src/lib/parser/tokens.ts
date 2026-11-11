@@ -155,7 +155,11 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
     }
     if (at("-{")) return inline(Deletion, "-");
     if (at("+{")) return inline(Addition, "+");
-    if (at("^{")) return inline(Note, null);
+    // Free prose ("ð < g"): only braces nest, as in blocks
+    if (at("^{")) {
+        const end = bracedBlock(peek, offset + 2);
+        return end < 0 ? { opener: 2 } : found(Note, end - offset);
+    }
     if (at("?{")) return inline(Unclear, "?");
     if (at(":")) {
         let end = offset + 1;

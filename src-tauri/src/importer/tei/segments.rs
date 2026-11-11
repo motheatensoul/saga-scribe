@@ -133,7 +133,9 @@ pub struct ImportedDocument {
 ///
 /// - 0: before 0.6.0
 /// - 1: entity punctuation (`:middot:`) is set off by spaces
-pub const DSL_RULES: u32 = 1;
+/// - 2: a word or punctuation right after a page break starts a new line
+///   (before, `///109r^{note}` read the note as part of the page number)
+pub const DSL_RULES: u32 = 2;
 
 impl ImportedDocument {
     /// Parses a manifest as stored in segments.json.
