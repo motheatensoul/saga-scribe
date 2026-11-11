@@ -47,7 +47,8 @@ saga-scribe/
 ├── static/                   # Fonts, entity and dictionary data, schemas, XSLT
 ├── docs/                     # User guide, UI standards
 ├── flatpak/                  # Flatpak manifest and AppStream metadata
-└── tests/fixtures/           # Shared test inputs (e.g. the shorthand corpus)
+├── tests/fixtures/           # Shared test inputs (e.g. the shorthand corpus)
+└── tests/corpus/             # Menota corpus for opt-in tests (downloaded, not committed)
 ```
 
 ## Making changes

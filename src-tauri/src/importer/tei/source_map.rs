@@ -34,6 +34,36 @@ impl SourceCursor {
         &self.src[self.pos..]
     }
 
+    /// The cursor's offset in the source.
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
+
+    /// Whether the source at the cursor starts with `text`.
+    pub fn at(&self, text: &str) -> bool {
+        self.rest().starts_with(text)
+    }
+
+    /// Moves the cursor `len` bytes on (to the end at most, on a character boundary).
+    pub fn advance(&mut self, len: usize) {
+        let mut to = (self.pos + len).min(self.src.len());
+        while !self.src.is_char_boundary(to) {
+            to += 1;
+        }
+        self.pos = to;
+    }
+
+    /// Skips whitespace (between top-level nodes, where it isn't a node).
+    pub fn skip_whitespace(&mut self) {
+        let trimmed = self.rest().trim_start_matches([' ', '\t', '\r', '\n']).len();
+        self.pos = self.src.len() - trimmed;
+    }
+
+    /// Whether the whole source has been consumed.
+    pub fn at_end(&self) -> bool {
+        self.pos == self.src.len()
+    }
+
     /// Consumes a complete element (start tag through matching end tag, or an
     /// empty-element tag) and returns its byte range.
     pub fn element(&mut self, qname: &str) -> Option<Range<usize>> {
@@ -85,7 +115,8 @@ impl SourceCursor {
         if !self.rest().starts_with("<!--") {
             return None;
         }
-        let end = self.rest().find("-->")?;
+        // From after the opener: in `<!-->x-->` the opener and the `>` read `-->`
+        let end = self.rest()[4..].find("-->")? + 4;
         self.pos += end + 3;
         Some(())
     }
@@ -230,12 +261,19 @@ pub fn tag_length(s: &str) -> Option<usize> {
 /// Replaces, inserts or removes an attribute inside a single start or empty tag,
 /// leaving the rest of the tag byte-for-byte unchanged.
 pub fn set_tag_attribute(tag: &str, name: &str, value: Option<&str>) -> String {
+    let escaped = value.map(super::helpers::escape_xml_attr);
+    set_tag_attribute_escaped(tag, name, escaped.as_deref())
+}
+
+/// Like [`set_tag_attribute`], with the value already escaped for a
+/// double-quoted attribute.
+pub fn set_tag_attribute_escaped(tag: &str, name: &str, escaped: Option<&str>) -> String {
     if let Some(range) = find_attribute(tag, name) {
         let mut out = String::with_capacity(tag.len());
-        match value {
+        match escaped {
             Some(v) => {
                 out.push_str(&tag[..range.start]);
-                out.push_str(&format!("{}=\"{}\"", name, super::helpers::escape_xml_attr(v)));
+                out.push_str(&format!("{}=\"{}\"", name, v));
                 out.push_str(&tag[range.end..]);
             }
             None => {
@@ -247,17 +285,11 @@ pub fn set_tag_attribute(tag: &str, name: &str, value: Option<&str>) -> String {
         }
         return out;
     }
-    match value {
+    match escaped {
         Some(v) => {
             let close = if tag.ends_with("/>") { tag.len() - 2 } else { tag.len() - 1 };
             let head = tag[..close].trim_end();
-            format!(
-                "{} {}=\"{}\"{}",
-                head,
-                name,
-                super::helpers::escape_xml_attr(v),
-                &tag[close..]
-            )
+            format!("{} {}=\"{}\"{}", head, name, v, &tag[close..])
         }
         None => tag.to_string(),
     }
@@ -347,6 +379,18 @@ mod tests {
         let mut cursor = SourceCursor::new(src);
         let span = cursor.element("w").unwrap();
         assert_eq!(&src[span], r#"<w a="x>y"><w>inner</w><!-- </w> --></w>"#);
+    }
+
+    #[test]
+    fn test_comment_starting_with_angle_bracket() {
+        // Well-formed: the comment's text is ">x</!" (Menota charter DN 1:90)
+        let src = "<a><!-->x</!--></a>";
+        let mut cursor = SourceCursor::new(src);
+        cursor.open_tag("a").unwrap();
+        cursor.comment().unwrap();
+        assert_eq!(cursor.pos(), "<a><!-->x</!-->".len());
+        let mut cursor = SourceCursor::new(src);
+        assert_eq!(cursor.element("a"), Some(0..src.len()));
     }
 
     #[test]

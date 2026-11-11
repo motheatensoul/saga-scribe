@@ -27,3 +27,6 @@ vite.config.ts.timestamp-*
 flatpak-build/
 flatpak-repo/
 *.flatpak
+
+# Menota corpus for the opt-in corpus tests (scripts/fetch-menota-corpus.sh)
+/tests/corpus/

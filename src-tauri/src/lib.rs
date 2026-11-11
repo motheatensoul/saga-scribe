@@ -1,6 +1,9 @@
 mod annotations;
 mod commands;
 mod dictionary;
+// Not used by the app until step 2 of docs/DOCUMENT_MODEL.md
+#[allow(dead_code, unused_imports)]
+mod document;
 mod identity;
 pub mod entities;
 mod importer;

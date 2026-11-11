@@ -1,6 +1,7 @@
 # Document model (design, draft)
 
-Status: design agreed, 2026-11-11. Nothing here is implemented yet. It replaces
+Status: design agreed, 2026-11-11. Step 1 is implemented (`src-tauri/src/document/`),
+not yet used by the app. It replaces
 the segment manifest and the patcher's way of writing edited words, and prepares the
 shorthand redesign (see "Shorthand (DSL)" in `TODO.md`).
 
