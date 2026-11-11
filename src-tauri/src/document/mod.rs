@@ -15,10 +15,12 @@
 //!   output with libxml2 again and compares it with the tree: use it for
 //!   anything that is saved.
 
+mod project;
 mod tree;
 mod write;
 
-pub use tree::{Attribute, Element, NodeId, NodeKind, Tree};
+pub use project::{find_body, project_body};
+pub use tree::Tree;
 
 #[cfg(test)]
 mod tests;

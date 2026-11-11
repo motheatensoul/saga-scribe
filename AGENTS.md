@@ -115,7 +115,7 @@ saga-scribe/
 ```
 
 ## Key Files
-- **Document tree:** `src-tauri/src/document/` (libxml2's parse copied into an arena with byte spans; the writer copies unchanged nodes from the original text; `write_checked` before anything is saved). See `docs/DOCUMENT_MODEL.md`; not used by the app until step 2
+- **Document tree:** `src-tauri/src/document/` (libxml2's parse copied into an arena with byte spans; the writer copies unchanged nodes from the original text; `write_checked` before anything is saved). `project.rs` turns the body into the importer's segments, rule for rule as the old extractor (`importer/tei/extraction.rs`, now kept for tests only as the projection's reference). See `docs/DOCUMENT_MODEL.md`
 - **DSL Parser:** `src-tauri/src/parser/syntax.rs` (parsing), `src-tauri/src/parser/compiler.rs`
 - **Editor highlighting:** `src/lib/parser/tei-dsl.grammar`, whose tokens come from `src/lib/parser/tokens.ts`: a rule-for-rule copy of `syntax.rs`'s scanning. Change both together (run `bun run build:grammar` after editing the grammar); the corpus test catches drift
 - **Word Tokenizer:** `src-tauri/src/parser/wordtokenizer.rs`
@@ -140,7 +140,7 @@ saga-scribe/
 
 ## Testing
 - Rust: `cd src-tauri; cargo test` (~280 tests: parser incl. differential tests against the original lexer, compiler, importer round-trip, normalizer, dictionary, the document tree)
-- Menota corpus (opt-in): `scripts/fetch-menota-corpus.sh` downloads the whole Menota catalogue (texts and charters) into `tests/corpus/menota` (not committed); `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --nocapture` runs the corpus gates of `docs/DOCUMENT_MODEL.md` (a few minutes). Run it when changing how XML is read or written
+- Menota corpus (opt-in): `scripts/fetch-menota-corpus.sh` downloads the whole Menota catalogue (texts and charters) into `tests/corpus/menota` (not committed); `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1 --nocapture` runs the corpus gates of `docs/DOCUMENT_MODEL.md` (a few minutes; one at a time, as each loads the whole corpus). Run it when changing how XML is read or written
 - Frontend: `bun run test:js` (rendered-text parsing, incremental rendering equivalence, XSLT sanitizing, text diff, highlighting grammar against the shared DSL corpus)
 - DSL corpus: `tests/fixtures/dsl-corpus.json` holds DSL inputs with the constructs the Rust parser finds; the editor's grammar must find the same (`src/lib/parser/corpus.test.ts`). After changing the DSL syntax or adding cases, regenerate it with `cd src-tauri; UPDATE_DSL_CORPUS=1 cargo test corpus` and review the diff
 - Note: jsdom has no `XSLTProcessor`; XSLT transforms themselves are not covered by unit tests.

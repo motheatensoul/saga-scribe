@@ -94,7 +94,7 @@ impl Tree {
         Ok(())
     }
 
-    fn write_node(&self, id: NodeId, out: &mut String) -> Result<(), String> {
+    pub(super) fn write_node(&self, id: NodeId, out: &mut String) -> Result<(), String> {
         if let Some(span) = self.span(id) {
             if self.is_unchanged(id) {
                 out.push_str(&self.source()[span]);

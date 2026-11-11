@@ -64,6 +64,7 @@ impl SourceCursor {
         self.pos == self.src.len()
     }
 
+    #[cfg(test)]
     /// Consumes a complete element (start tag through matching end tag, or an
     /// empty-element tag) and returns its byte range.
     pub fn element(&mut self, qname: &str) -> Option<Range<usize>> {
@@ -172,6 +173,7 @@ impl SourceCursor {
         Some(at + rest.len() - trimmed.len() + 1)
     }
 
+    #[cfg(test)]
     /// Advances past nested content until the end tag that closes the element
     /// whose start tag was just consumed.
     fn skip_to_matching_end(&mut self, qname: &str) -> Option<()> {

@@ -16,7 +16,7 @@ pub type Span = Range<usize>;
 pub struct NodeId(u32);
 
 impl NodeId {
-    fn index(self) -> usize {
+    pub(super) fn index(self) -> usize {
         self.0 as usize
     }
 }
@@ -116,6 +116,11 @@ impl Tree {
     /// libxml2's error, if the document isn't well-formed.
     pub fn parse(xml: &str) -> Result<Self, String> {
         let doc = crate::xml::parse(xml)?;
+        Ok(Tree::from_document(&doc, xml))
+    }
+
+    /// Copies `doc`, which libxml2 parsed from `xml` ([`crate::xml::parse`]).
+    pub fn from_document(doc: &libxml::tree::Document, xml: &str) -> Self {
         let mut tree = Tree {
             nodes: vec![NodeData::new(NodeKind::Document, None)],
             source: xml.to_string(),
@@ -134,7 +139,7 @@ impl Tree {
                 node.tags = None;
             }
         }
-        Ok(tree)
+        tree
     }
 
     /// The document node.
@@ -171,6 +176,33 @@ impl Tree {
 
     pub fn span(&self, id: NodeId) -> Option<Span> {
         self.nodes[id.index()].span.clone()
+    }
+
+    /// How many nodes the tree has had (removed ones included): every
+    /// [`NodeId::index`] is below this.
+    pub(super) fn capacity(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// The node's original text, if it is unchanged and its span is known.
+    pub fn original_text(&self, id: NodeId) -> Option<&str> {
+        let span = self.span(id)?;
+        self.is_unchanged(id).then(|| &self.source[span])
+    }
+
+    /// The node and everything below it as XML: its original text where
+    /// unchanged, otherwise written from the tree.
+    ///
+    /// # Errors
+    ///
+    /// As [`Tree::write`].
+    pub fn node_xml(&self, id: NodeId) -> Result<String, String> {
+        if let Some(text) = self.original_text(id) {
+            return Ok(text.to_string());
+        }
+        let mut out = String::new();
+        self.write_node(id, &mut out)?;
+        Ok(out)
     }
 
     /// The document's root element.

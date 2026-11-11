@@ -3,7 +3,7 @@
 # tests, into tests/corpus/menota (not committed: the texts' licences differ).
 #
 #   scripts/fetch-menota-corpus.sh
-#   cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --nocapture
+#   cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1 --nocapture
 #
 # The archives are what the catalogue's "Download all XML files" gives
 # (https://clarino.uib.no/menota/catalogue).

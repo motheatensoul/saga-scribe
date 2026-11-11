@@ -1,4 +1,5 @@
-use super::*;
+use super::project::{find_body, project_body};
+use super::tree::{Attribute, Element, NodeId, NodeKind, Tree};
 
 /// The first element called `name`.
 fn find(tree: &Tree, name: &str) -> NodeId {
@@ -172,7 +173,8 @@ fn test_entity_reference_content_is_not_copied() {
 // ============================================================================
 
 /// Every file of the Menota catalogue, from `scripts/fetch-menota-corpus.sh`.
-/// Run with `MENOTA_CORPUS=<dir> cargo test --release corpus_ -- --nocapture`.
+/// Run with `MENOTA_CORPUS=<dir> cargo test --release corpus_ -- --test-threads=1 --nocapture`
+/// (one at a time: each test loads the whole corpus).
 fn corpus_files() -> Vec<std::path::PathBuf> {
     let Ok(dir) = std::env::var("MENOTA_CORPUS") else { return Vec::new() };
     let mut files = Vec::new();
@@ -248,6 +250,171 @@ fn corpus_files_are_written_back_and_edits_stay_local() {
                 if out[..span.start] != source[..span.start] || out[out.len() - tail..] != source[span.end..] {
                     return Err(format!("an edit of {:?} changed other bytes", edited.kind(id)));
                 }
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => eprintln!("ok      {name}"),
+            Err(e) => {
+                eprintln!("FAILED  {name}: {e}");
+                failures.push(name);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
+}
+
+/// The opening tag's name and attributes, in any order (the extractor wrote
+/// attributes in hash order).
+fn normalized_tag(xml: &str) -> Vec<String> {
+    // Values are escaped, so `"` only delimits them: pieces alternate between
+    // ` name=` (the first also holding the element name) and a value
+    let inner = xml.trim_start_matches('<').trim_end_matches('>');
+    let pieces: Vec<&str> = inner.split('"').collect();
+    let mut parts = Vec::new();
+    for pair in pieces.chunks(2) {
+        let mut key = pair[0].trim();
+        if parts.is_empty() {
+            let (name, rest) = key.split_once(char::is_whitespace).unwrap_or((key, ""));
+            parts.push(format!("<{name}"));
+            key = rest.trim();
+        }
+        if let Some(value) = pair.get(1) {
+            parts.push(format!("{key}{value}"));
+        }
+    }
+    parts[1..].sort();
+    parts
+}
+
+/// What the old extractor and the projection disagree on, if anything.
+fn projection_difference(source: &str) -> Option<String> {
+    use crate::importer::tei::segments::{Segment, DSL_RULES};
+    use crate::importer::tei::extraction::{segments_to_dsl, Extractor};
+    let tree = Tree::parse(source).ok()?;
+    let body = find_body(&tree)?;
+    let new = project_body(&tree, body);
+
+    // The extractor, on libxml2's tree, with spans relative to the same body
+    let doc = crate::xml::parse(source).ok()?;
+    let mut stack = vec![doc.get_root_element()?];
+    let xml_body = loop {
+        let node = stack.pop()?;
+        if node.get_name() == "body" {
+            break node;
+        }
+        stack.extend(node.get_child_elements().into_iter().rev());
+    };
+    let body_text = &source[tree.span(body).unwrap_or(0..source.len())];
+    let mut extractor = Extractor::with_source(body_text);
+    let segments = extractor.extract_segments(&xml_body);
+    let old_spans = extractor.take_spans();
+    let old_dsl = segments_to_dsl(&segments, DSL_RULES);
+    struct Old {
+        segments: Vec<Segment>,
+        spans: Option<crate::importer::tei::segments::SourceSpans>,
+    }
+    let old = Old { segments, spans: old_spans };
+
+    let dsl = segments_to_dsl(&new.segments, DSL_RULES);
+    let import_dsl = old_dsl.trim();
+    if dsl.trim() != import_dsl {
+        let at = dsl.trim().chars().zip(import_dsl.chars()).take_while(|(a, b)| a == b).count();
+        let context: String = import_dsl.chars().skip(at.saturating_sub(40)).take(80).collect();
+        return Some(format!("shorthand differs at char {at}: {context:?}"));
+    }
+    if old.segments.len() != new.segments.len() {
+        return Some(format!("{} segments, then {}", old.segments.len(), new.segments.len()));
+    }
+    for (a, b) in old.segments.iter().zip(&new.segments) {
+        let same = match (a, b) {
+            (
+                Segment::Word { id, attributes, dsl_content, has_inline_lb, .. },
+                Segment::Word { id: id2, attributes: a2, dsl_content: d2, has_inline_lb: l2, .. },
+            ) => id == id2 && attributes == a2 && dsl_content == d2 && has_inline_lb == l2,
+            (Segment::Punctuation { id, dsl_content, .. }, Segment::Punctuation { id: id2, dsl_content: d2, .. }) => {
+                id == id2 && dsl_content == d2
+            }
+            (Segment::Structural { id, xml }, Segment::Structural { id: id2, xml: x2 })
+            | (Segment::Paragraph { id, xml }, Segment::Paragraph { id: id2, xml: x2 }) => {
+                id == id2 && normalized_tag(xml) == normalized_tag(x2)
+            }
+            (Segment::LineBreak { id, attributes }, Segment::LineBreak { id: id2, attributes: a2 })
+            | (Segment::PageBreak { id, attributes }, Segment::PageBreak { id: id2, attributes: a2 })
+            | (Segment::HandShift { id, attributes }, Segment::HandShift { id: id2, attributes: a2 }) => {
+                id == id2 && attributes == a2
+            }
+            (Segment::Whitespace { id, content }, Segment::Whitespace { id: id2, content: c2 }) => {
+                id == id2 && content == c2
+            }
+            _ => false,
+        };
+        if !same {
+            return Some(format!("segment differs: {a:?} became {b:?}"));
+        }
+    }
+    if old.spans != new.spans {
+        let first = old.spans.as_ref().zip(new.spans.as_ref()).and_then(|(a, b)| {
+            a.iter().zip(b).position(|(x, y)| x != y)
+        });
+        return Some(format!(
+            "spans differ (old {}, new {}, first at segment {first:?})",
+            old.spans.is_some(),
+            new.spans.is_some()
+        ));
+    }
+    None
+}
+
+#[test]
+fn test_projection_matches_the_importer_on_holmperg() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/HolmPerg-34-4to-MLL.xml");
+    let Ok(source) = std::fs::read_to_string(path) else { return };
+    assert_eq!(projection_difference(&source), None);
+}
+
+/// Gate of step 2: for every file, the projection gives the importer's
+/// segments (but `original_xml`), spans and shorthand.
+#[test]
+fn corpus_projection_matches_the_importer() {
+    let files = corpus_files();
+    let mut failures = Vec::new();
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        match projection_difference(&source) {
+            None => eprintln!("ok      {name}"),
+            Some(difference) => {
+                eprintln!("FAILED  {name}: {difference}");
+                failures.push(name);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
+}
+
+/// Every file imported and saved unedited through the patcher comes back
+/// byte for byte (the importer works on the projection).
+#[test]
+fn corpus_unchanged_import_round_trips() {
+    use crate::importer::tei::patching::{compiler_config_for, compute_patches, render_body};
+    let files = corpus_files();
+    let mut failures = Vec::new();
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let result = (|| -> Result<(), String> {
+            let import = crate::importer::tei::parse(&source)?;
+            let doc = import.imported_document.ok_or("no manifest")?;
+            let original = import.original_body_xml.ok_or("no body")?;
+            if doc.spans.is_none() {
+                return Err("no spans".into());
+            }
+            let patches = compute_patches(&doc.segments, doc.dsl_rules, &import.dsl)?;
+            let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc));
+            let body = render_body(&doc, Some(&original), &patches, &mut compiler)?;
+            if body.xml != original {
+                return Err("the unedited body changed".into());
             }
             Ok(())
         })();

@@ -1,7 +1,7 @@
 # Document model (design, draft)
 
-Status: design agreed, 2026-11-11. Step 1 is implemented (`src-tauri/src/document/`),
-not yet used by the app. It replaces
+Status: design agreed, 2026-11-11. Steps 1 and 2 are implemented
+(`src-tauri/src/document/`): the importer reads files through the tree and its projection. It replaces
 the segment manifest and the patcher's way of writing edited words, and prepares the
 shorthand redesign (see "Shorthand (DSL)" in `TODO.md`).
 

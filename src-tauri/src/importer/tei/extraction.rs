@@ -41,14 +41,22 @@
 //! - `<lb n="5"/>` inside word → `~//5` (continuation marker)
 //! - Entity references → `:entityname:`
 
-use crate::importer::tei::helpers;
-use crate::importer::tei::segments::{Segment, SourceSpans};
-use crate::importer::tei::source_map::SourceCursor;
+use crate::importer::tei::segments::Segment;
+#[cfg(test)]
+use crate::importer::tei::{helpers, segments::SourceSpans, source_map::SourceCursor};
+#[cfg(test)]
 use libxml::tree::{Node, NodeType};
-use std::collections::HashMap;
-use std::ops::Range;
+#[cfg(test)]
+use std::{collections::HashMap, ops::Range};
 
 /// Extracts segments from TEI-XML DOM nodes.
+///
+/// The importer now projects its document tree instead
+/// ([`crate::document::project_body`]); this is kept, for tests only, as the
+/// reference the projection must match (see the corpus gate in
+/// `document/tests.rs`) until step 3 of `docs/DOCUMENT_MODEL.md` replaces
+/// segments.
+#[cfg(test)]
 ///
 /// The extractor maintains an incrementing ID counter to assign unique
 /// identifiers to each segment, enabling the patching system to track edits.
@@ -62,6 +70,7 @@ pub struct Extractor {
     spans: HashMap<usize, Range<usize>>,
 }
 
+#[cfg(test)]
 impl Extractor {
     pub fn new() -> Self {
         Self {
@@ -1220,13 +1229,6 @@ impl Extractor {
             child = next_child;
         }
     }
-}
-
-/// Convenience function to extract segments from a body node.
-#[allow(dead_code)]
-pub fn extract_segments(body_node: &Node) -> Vec<Segment> {
-    let mut extractor = Extractor::new();
-    extractor.extract_segments(body_node)
 }
 
 /// Joins the written words of one `<w>` with `~` (compound join), so the DSL

@@ -21,8 +21,8 @@ when it is done (and record it in CHANGELOG.md if users notice).
   inside a level, gap attributes, comments, levels the file doesn't have; numbers in the
   survey below). The plan is a new document model with the XML as the only truth, views
   as lenses, and a project profile for transcription levels: `docs/DOCUMENT_MODEL.md`
-  (design agreed 2026-11-11; step 1, the tree, is done; next: step 2, projecting the tree
-  to shorthand). It comes before the shorthand redesign.
+  (design agreed 2026-11-11; steps 1 and 2, the tree and its projection to shorthand, are
+  done; next: step 3, writing shorthand edits back through operations on the tree). It comes before the shorthand redesign.
 - **After the document model works:** a button that opens the word panel on the next word
   marked for review; inferring a changed lemma and analysis after an edit (and from them
   dipl and norm), which needs a robust lemmatizer.

@@ -1,8 +1,9 @@
 mod annotations;
 mod commands;
 mod dictionary;
-// Not used by the app until step 2 of docs/DOCUMENT_MODEL.md
-#[allow(dead_code, unused_imports)]
+// The importer uses the tree and its projection (steps 1 and 2 of
+// docs/DOCUMENT_MODEL.md); editing it comes with step 3
+#[allow(dead_code)]
 mod document;
 mod identity;
 pub mod entities;
