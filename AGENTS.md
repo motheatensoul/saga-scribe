@@ -129,11 +129,12 @@ saga-scribe/
 | `//` | `<lb/>` | Line break |
 | `//n` | `<lb n="n"/>` | Numbered line break |
 | `///n` | `<pb n="n"/>` | Page break |
+| `//{n}`, `///{n}` | `<lb n="n"/>` | Any break number (letters, spaces) |
 | `.p` | `</p><p>` | New paragraph (standalone token; `¶` itself is the MENOTA character `:para:`) |
 | `.abbr[a]{b}` | `<choice><abbr>a</abbr><expan>b</expan></choice>` | Abbreviation |
 | `[...]` | `<gap/>` | Gap |
 | `[...<txt>]` | `<gap/><supplied>txt</supplied>` | Gap + Supplied |
-| `<txt>` | `<supplied>txt</supplied>` | Supplied |
+| `<txt>` | `<supplied>txt</supplied>` | Supplied (content is DSL: entities, breaks, abbreviations) |
 | `-{txt}-` | `<del>txt</del>` | Deletion |
 | `+{txt}+` | `<add>txt</add>` | Addition |
 | `:name:` | `&name;` | Entity |
@@ -157,7 +158,7 @@ The user's file is privileged. Reading it must never change it:
 - An edited word is merged into its XML, not written anew (`src-tauri/src/document/merge.rs`): markup the DSL doesn't show moves with the text, a level the edit can't be placed in is kept, and a level the word doesn't have is never added. Gate: `corpus_edited_words_keep_their_markup`.
 - Invalid DSL is an error, never an empty document; save/export refuse to write a failed compile.
 - Confirmed lemmas are written into the words' start tags (`write_lemmas`), but only where they differ from what the tag says with references resolved: lemmas loaded from the file must leave it byte-identical (`test_menota_file_with_its_own_lemmas_stays_byte_identical`).
-- The XML and the DSL generated from it read as the same tokens, one to one (`test_menota_file_xml_and_dsl_read_as_the_same_tokens`, corpus gate `corpus_xml_and_shorthand_read_as_the_same_tokens`; 19 Menota files don't yet, see `TODO.md`); DSL → XML → DSL likewise. Neighbours with nothing between them in the XML are set apart (a note by a space, others by `|`), characters that would split a token are escaped (`\;`), and a `<num>` is `#…#` (DSL rules 3, `document/project.rs`, `segments_to_dsl`). A new XML construct the DSL can't express breaks this: give it DSL syntax rather than special-casing the patcher.
+- The XML and the DSL generated from it read as the same tokens, one to one (`test_menota_file_xml_and_dsl_read_as_the_same_tokens`, corpus gate `corpus_xml_and_shorthand_read_as_the_same_tokens` on all 288 Menota files); DSL → XML → DSL likewise. Neighbours with nothing between them in the XML are set apart (a note by a space, others by `|`), characters that would split a token are escaped (`\;`), a `<num>` is `#…#` (DSL rules 3), break numbers the plain form can't hold are in braces and supplied text with markup in a word is `<…>` (rules 4; `document/project.rs`, `segments_to_dsl`). A new XML construct the DSL can't express breaks this: give it DSL syntax rather than special-casing the patcher.
 - Word numbers: lemmas and annotations are stored by word number (the n-th `<w>` of the body, as the previews count). The backend tracks which token is which across edits in both modes (`src-tauri/src/identity.rs`; `Tracked`, the compiler's word keys), and each compile returns `renumbering`: where the previous compile's words went. `src/lib/stores/compileSession.ts` runs compiles one at a time, applies the renumbering (`onRenumbering`) and only then lets the next compile gather its payload: annotations sent to the backend are always numbered by its previous compile. A compile without guidance means a new document (no renumbering). Anything new that stores word numbers must be renumbered in `onRenumbering`.
 - Word identity: the backend `Patcher` (`patching.rs`) remembers each token of the last compiled DSL and which original word it is. The editor's changes since then (`src/lib/editor/editHistory.ts`, sent as `Guidance`) let untouched words keep their identity outright; only edited ranges are matched by comparison. Guidance only refines which word is which: without it (or out of step) the patcher compares whole documents, and the output must be correct either way (`test_guided_character_edits_always_reimport_as_edited` fuzzes this).
 - Parse TEI documents with `crate::xml::parse` (`src-tauri/src/xml.rs`), never libxml2 directly: it declares the document's entities first (libxml2 2.9 drops undeclared ones, 2.14+ keeps them) and disables network access. CI tests on Ubuntu's libxml2 2.9 while local machines usually have 2.14+, so entity handling bugs may show up in only one of them.

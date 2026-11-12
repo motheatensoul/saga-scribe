@@ -294,36 +294,15 @@ fn test_holmperg_xml_and_shorthand_read_as_the_same_tokens() {
 /// The importer's promise, on every file: the shorthand reads as the XML's
 /// words, numerals, punctuation and breaks, token for token (the patcher
 /// pairs them with the file's elements by that).
-/// Files whose shorthand doesn't read as their tokens yet, for want of
-/// syntax (`TODO.md`): supplied text with markup inside a word, break numbers
-/// the shorthand can't write (`n="-3"`, `"56r"`, `"fol. 1r"`, typos), a
-/// `<pc>` with a space. Remove a file once it passes.
-const NOT_YET_TOKEN_FOR_TOKEN: &[&str] = &[
-    // break numbers
-    "AM-132-fol-Egils-saga.xml", "AM-60-4to.xml", "AM-78-4to.xml", "GKS-2365-4to-Vsp.xml",
-    "Holm-A-10.xml", "Holm-A-80.xml", "HolmPerg-4-fol.xml",
-    // supplied text with markup inside a word
-    "AM-243-b-alfa-fol.xml", "AM-35-fol.xml", "AM-619-4to.xml", "AM-677-4to.xml", "DG-4at7-Elis.xml",
-    "DG-8-OHleg.xml", "DN_bind_01_brevnr_098.xml", "DN_bind_02_brevnr_056.xml", "DN_bind_04_brevnr_082.xml",
-    "DN_bind_05_brevnr_050.xml", "DN_bind_13_brevnr_002.xml",
-    // a <pc> with a space
-    "DN_bind_02_brevnr_068_A.xml",
-];
-
 #[test]
 fn corpus_xml_and_shorthand_read_as_the_same_tokens() {
     let files = corpus_files();
     let mut failures = Vec::new();
-    let mut known = 0;
     for path in &files {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let Ok(source) = std::fs::read_to_string(path) else { continue };
         match token_difference(&source) {
             Ok(None) => eprintln!("ok      {name}"),
-            Ok(Some(difference)) if NOT_YET_TOKEN_FOR_TOKEN.contains(&name.as_str()) => {
-                eprintln!("known   {name}: {difference}");
-                known += 1;
-            }
             Ok(Some(difference)) => {
                 eprintln!("FAILED  {name}: {difference}");
                 failures.push(name);
@@ -334,7 +313,6 @@ fn corpus_xml_and_shorthand_read_as_the_same_tokens() {
             }
         }
     }
-    eprintln!("{known} files known not to read token for token yet");
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
 }
 
@@ -399,7 +377,7 @@ fn corpus_edited_words_keep_their_markup() {
     for path in &files {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let Ok(source) = std::fs::read_to_string(path) else { continue };
-        let result = (|| -> Result<Option<usize>, String> {
+        let result = (|| -> Result<usize, String> {
             let import = crate::importer::tei::parse(&source)?;
             let doc = import.imported_document.ok_or("no manifest")?;
             let original = import.original_body_xml.clone().ok_or("no body")?;
@@ -411,10 +389,10 @@ fn corpus_edited_words_keep_their_markup() {
                 .iter()
                 .filter(|s| crate::importer::tei::patching::segment_dsl_token(s).is_some())
                 .collect();
-            // Files whose shorthand doesn't read as their segments, token for
-            // token, can't be edited reliably by the patcher (TODO.md)
+            // The patcher pairs tokens with segments (and
+            // `corpus_xml_and_shorthand_read_as_the_same_tokens` checks more)
             if token_segments.len() != spans.len() {
-                return Ok(None);
+                return Err(format!("{} segments read as {} tokens", token_segments.len(), spans.len()));
             }
             let mut ends = Vec::new();
             let mut words = 0;
@@ -473,11 +451,10 @@ fn corpus_edited_words_keep_their_markup() {
             if added < edited {
                 return Err(format!("{edited} letters added, {added} written"));
             }
-            Ok(Some(edited))
+            Ok(edited)
         })();
         match result {
-            Ok(Some(n)) => eprintln!("ok      {name} ({n} words edited)"),
-            Ok(None) => eprintln!("skipped {name} (its shorthand doesn't read as its segments)"),
+            Ok(n) => eprintln!("ok      {name} ({n} words edited)"),
             Err(e) => {
                 eprintln!("FAILED  {name}: {e}");
                 failures.push(name);

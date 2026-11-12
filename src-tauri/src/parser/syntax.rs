@@ -42,16 +42,17 @@ pub struct SyntaxNode {
 pub enum SyntaxKind {
     /// Plain text; its value is the source covered by the node's span.
     Text,
-    /// `//` or `//n`
+    /// `//`, `//n` or `//{n}` (any number, in braces; `number` is its
+    /// content)
     LineBreak { number: Option<Span> },
-    /// `///n`
+    /// `///n` or `///{n}`
     PageBreak { number: Span },
     /// `.abbr[abbr]{expansion}`
     Abbreviation { abbr: Span, expansion: Span },
-    /// `[...]`, `[...n]`, `[...<text>]`, `[...n<text>]`
-    Gap { quantity: Option<u32>, supplied: Option<Span> },
-    /// `<text>`
-    Supplied { content: Span },
+    /// `[...]`, `[...n]`, `[...<dsl>]`, `[...n<dsl>]`
+    Gap { quantity: Option<u32>, supplied: Option<Span>, children: Vec<SyntaxNode> },
+    /// `<dsl>`: supplied text, its content parsed into `children`
+    Supplied { content: Span, children: Vec<SyntaxNode> },
     /// `.supplied{dsl}`
     SuppliedBlock { content: Span, children: Vec<SyntaxNode> },
     /// `-{text}-`
@@ -136,17 +137,19 @@ pub fn lower(nodes: &[SyntaxNode], source: &str) -> Vec<Node> {
         .iter()
         .map(|node| match &node.kind {
             SyntaxKind::Text => Node::Text(text(&node.span)),
-            SyntaxKind::LineBreak { number } => Node::LineBreak(number.as_ref().map(text)),
-            SyntaxKind::PageBreak { number } => Node::PageBreak(text(number)),
+            SyntaxKind::LineBreak { number } => {
+                Node::LineBreak(number.as_ref().map(|n| unescape(&source[n.clone()]).into_owned()))
+            }
+            SyntaxKind::PageBreak { number } => Node::PageBreak(unescape(&source[number.clone()]).into_owned()),
             SyntaxKind::Abbreviation { abbr, expansion } => Node::Abbreviation {
                 abbr: text(abbr),
                 expansion: text(expansion),
             },
-            SyntaxKind::Gap { quantity, supplied } => Node::Gap {
+            SyntaxKind::Gap { quantity, supplied, .. } => Node::Gap {
                 quantity: *quantity,
                 supplied: supplied.as_ref().map(text),
             },
-            SyntaxKind::Supplied { content } => Node::Supplied(text(content)),
+            SyntaxKind::Supplied { content, .. } => Node::Supplied(text(content)),
             SyntaxKind::SuppliedBlock { content, .. } => Node::SuppliedBlock(text(content)),
             SyntaxKind::Deletion { content } => Node::Deletion(text(content)),
             SyntaxKind::Addition { content } => Node::Addition(text(content)),
@@ -163,6 +166,29 @@ pub fn lower(nodes: &[SyntaxNode], source: &str) -> Vec<Node> {
             SyntaxKind::ParagraphBreak => Node::ParagraphBreak,
         })
         .collect()
+}
+
+/// A break's number as written after `//` or `///`: as it is where that reads
+/// back the same, otherwise in braces (`//{56r}`, `///{fol. 1r}`).
+pub fn break_number_dsl(number: &str, page: bool) -> String {
+    let plain = if page {
+        !number.is_empty() && !number.starts_with('{') && !number.contains(char::is_whitespace)
+    } else {
+        !number.is_empty() && number.chars().all(|c| c.is_ascii_digit())
+    };
+    if plain {
+        number.to_string()
+    } else {
+        let mut out = String::from("{");
+        for c in number.chars() {
+            if matches!(c, '}' | '\\') {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out.push('}');
+        out
+    }
 }
 
 /// Construct content as text: each `\\c` is `c`.
@@ -251,24 +277,24 @@ impl<'a> Parser<'a> {
                     flush_text!(start);
                     self.pos += 1;
                     let result = self.consume_until('#').map(|content| {
-                        let mut inner = Parser::new(self.src, content.clone(), true);
-                        let children = inner.parse_sequence();
-                        self.diagnostics.extend(inner.diagnostics);
+                        let children = self.parse_nested(content.clone());
                         vec![self.node(SyntaxKind::Numeral { content, children }, start)]
                     });
                     Some((1, result))
                 } else if rest.starts_with("///") {
                     flush_text!(start);
                     self.pos += 3;
-                    let number = self.consume_until_whitespace();
-                    Some((3, Ok(vec![self.node(SyntaxKind::PageBreak { number }, start)])))
+                    let result = self
+                        .page_number()
+                        .map(|number| vec![self.node(SyntaxKind::PageBreak { number }, start)]);
+                    Some((3, result))
                 } else if rest.starts_with("//") {
                     flush_text!(start);
                     self.pos += 2;
-                    // Only digits, so "//2Text" doesn't eat into the text
-                    let number = self.consume_while(|c| c.is_ascii_digit());
-                    let number = (!number.is_empty()).then_some(number);
-                    Some((2, Ok(vec![self.node(SyntaxKind::LineBreak { number }, start)])))
+                    let result = self
+                        .line_number()
+                        .map(|number| vec![self.node(SyntaxKind::LineBreak { number }, start)]);
+                    Some((2, result))
                 } else if rest.starts_with(".p") && self.is_standalone(start, 2) {
                     flush_text!(start);
                     self.pos += 2;
@@ -297,22 +323,25 @@ impl<'a> Parser<'a> {
                     self.pos += 4;
                     let result = (|| {
                         let quantity = self.parse_optional_number();
-                        let supplied = if self.current_char() == Some('<') {
+                        let (supplied, children) = if self.current_char() == Some('<') {
                             self.advance();
-                            Some(self.consume_until('>')?)
+                            let content = self.consume_until('>')?;
+                            let children = self.parse_nested(content.clone());
+                            (Some(content), children)
                         } else {
-                            None
+                            (None, Vec::new())
                         };
                         self.expect(']')?;
-                        Ok(vec![self.node(SyntaxKind::Gap { quantity, supplied }, start)])
+                        Ok(vec![self.node(SyntaxKind::Gap { quantity, supplied, children }, start)])
                     })();
                     Some((4, result))
                 } else if rest.starts_with('<') && !rest.starts_with("<<") {
                     flush_text!(start);
                     self.pos += 1;
-                    let result = self
-                        .consume_until('>')
-                        .map(|content| vec![self.node(SyntaxKind::Supplied { content }, start)]);
+                    let result = self.consume_until('>').map(|content| {
+                        let children = self.parse_nested(content.clone());
+                        vec![self.node(SyntaxKind::Supplied { content, children }, start)]
+                    });
                     Some((1, result))
                 } else if rest.starts_with("-{") {
                     flush_text!(start);
@@ -343,21 +372,23 @@ impl<'a> Parser<'a> {
                 } else if rest.starts_with("~///") {
                     flush_text!(start);
                     self.pos += 4;
-                    let number = self.consume_until_whitespace();
-                    Some((4, Ok(vec![
-                        SyntaxNode { kind: SyntaxKind::WordContinuation, span: start..start + 1 },
-                        self.node(SyntaxKind::PageBreak { number }, start + 1),
-                    ])))
+                    let result = self.page_number().map(|number| {
+                        vec![
+                            SyntaxNode { kind: SyntaxKind::WordContinuation, span: start..start + 1 },
+                            self.node(SyntaxKind::PageBreak { number }, start + 1),
+                        ]
+                    });
+                    Some((4, result))
                 } else if rest.starts_with("~//") {
                     flush_text!(start);
                     self.pos += 3;
-                    // Only digits, so "hel~//5lo" keeps "lo" as the rest of the word
-                    let number = self.consume_while(|c| c.is_ascii_digit());
-                    let number = (!number.is_empty()).then_some(number);
-                    Some((3, Ok(vec![
-                        SyntaxNode { kind: SyntaxKind::WordContinuation, span: start..start + 1 },
-                        self.node(SyntaxKind::LineBreak { number }, start + 1),
-                    ])))
+                    let result = self.line_number().map(|number| {
+                        vec![
+                            SyntaxNode { kind: SyntaxKind::WordContinuation, span: start..start + 1 },
+                            self.node(SyntaxKind::LineBreak { number }, start + 1),
+                        ]
+                    });
+                    Some((3, result))
                 } else if rest.starts_with('~') {
                     flush_text!(start);
                     self.pos += 1;
@@ -391,6 +422,34 @@ impl<'a> Parser<'a> {
 
         flush_text!(self.pos);
         nodes
+    }
+
+    /// Parses construct content as DSL, its errors flagged as nested.
+    fn parse_nested(&mut self, content: Span) -> Vec<SyntaxNode> {
+        let mut inner = Parser::new(self.src, content, true);
+        let children = inner.parse_sequence();
+        self.diagnostics.extend(inner.diagnostics);
+        children
+    }
+
+    /// After `//`: `{any number}`, or digits only (so "//2Text" doesn't eat
+    /// into the text), or none.
+    fn line_number(&mut self) -> Result<Option<Span>, Failure> {
+        if self.current_char() == Some('{') {
+            self.advance();
+            return self.consume_until('}').map(Some);
+        }
+        let number = self.consume_while(|c| c.is_ascii_digit());
+        Ok((!number.is_empty()).then_some(number))
+    }
+
+    /// After `///`: `{any number}`, or up to whitespace.
+    fn page_number(&mut self) -> Result<Span, Failure> {
+        if self.current_char() == Some('{') {
+            self.advance();
+            return self.consume_until('}');
+        }
+        Ok(self.consume_until_whitespace())
     }
 
     fn node(&self, kind: SyntaxKind, start: usize) -> SyntaxNode {

@@ -328,11 +328,11 @@ impl<'a> Compiler<'a> {
                 };
                 // If there's supplied text, output both gap and supplied
                 match supplied {
-                    Some(text) => format!("{}<supplied>{}</supplied>", gap_xml, self.escape_xml(&unescape(text))),
+                    Some(text) => format!("{}<supplied>{}</supplied>", gap_xml, self.inline_xml(text)),
                     None => gap_xml,
                 }
             }
-            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.escape_xml(&unescape(text))),
+            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.inline_xml(text)),
             Node::SuppliedBlock(text) => {
                 let content = self.compile_fragment_from_dsl(text);
                 format!("<supplied>{}</supplied>", content)
@@ -750,17 +750,10 @@ impl<'a> Compiler<'a> {
     /// `#content#` as `<num>`, with MENOTA levels in multi-level mode. A
     /// numeral is not a word: it isn't numbered or annotated.
     fn compile_numeral(&mut self, content: &str) -> String {
-        let nodes = self.number_word_breaks(&inline_nodes(content));
         if !self.config.multi_level {
-            let mut xml = String::new();
-            for node in &nodes {
-                match self.word_break_tag(node) {
-                    Some(tag) => xml.push_str(&tag),
-                    None => xml.push_str(&self.node_to_xml(node)),
-                }
-            }
-            return format!("<num>{}</num>\n", xml);
+            return format!("<num>{}</num>\n", self.inline_xml(content));
         }
+        let nodes = self.number_word_breaks(&inline_nodes(content));
         format!(
             "<num>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</num>\n",
             self.nodes_to_facs(&nodes),
@@ -828,14 +821,18 @@ impl<'a> Compiler<'a> {
                 format!("<abbr>{}</abbr>", self.nodes_to_facs(&inline_nodes(abbr)))
             }
             Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(&unescape(text))),
-            Node::Gap { quantity, .. } => {
-                // Facsimile shows gap only, not supplied
-                match quantity {
+            Node::Gap { quantity, supplied } => {
+                // Facsimile shows gap only, not supplied (but its breaks)
+                let gap = match quantity {
                     Some(n) => format!("<gap reason=\"illegible\" quantity=\"{}\" unit=\"chars\"/>", n),
                     None => "<gap reason=\"illegible\"/>".to_string(),
-                }
+                };
+                let breaks = supplied.as_deref().map(|s| self.word_breaks_xml(&inline_nodes(s))).unwrap_or_default();
+                gap + &breaks
             }
-            Node::Supplied(_) | Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
+            // Supplied text isn't in the manuscript; the breaks in it are
+            Node::Supplied(text) => self.word_breaks_xml(&inline_nodes(text)),
+            Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
             Node::Deletion(text) => format!("<del>{}</del>", self.escape_xml(&unescape(text))),
             Node::Addition(text) => format!("<add>{}</add>", self.escape_xml(&unescape(text))),
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(&unescape(text))),
@@ -895,11 +892,11 @@ impl<'a> Compiler<'a> {
             Node::Gap { supplied, .. } => {
                 // Diplomatic shows supplied text if available
                 match supplied {
-                    Some(text) => format!("<supplied>{}</supplied>", self.escape_xml(&unescape(text))),
+                    Some(text) => format!("<supplied>{}</supplied>", self.nodes_to_diplomatic(&inline_nodes(text))),
                     None => String::new(),
                 }
             }
-            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.escape_xml(&unescape(text))),
+            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.nodes_to_diplomatic(&inline_nodes(text))),
             Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
             Node::Deletion(text) => format!("<del>{}</del>", self.escape_xml(&unescape(text))),
             Node::Addition(text) => format!("<add>{}</add>", self.escape_xml(&unescape(text))),
@@ -1002,19 +999,13 @@ impl<'a> Compiler<'a> {
                 let normalized = self.normalize_text(&unescape(text));
                 format!("<unclear>{}</unclear>", self.escape_xml(&normalized))
             }
-            Node::Gap { supplied, .. } => {
-                let text = supplied.clone().unwrap_or_default();
-                if text.is_empty() {
-                    String::new()
-                } else {
-                    let normalized = self.normalize_text(&text);
-                    format!("<supplied>{}</supplied>", self.escape_xml(&normalized))
+            Node::Gap { supplied, .. } => match supplied.as_deref() {
+                Some(text) if !text.is_empty() => {
+                    format!("<supplied>{}</supplied>", self.nodes_to_normalized(&inline_nodes(text)))
                 }
-            }
-            Node::Supplied(text) => {
-                let normalized = self.normalize_text(&unescape(text));
-                format!("<supplied>{}</supplied>", self.escape_xml(&normalized))
-            }
+                _ => String::new(),
+            },
+            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.nodes_to_normalized(&inline_nodes(text))),
             Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
             Node::Deletion(text) => {
                 let normalized = self.normalize_text(&unescape(text));
@@ -1303,6 +1294,20 @@ impl<'a> Compiler<'a> {
             Ok(doc) => self.nodes_to_xml(&doc.nodes),
             Err(_) => format!("<!-- parse error: {} -->", self.escape_xml(dsl)),
         }
+    }
+
+    /// Construct content (DSL) in single-level form, inside a word: breaks
+    /// without the newline that follows them between words.
+    fn inline_xml(&mut self, dsl: &str) -> String {
+        let nodes = self.number_word_breaks(&inline_nodes(dsl));
+        let mut xml = String::new();
+        for node in &nodes {
+            match self.word_break_tag(node) {
+                Some(tag) => xml.push_str(&tag),
+                None => xml.push_str(&self.node_to_xml(node)),
+            }
+        }
+        xml
     }
 
     /// Compiles child nodes in single-level form, without tracking word indices.

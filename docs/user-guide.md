@@ -72,8 +72,13 @@ the compiler adds the surrounding structure, including the division into words.
 //           Line break (numbered automatically if the template says so)
 //5          Line break with an explicit number
 ///1v        Page break, with the folio or page number
+//{56r}      Line break whose number is not just digits
+///{fol. 1r} Page break whose number contains a space
 .p           New paragraph
 ```
+
+A line break's number is digits only, so that `//2Text` is line 2 followed by "Text"; a
+page break's number ends at the next space. Any other number goes in braces.
 
 `.p` has to stand on its own between spaces (`word.p` is ordinary text). A paragraph can
 begin anywhere, also mid-line: `//4 ſina . .p þer vitið …`. The pilcrow `¶` is a character
@@ -85,7 +90,7 @@ written by the scribe (`:para:`), not a paragraph break.
 [...]        Gap (illegible or lost text)
 [...3]       Gap of about three characters
 [...3<ab>]   Gap with supplied text
-<abc>        Supplied text
+<abc>        Supplied text (it can contain shorthand: kæn<n~//14:thorn:>a)
 -{abc}-      Deletion
 +{abc}+      Addition
 ?{abc}?      Unclear reading
@@ -428,9 +433,7 @@ Saga-Scribe knows which element an edit belongs to. Where the file has two of th
 nothing between them, the shorthand sets them apart: a note by a space (`skrims ^{sic}`,
 where `skrims^{sic}` would put the note inside the word), others by `|` (`þꝩi|at`, two words
 written together). Characters that would otherwise split a word are escaped (`iðran\;`), and
-a `<num>` is written `#…#`. A few files still read differently, for instance where a line
-break's number contains letters (`<lb n="56r"/>`) or supplied text with markup sits inside
-a word; editing such a word may affect its neighbours.
+a `<num>` is written `#…#`.
 
 An imported document is marked **Imported** in the editor header. In this mode, the
 original file is kept and only edited passages are rewritten when the document is saved or

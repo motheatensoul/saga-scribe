@@ -1343,3 +1343,35 @@ fn test_unclosed_numeral_is_an_error() {
     let error = Lexer::new("a #.x. b").parse().unwrap_err();
     assert!(error.contains("Expected '#'"), "{error}");
 }
+
+#[test]
+fn test_break_numbers_in_braces() {
+    assert_eq!(token_texts("a //{56r} b ///{fol. 1r} c~//{-3}d"), ["a", "//{56r}", "b", "///{fol. 1r}", "c~//{-3}d"]);
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let xml = Compiler::new().with_config(config).compile(r"a //{56r} ///{fol. 1r} //{a\}b}").unwrap();
+    for expected in [r#"<lb n="56r"/>"#, r#"<pb n="fol. 1r"/>"#, r#"<lb n="a}b"/>"#] {
+        assert!(xml.contains(expected), "{expected} in {xml}");
+    }
+    // Plain where that reads back the same
+    use super::syntax::break_number_dsl;
+    assert_eq!(break_number_dsl("12", false), "12");
+    assert_eq!(break_number_dsl("12v", false), "{12v}");
+    assert_eq!(break_number_dsl("12v", true), "12v");
+    assert_eq!(break_number_dsl("fol. 1r", true), "{fol. 1r}");
+    assert_eq!(break_number_dsl("", false), "{}");
+}
+
+#[test]
+fn test_supplied_text_is_shorthand() {
+    // One word: supplied text with a line break and an entity inside it
+    assert_eq!(token_texts("sa<m~//14:thorn:>yct ok"), ["sa<m~//14:thorn:>yct", "ok"]);
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+    let mut compiler = Compiler::new().with_config(config);
+    let xml = compiler.compile("sa<m~//14þ>yct [...2<a:et:>]").unwrap();
+    assert!(xml.contains(r#"<me:facs>sa<lb n="14"/>yct</me:facs>"#), "{xml}");
+    assert!(xml.contains(r#"<me:dipl>sa<supplied>m<lb n="14"/>þ</supplied>yct</me:dipl>"#), "{xml}");
+    assert!(!xml.contains(":et:"), "{xml}");
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let xml = Compiler::new().with_config(config).compile("sa<m~//14þ>yct").unwrap();
+    assert!(xml.contains(r#"<w>sa<supplied>m<lb n="14"/>þ</supplied>yct</w>"#), "{xml}");
+}

@@ -141,7 +141,10 @@ pub struct ImportedDocument {
 ///   are set apart (`skrims ^{sic}`, `þꝩi|at`). The escaping is in the
 ///   segments' `dsl_content`; projects from before it are escaped when
 ///   opened (`.teis` 1.7).
-pub const DSL_RULES: u32 = 3;
+/// - 4: a break number the plain form can't hold is in braces (`//{56r}`,
+///   `///{fol. 1r}`), and supplied text with markup inside a word is `<…>`
+///   with shorthand content (`.supplied{…}` would end the word).
+pub const DSL_RULES: u32 = 4;
 
 impl ImportedDocument {
     /// Parses a manifest as stored in segments.json.

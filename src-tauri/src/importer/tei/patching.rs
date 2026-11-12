@@ -34,6 +34,7 @@
 //! Patches:  Keep(A), Keep(B), Modify(C→X), Modify(D→Y), Keep(E)
 //! ```
 
+use crate::parser::syntax::break_number_dsl;
 use crate::importer::tei::extraction::segments_to_dsl;
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::{ImportedDocument, Segment};
@@ -515,11 +516,11 @@ fn segment_token_text(seg: &Segment) -> Option<String> {
             (!dsl_content.trim().is_empty()).then(|| dsl_content.clone())
         }
         Segment::LineBreak { attributes, .. } => Some(match attributes.get("n") {
-            Some(num) => format!("//{}", num),
+            Some(num) => format!("//{}", break_number_dsl(num, false)),
             None => "//".to_string(),
         }),
-        Segment::PageBreak { attributes, .. } => Some(match attributes.get("n") {
-            Some(num) => format!("///{}", num),
+        Segment::PageBreak { attributes, .. } => Some(match attributes.get("n").filter(|n| !n.is_empty()) {
+            Some(num) => format!("///{}", break_number_dsl(num, true)),
             None => "///".to_string(),
         }),
         Segment::Paragraph { .. } => Some(PARAGRAPH.to_string()),

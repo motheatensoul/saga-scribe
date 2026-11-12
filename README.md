@@ -151,11 +151,12 @@ Press **F1** in the app for the shorthand reference and keyboard shortcuts. The
 | ------------------------ | ------------------------------------------ | -------------------------------------------------------- |
 | `//` or `//3`            | Line break (optionally numbered)           | `<lb/>`, `<lb n="3"/>`                                   |
 | `///1v`                  | Page break                                 | `<pb n="1v"/>`                                           |
+| `//{56r}`, `///{fol. 1r}` | Break number with letters or spaces       | `<lb n="56r"/>`, `<pb n="fol. 1r"/>`                     |
 | `.p`                     | New paragraph (on its own)                 | `</p><p>`                                                |
 | `.abbr[kgs]{konungs}`    | Abbreviation with its expansion            | `<choice><abbr>…</abbr><expan>…</expan></choice>`        |
 | `[...]` or `[...3]`      | Gap, optionally with its length in letters | `<gap reason="illegible" quantity="3" unit="chars"/>`    |
 | `[...3<ok>]`             | Gap with supplied text                     | `<gap …/><supplied>ok</supplied>`                        |
-| `<text>`                 | Supplied text                              | `<supplied>text</supplied>`                              |
+| `<text>`                 | Supplied text (may contain shorthand)      | `<supplied>text</supplied>`                              |
 | `-{text}-`               | Deletion                                   | `<del>text</del>`                                        |
 | `+{text}+`               | Addition                                   | `<add>text</add>`                                        |
 | `?{text}?`               | Unclear reading                            | `<unclear>text</unclear>`                                |

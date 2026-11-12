@@ -69,6 +69,11 @@
             desc: "Line break with number",
         },
         { syntax: "///1v", output: '<pb n="1v"/>', desc: "Page break" },
+        {
+            syntax: "//{56r}",
+            output: '<lb n="56r"/>',
+            desc: "Break number with letters or spaces",
+        },
         { syntax: ".p", output: "</p><p>", desc: "New paragraph (standalone)" },
         {
             syntax: ".abbr[d.]{deus}",
@@ -93,7 +98,7 @@
         {
             syntax: "<text>",
             output: "<supplied>text</supplied>",
-            desc: "Supplied text",
+            desc: "Supplied text (may contain shorthand)",
         },
         { syntax: "-{text}-", output: "<del>text</del>", desc: "Deletion" },
         { syntax: "+{text}+", output: "<add>text</add>", desc: "Addition" },

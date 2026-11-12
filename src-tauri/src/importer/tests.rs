@@ -1689,3 +1689,26 @@ fn test_shorthand_reads_as_the_files_tokens() {
         assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap(), "{expected}");
     }
 }
+
+#[test]
+fn test_break_numbers_and_supplied_markup_read_as_tokens() {
+    let cases = [
+        (r#"<w><me:dipl>a</me:dipl></w> <lb n="56r"/><w><me:dipl>ok</me:dipl></w>"#, ".p a\n//{56r} ok"),
+        (r#"<w><me:dipl>a<lb n="-3"/>b</me:dipl></w>"#, ".p a~//{-3}b"),
+        (r#"<w><me:dipl>sa<supplied>m<lb n="14"/>þ</supplied>yct</me:dipl></w>"#, ".p sa<m~//14þ>yct"),
+        (r#"<w><me:dipl>sægír</me:dipl></w><pc>: –</pc>"#, r".p sægír:\ \–"),
+    ];
+    for (words, expected) in cases {
+        let xml = menota_body(words);
+        let import = parse(&xml).unwrap();
+        assert_eq!(import.dsl, expected);
+        let segments = import.imported_document.unwrap().segments;
+        let from_xml: Vec<String> =
+            segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
+        assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap(), "{expected}");
+    }
+    // An edited word keeps its supplied text with markup
+    let xml = menota_body(r#"<w><me:dipl>sa<supplied resp="ed">m<lb n="14"/>þ</supplied>yct</me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("yct", "ycth")).unwrap();
+    assert!(body.contains(r#"<me:dipl>sa<supplied resp="ed">m<lb n="14"/>þ</supplied>ycth</me:dipl>"#), "{body}");
+}

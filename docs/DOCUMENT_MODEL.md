@@ -311,9 +311,8 @@ text).
      as records; GetPut and PutGet on every file; a fuzzed edit in every word keeps all
      markup outside the edited range (Locality); the existing round-trip tests.
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
-   (escaped characters, `#…#` numerals, separated neighbours) brought that from 94 to 269
-   of the 288 files; the rest need syntax for any break number and supplied text with
-   markup (see `TODO.md`), and the gate skips them. Gate:
+   and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,
+   shorthand in `<…>`) brought that from 94 to all 288 files. Gate:
    `corpus_xml_and_shorthand_read_as_the_same_tokens`.
 4. **Profile and levels.** The profile with the import dialog; derived and pinned levels.
 5. **Word panel** on the typed layer.

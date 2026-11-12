@@ -348,14 +348,12 @@ pub fn is_token(node: &Node) -> bool {
 pub fn node_to_dsl(node: &Node) -> String {
     match node {
         Node::Text(t) => t.clone(),
-        Node::LineBreak(n) => {
-            if let Some(num) = n {
-                format!("//{}", num)
-            } else {
-                "//".to_string()
-            }
-        }
-        Node::PageBreak(n) => format!("///{}", n),
+        Node::LineBreak(n) => match n {
+            Some(num) => format!("//{}", crate::parser::syntax::break_number_dsl(num, false)),
+            None => "//".to_string(),
+        },
+        Node::PageBreak(n) if n.is_empty() => "///".to_string(),
+        Node::PageBreak(n) => format!("///{}", crate::parser::syntax::break_number_dsl(n, true)),
         Node::Abbreviation { abbr, expansion } => format!(".abbr[{}]{{{}}}", abbr, expansion),
         Node::Gap { quantity, supplied } => {
             let mut s = "[...".to_string();

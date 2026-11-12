@@ -103,6 +103,16 @@ fn glued(previous: &str, next: &str) -> bool {
     }
 }
 
+/// A break's number in the shorthand: from rules 4 on in braces where the
+/// plain form can't hold it (`//{56r}`).
+fn break_number(n: &str, page: bool, dsl_rules: u32) -> String {
+    if dsl_rules >= 4 {
+        crate::parser::syntax::break_number_dsl(n, page)
+    } else {
+        n.to_string()
+    }
+}
+
 /// Whether a token's shorthand ends with a break it continues across
 /// (`míſ~//2`, `ꝩand~///10v`): whitespace after it doesn't end the word.
 fn ends_with_continued_break(dsl: &str) -> bool {
@@ -224,7 +234,7 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 // Line break on new line, then continue on same line
                 dsl.push('\n');
                 if let Some(n) = attributes.get("n") {
-                    dsl.push_str(&format!("//{}", n));
+                    dsl.push_str(&format!("//{}", break_number(n, false, dsl_rules)));
                 } else {
                     dsl.push_str("//");
                 }
@@ -240,7 +250,7 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 // Page break: put on new line, no trailing newline (content follows)
                 dsl.push('\n');
                 if let Some(n) = attributes.get("n") {
-                    dsl.push_str(&format!("///{}", n));
+                    dsl.push_str(&format!("///{}", break_number(n, true, dsl_rules)));
                 } else {
                     dsl.push_str("///");
                 }

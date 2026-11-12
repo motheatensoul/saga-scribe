@@ -30,7 +30,7 @@ enum TextContext {
     Numeral,
     /// `-{…}-`, `+{…}+`, `?{…}?`: what could close the construct
     Inline,
-    /// `<…>`
+    /// `<…>`, whose content is shorthand
     Angle,
     /// `^{…}`: only braces nest in a note
     Note,
@@ -52,7 +52,7 @@ fn escape_dsl(text: &str, context: TextContext) -> String {
                         '\\' | '#' | '|' | '~' | '<' | '>' | '[' | ']' | '{' | '}' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?'
                     )
             }
-            TextContext::Numeral => {
+            TextContext::Numeral | TextContext::Angle => {
                 // `.p` standalone is a paragraph; `.abbr[` and the like have
                 // their bracket escaped
                 let paragraph = c == '.' && next == Some('p') && chars.get(i + 2).is_none_or(|c| c.is_whitespace());
@@ -61,7 +61,6 @@ fn escape_dsl(text: &str, context: TextContext) -> String {
                     || matches!(c, '\\' | '#' | '|' | '~' | '<' | '>' | '[' | ']' | '{' | '}' | ':')
             }
             TextContext::Inline => matches!(c, '\\' | '#' | '{' | '}' | '[' | ']' | '<' | '>'),
-            TextContext::Angle => matches!(c, '\\' | '#' | '>'),
             TextContext::Note => matches!(c, '\\' | '#' | '{' | '}'),
         };
         if escape {
@@ -84,17 +83,50 @@ fn punctuation_dsl(dsl: String) -> String {
     }
     let plain = format!("{}{}", &dsl[..at], &dsl[at + 1..]);
     let plain = plain.as_str();
-    let tokens = |dsl: &str| {
-        crate::parser::Lexer::new(dsl)
-            .parse()
-            .map(|doc| crate::parser::WordTokenizer::new().tokenize(doc.nodes))
-            .ok()
-    };
-    match (tokens(plain).as_deref(), tokens(&dsl).as_deref()) {
+    match (dsl_tokens(plain).as_deref(), dsl_tokens(&dsl).as_deref()) {
         (Some([crate::parser::Node::Punctuation(_)]), _) => plain.to_string(),
         (Some([crate::parser::Node::Norm(_)]), Some([crate::parser::Node::Norm(_)])) => plain.to_string(),
         _ => dsl,
     }
+}
+
+/// The tokens a piece of shorthand reads as, if it parses.
+fn dsl_tokens(dsl: &str) -> Option<Vec<crate::parser::Node>> {
+    crate::parser::Lexer::new(dsl)
+        .parse()
+        .map(|doc| crate::parser::WordTokenizer::new().tokenize(doc.nodes))
+        .ok()
+}
+
+/// `dsl` with every character but the first escaped (escaped characters and
+/// entities stay as they are).
+fn escape_after_first(dsl: &str) -> String {
+    let chars: Vec<char> = dsl.chars().collect();
+    let mut out = String::with_capacity(dsl.len() * 2);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' && i + 1 < chars.len() {
+            out.push(c);
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        if c == ':' {
+            let name = chars[i + 1..].iter().take_while(|c| c.is_alphanumeric() || **c == '_').count();
+            if name > 0 && chars.get(i + 1 + name) == Some(&':') {
+                out.extend(&chars[i..i + name + 2]);
+                i += name + 2;
+                continue;
+            }
+        }
+        if !out.is_empty() {
+            out.push('\\');
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
 }
 
 /// The segments of a body, the tree node of each (`None` for a word that is
@@ -555,6 +587,13 @@ impl Projector<'_> {
     fn extract_punctuation(&mut self, id: NodeId) -> Segment {
         let mut lb = false;
         let dsl_content = punctuation_dsl(self.levels_dsl(id, &mut lb));
+        // Punctuation with a space or a letter in it (`<pc>: –</pc>`): every
+        // character after the first escaped, so it continues the punctuation
+        let dsl_content = if dsl_tokens(&dsl_content).is_some_and(|tokens| tokens.len() > 1) {
+            punctuation_dsl(escape_after_first(&dsl_content))
+        } else {
+            dsl_content
+        };
         Segment::Punctuation { id: self.next_id(), original_xml: self.original_xml(id), dsl_content }
     }
 
@@ -687,7 +726,9 @@ impl Projector<'_> {
             match self.local(node) {
                 "note" => return TextContext::Note,
                 "add" | "del" | "unclear" => return TextContext::Inline,
-                "supplied" if !self.has_element_children(node) => return TextContext::Angle,
+                "supplied" if !self.has_element_children(node) || self.in_token_or_construct(node) => {
+                    return TextContext::Angle
+                }
                 "num" if self.is_numeral(node) && !self.in_token_or_construct(node) => return TextContext::Numeral,
                 "w" | "pc" | "num" | "supplied" | "head" | "body" => return TextContext::Token,
                 _ => {}
@@ -817,7 +858,9 @@ impl Projector<'_> {
                         }
                         let trimmed = inner.trim();
                         if !trimmed.is_empty() {
-                            if has_children {
+                            // In a word, supplied text with markup is `<…>`
+                            // too (`.supplied{…}` would end the word)
+                            if has_children && !self.in_token_or_construct(c) {
                                 out.push_str(&format!(".supplied{{{}}}", trimmed));
                             } else {
                                 out.push('<');
@@ -845,7 +888,7 @@ impl Projector<'_> {
                         *lb = true;
                         out.push_str("~//");
                         if let Some(n) = self.property(c, "n") {
-                            out.push_str(&n);
+                            out.push_str(&crate::parser::syntax::break_number_dsl(&n, false));
                         }
                     }
                     "dipl" | "norm" => {}

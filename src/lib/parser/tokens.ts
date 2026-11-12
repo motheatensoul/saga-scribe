@@ -130,6 +130,15 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
     const at = (text: string) => startsWith(peek, offset, text);
     const block = (token: number, keyword: number) =>
         bracedBlock(peek, offset + keyword + 1) < 0 ? { opener: keyword + 1 } : found(token, keyword);
+    // A break and its number: `{any}`, or up to whitespace (page) or digits only (line)
+    const breakAt = (token: number, opener: number, page: boolean): Found | Failed => {
+        const from = offset + opener;
+        if (peek(from) === 123) {
+            const end = until(peek, from + 1, "}");
+            return end < 0 ? { opener } : found(token, end - offset);
+        }
+        return found(token, skipWhile(peek, from, page ? (c) => !isWhitespace(c) : isDigit) - offset);
+    };
     const inline = (token: number, closing: string | null): Found | Failed => {
         let end = bracketed(peek, offset + 2, "}");
         if (end >= 0 && closing !== null) end = peek(end) === closing.charCodeAt(0) ? end + 1 : -1;
@@ -144,12 +153,8 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
         const end = until(peek, offset + 1, "#");
         return end < 0 ? { opener: 1 } : found(Numeral, end - offset);
     }
-    if (at("///")) {
-        return found(PageBreak, skipWhile(peek, offset + 3, (c) => !isWhitespace(c)) - offset);
-    }
-    if (at("//")) {
-        return found(LineBreak, skipWhile(peek, offset + 2, isDigit) - offset);
-    }
+    if (at("///")) return breakAt(PageBreak, 3, true);
+    if (at("//")) return breakAt(LineBreak, 2, false);
     // Standalone: whitespace (or nothing) on both sides
     const spaceOrEnd = (code: number) => code < 0 || isWhitespace(code);
     if (at(".p") && spaceOrEnd(peek(offset - 1)) && spaceOrEnd(peek(offset + 2))) {
@@ -188,12 +193,8 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
         }
         return end > offset + 1 && peek(end) === 58 ? found(Entity, end + 1 - offset) : null;
     }
-    if (at("~///")) {
-        return found(WordContinuationPageBreak, skipWhile(peek, offset + 4, (c) => !isWhitespace(c)) - offset);
-    }
-    if (at("~//")) {
-        return found(WordContinuationLineBreak, skipWhile(peek, offset + 3, isDigit) - offset);
-    }
+    if (at("~///")) return breakAt(WordContinuationPageBreak, 4, true);
+    if (at("~//")) return breakAt(WordContinuationLineBreak, 3, false);
     if (at("~")) return found(CompoundJoin, 1);
     if (at("|")) return found(WordBoundary, 1);
     return null;

@@ -21,20 +21,14 @@ when it is done (and record it in CHANGELOG.md if users notice).
   inside a level, gap attributes, comments, levels the file doesn't have; numbers in the
   survey below). The plan is a new document model with the XML as the only truth, views
   as lenses, and a project profile for transcription levels: `docs/DOCUMENT_MODEL.md`
-  (design agreed 2026-11-11; steps 1, 2 and 3a are done: an edited word keeps the markup
-  the shorthand doesn't show; next: 3b, operations on the tree instead of segments). It
-  comes before the shorthand redesign.
-- **The shorthand of 19 of the 288 Menota files still doesn't read as their words, token
-  for token** (it was 194 before DSL rules 3: escaped characters, `#…#` numerals and
-  separated neighbours). The patcher pairs tokens with the file's elements, so an edit there
-  can be paired wrongly. Gate: `corpus_xml_and_shorthand_read_as_the_same_tokens`. Left:
-  - supplied text with markup inside a word (11 files: `kæn<supplied>n</supplied>a` with
-    markup is `kæn.supplied{n}a`, and `.supplied{…}` ends a word). The decided `<…>` with
-    shorthand content (below) fixes it;
-  - break numbers the shorthand can't write (7 files): `<lb n="-3"/>`, `n="56r"`,
-    `n="123v"`, typos such as `n="33oat"`, and `<pb n="fol. 1r"/>` (a page number ends at
-    whitespace). Needs syntax for any `n`;
-  - a `<pc>` containing a space (`<pc>: –</pc>`, 1 file).
+  (design agreed 2026-11-11). Done: steps 1, 2 and 3a (an edited word keeps the markup
+  the shorthand doesn't show), and the shorthand of all 288 Menota files reads as their
+  words token for token (DSL rules 3 and 4, 2026-11-12), which 3b needs. **Next: 3b**,
+  operations on the tree instead of segments, with replaced/removed word records and the
+  GetPut, PutGet and Locality gates (see the steps in the design). It comes before the
+  shorthand redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
+  `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
+  (run them one at a time; together they can run out of memory).
 - **Text outside words in documents without `<w>`** is still split at punctuation by the
   shorthand (`Hello,` is one segment, two tokens); in documents with `<w>` such loose text
   is escaped like a word.
@@ -113,9 +107,9 @@ when it is done (and record it in CHANGELOG.md if users notice).
     shows a short form's expansion (inline hint or hover), so the store isn't hidden state.
     JSON export/import of the store for reuse between manuscripts can come later; hands
     differ too much to make sharing a priority.
-  - **Supplied text with markup.** `<…>` takes shorthand content (entities,
-    abbreviations, line breaks), which makes `.supplied{…}` unnecessary. The same applies
-    to gap-with-supplied `[...3<ab>]`.
+  - **Supplied text with markup.** `<…>` and `[...3<ab>]` take shorthand content (done,
+    DSL rules 4). Left: `.supplied{…}` is still how supplied text spanning several words
+    is written (`<a b>` is one token); retiring it needs `<…>` to hold several words.
   - **Entities shown as characters.** A visible toggle in the editor header, next to
     undo/redo, chooses between two modes. In one, a well-formed, known `:name:` is shown as its glyph, and the source
     reappears when the text cursor (not the mouse) enters or touches it. In the other,
