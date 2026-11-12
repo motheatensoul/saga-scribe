@@ -1285,6 +1285,7 @@ fn render_modify(
             Segment::Word {
                 attributes,
                 original_xml,
+                dsl_content,
                 ..
             },
             TokenKind::Word,
@@ -1298,7 +1299,31 @@ fn render_modify(
                 .then(|| level_content(original, "norm"))
                 .flatten()
                 .map(without_breaks);
-            compiler.compile_word_from_dsl(new_dsl, attributes, norm.as_deref())
+            let compiled = compiler.compile_word_from_dsl(new_dsl, attributes, norm.as_deref());
+            // The edit is merged into the word as written, so markup the
+            // shorthand doesn't show stays (see document/merge.rs). The old
+            // shorthand is read as a token, as `new_dsl` was, so the two
+            // differ only by the edit (the token's text drops e.g. the `~`
+            // of a continued line break)
+            let old_token = match parse_dsl_to_tokens(dsl_content).as_deref() {
+                Ok([token]) => token.clone(),
+                _ => dsl_content.clone(),
+            };
+            let before = compiler.compile_word_from_dsl(&old_token, attributes, norm.as_deref());
+            match crate::document::merge_word_edit(original, &before, &compiled) {
+                Some(merged) => {
+                    if !merged.kept_levels.is_empty() || !merged.removed.is_empty() {
+                        log::info!(
+                            "Edited word {:?}: levels kept as they were {:?}, removed with their text {:?}",
+                            new_dsl,
+                            merged.kept_levels,
+                            merged.removed
+                        );
+                    }
+                    merged.xml
+                }
+                None => compiled,
+            }
         }
         (Segment::Punctuation { .. }, TokenKind::Punctuation) => {
             compiler.compile_punctuation_from_dsl(new_dsl)

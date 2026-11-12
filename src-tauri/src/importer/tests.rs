@@ -1006,6 +1006,67 @@ fn imported_render(
     Ok((original_body, body))
 }
 
+// ============================================================================
+// EDITED WORDS KEEP THEIR MARKUP (document/merge.rs)
+// ============================================================================
+
+/// A MENOTA body with `words` in one paragraph.
+fn menota_body(words: &str) -> String {
+    format!(
+        r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
+<p>{words}</p>
+</body></text></TEI>"#
+    )
+}
+
+#[test]
+fn test_edit_keeps_expansion_in_a_diplomatic_only_word() {
+    // DG 8: the expansion has no mark; the shorthand reads "hænnaR"
+    let xml = menota_body(r#"<w xml:id="w28" lemma="hon"><me:dipl>hæn<ex>n</ex>aR</me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("hænnaR", "hænnaRR")).unwrap();
+    assert!(
+        body.contains(r#"<w xml:id="w28" lemma="hon"><me:dipl>hæn<ex>n</ex>aRR</me:dipl></w>"#),
+        "{body}"
+    );
+}
+
+#[test]
+fn test_edit_keeps_supplied_text_and_gap_attributes_and_adds_no_level() {
+    // AM 242 fol: an initial left for the rubricator, supplied on the dipl level
+    let xml = menota_body(
+        r#"<w><me:facs><gap extent="1" unit="initial"/>erollꝺin</me:facs><me:dipl><supplied reason="empty space" resp="KGJ">V</supplied>erollꝺin</me:dipl></w> <w><me:facs>ok</me:facs><me:dipl>ok</me:dipl></w>"#,
+    );
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("erollꝺin", "erollꝺinn")).unwrap();
+    assert!(body.contains(r#"<gap extent="1" unit="initial"/>erollꝺinn</me:facs>"#), "{body}");
+    assert!(body.contains(r#"<supplied reason="empty space" resp="KGJ">V</supplied>erollꝺinn</me:dipl>"#), "{body}");
+    assert!(!body.contains("me:norm"), "{body}");
+}
+
+#[test]
+fn test_edit_keeps_abbreviation_marks_and_expansions_inside_the_word() {
+    let xml = menota_body(
+        r#"<w lemma="konungr"><choice><me:facs>k<am>&bar;</am>r</me:facs><me:dipl>k<ex>onung</ex>r</me:dipl><me:norm>konungr</me:norm></choice></w> <w><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    assert!(import.dsl.contains(".abbr[k:bar:r]{konungr}"), "{}", import.dsl);
+    let (_, body) =
+        imported_roundtrip(&xml, |d| d.replace(".abbr[k:bar:r]{konungr}", ".abbr[k:bar:rs]{konungrs}")).unwrap();
+    assert!(body.contains("<me:facs>k<am>&bar;</am>rs</me:facs>"), "{body}");
+    assert!(body.contains("<me:dipl>k<ex>onung</ex>rs</me:dipl>"), "{body}");
+    // The curated normalized form stays
+    assert!(body.contains("<me:norm>konungr</me:norm>"), "{body}");
+}
+
+#[test]
+fn test_edit_keeps_comments_and_unknown_elements_in_the_word() {
+    let xml = menota_body(
+        r#"<w><me:facs>ſmi<lb ed="ms" n="9"/><!--Kontrollera--><hi rend="right"></hi>ðaðir</me:facs><me:dipl>ſmi<lb ed="ms" n="9"/>ðaðir</me:dipl></w> <w><me:facs>ok</me:facs><me:dipl>ok</me:dipl></w>"#,
+    );
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("ðaðir", "ðaðirr")).unwrap();
+    assert!(body.contains(r#"ſmi<lb ed="ms" n="9"/><!--Kontrollera--><hi rend="right"/>ðaðirr</me:facs>"#), "{body}");
+    assert!(body.contains(r#"<me:dipl>ſmi<lb ed="ms" n="9"/>ðaðirr</me:dipl>"#), "{body}");
+}
+
 #[test]
 fn test_unchanged_import_is_byte_identical() {
     let (original, body) = imported_roundtrip(MENOTA_SAMPLE, |d| d.to_string()).unwrap();

@@ -15,10 +15,12 @@
 //!   output with libxml2 again and compares it with the tree: use it for
 //!   anything that is saved.
 
+mod merge;
 mod project;
 mod tree;
 mod write;
 
+pub use merge::merge_word_edit;
 pub use project::{find_body, project_body};
 pub use tree::Tree;
 

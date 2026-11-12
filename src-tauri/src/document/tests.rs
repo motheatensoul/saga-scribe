@@ -428,3 +428,116 @@ fn corpus_unchanged_import_round_trips() {
     }
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
 }
+
+/// Gate of step 3 (the merge): in every file, every 25th word gets a letter
+/// added in the shorthand. The written file reads, and it has every element
+/// it had: an edit doesn't lose markup the shorthand can't show.
+#[test]
+fn corpus_edited_words_keep_their_markup() {
+    use crate::identity::{Guidance, TextChange};
+    use crate::importer::tei::patching::{compiler_config_for, render_body, Patcher};
+    use crate::importer::tei::segments::Segment;
+    use std::collections::BTreeMap;
+
+    fn element_counts(tree: &Tree) -> BTreeMap<String, usize> {
+        let mut counts = BTreeMap::new();
+        for id in tree.descendants(Tree::DOCUMENT) {
+            if let Some(element) = tree.element(id) {
+                *counts.entry(element.name.clone()).or_default() += 1;
+            }
+        }
+        counts
+    }
+
+    let files = corpus_files();
+    let mut failures = Vec::new();
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let result = (|| -> Result<Option<usize>, String> {
+            let import = crate::importer::tei::parse(&source)?;
+            let doc = import.imported_document.ok_or("no manifest")?;
+            let original = import.original_body_xml.clone().ok_or("no body")?;
+            // Append "ꝸ" (a letter no Menota text has) to every 25th <w>, at
+            // the end of its token (segments read one-to-one as tokens)
+            let (_, spans) = crate::identity::spanned_dsl_tokens(&import.dsl)?;
+            let token_segments: Vec<&Segment> = doc
+                .segments
+                .iter()
+                .filter(|s| crate::importer::tei::patching::segment_dsl_token(s).is_some())
+                .collect();
+            // Files whose shorthand doesn't read as their segments, token for
+            // token, can't be edited reliably by the patcher (TODO.md)
+            if token_segments.len() != spans.len() {
+                return Ok(None);
+            }
+            let mut ends = Vec::new();
+            let mut words = 0;
+            for (segment, span) in token_segments.iter().zip(&spans) {
+                if let Segment::Word { original_xml, .. } = segment {
+                    if original_xml.starts_with("<w") {
+                        words += 1;
+                        if words % 25 == 0 {
+                            ends.push(span.end);
+                        }
+                    }
+                }
+            }
+            let edited = ends.len();
+            let mut dsl = import.dsl.clone();
+            for &end in ends.iter().rev() {
+                dsl.insert(end, 'ꝸ');
+            }
+
+            // As the app does: the editor's changes since the last compile
+            // guide which word is which
+            let mut patcher = Patcher::new(&doc.segments, doc.dsl_rules);
+            let (_, state) = patcher.compute(&import.dsl, None)?;
+            patcher.commit(state);
+            let utf16 = |text: &str, byte: usize| text[..byte].encode_utf16().count();
+            let changes = ends
+                .iter()
+                .enumerate()
+                .map(|(k, &end)| {
+                    let from_a = utf16(&import.dsl, end);
+                    TextChange { from_a, to_a: from_a, from_b: from_a + k, to_b: from_a + k + 1 }
+                })
+                .collect();
+            let guidance = Guidance { base_revision: patcher.revision(), changes };
+            let (patches, _) = patcher.compute(&dsl, Some(&guidance))?;
+            let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc));
+            let body = render_body(&doc, Some(&original), &patches, &mut compiler)?;
+            let written = format!(
+                "{}{}{}",
+                import.original_preamble.unwrap_or_default(),
+                body.xml,
+                import.original_postamble.unwrap_or_default()
+            );
+            let before = Tree::parse(&source)?;
+            let after = Tree::parse(&written).map_err(|e| format!("doesn't read: {e}"))?;
+            let (old_counts, new_counts) = (element_counts(&before), element_counts(&after));
+            let lost: Vec<String> = old_counts
+                .iter()
+                .filter(|(name, n)| new_counts.get(*name).copied().unwrap_or(0) < **n)
+                .map(|(name, n)| format!("{name} {n}→{}", new_counts.get(name).copied().unwrap_or(0)))
+                .collect();
+            if !lost.is_empty() {
+                return Err(format!("elements lost: {}", lost.join(", ")));
+            }
+            let added = written.matches('ꝸ').count();
+            if added < edited {
+                return Err(format!("{edited} letters added, {added} written"));
+            }
+            Ok(Some(edited))
+        })();
+        match result {
+            Ok(Some(n)) => eprintln!("ok      {name} ({n} words edited)"),
+            Ok(None) => eprintln!("skipped {name} (its shorthand doesn't read as its segments)"),
+            Err(e) => {
+                eprintln!("FAILED  {name}: {e}");
+                failures.push(name);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
+}

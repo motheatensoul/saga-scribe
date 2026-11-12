@@ -21,8 +21,34 @@ when it is done (and record it in CHANGELOG.md if users notice).
   inside a level, gap attributes, comments, levels the file doesn't have; numbers in the
   survey below). The plan is a new document model with the XML as the only truth, views
   as lenses, and a project profile for transcription levels: `docs/DOCUMENT_MODEL.md`
-  (design agreed 2026-11-11; steps 1 and 2, the tree and its projection to shorthand, are
-  done; next: step 3, writing shorthand edits back through operations on the tree). It comes before the shorthand redesign.
+  (design agreed 2026-11-11; steps 1, 2 and 3a are done: an edited word keeps the markup
+  the shorthand doesn't show; next: 3b, operations on the tree instead of segments). It
+  comes before the shorthand redesign.
+- **The shorthand of 194 of the 288 Menota files doesn't read as their words, token for
+  token**, though the importer promises it (only Holmperg was tested). The patcher pairs
+  tokens with the file's words, so an edit there can pair them wrongly and rewrite words
+  that weren't edited. Found by the step 3 gate (`corpus_edited_words_keep_their_markup`
+  skips these files). Causes, with counts over the corpus:
+  - a word directly followed by another construct, without whitespace in the XML, is
+    glued to it: `word^{note}` (`<w>…</w><note>…</note>`, thousands), `S?{on}??{…}?`, a
+    middle dot, two `<w>` (`þꝩiat`), a word and an unnumbered `<lb/>` (`r//`);
+  - one element reads as several tokens (11,083): numerals and punctuation within one
+    `<w>` or `<pc>`, such as `.xv.` or `.:iacute:`, which the tokenizer splits at the dots.
+
+  The shorthand needs a way to keep such neighbours apart (perhaps `|`) and to write a
+  numeral like `.xv.` as one word; that belongs to the shorthand design pass. A new
+  `DSL_RULES` version then rewrites these imports.
+- **Without the editor's guidance, the patcher can move words.** Comparing whole
+  documents, it may pair a run of identical tokens (e.g. `[...5]`) differently, delete
+  words and insert them again as new ones, which loses their markup. The app always sends
+  guidance, but the patcher falls back to comparing when guidance doesn't fit. Step 3b's
+  removed and replaced records cover this.
+- **The patcher passes edited words' shorthand as it renders the token,** which drops the
+  `~` of a continued line break (`[...4]~//3x` becomes `[...4]//3x`). The merge compares
+  like with like, but where it falls back to compiling the word, the break is written as
+  a plain `<lb/>`.
+- **The compiler writes entities inside `?{…}?` within `.abbr[…]` literally**:
+  `.abbr[?{þ:er:}?]{…}` gives `<unclear>þ:er:</unclear>`, not `&er;`.
 - **After the document model works:** a button that opens the word panel on the next word
   marked for review; inferring a changed lemma and analysis after an edit (and from them
   dipl and norm), which needs a robust lemmatizer.

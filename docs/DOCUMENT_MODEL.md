@@ -1,7 +1,8 @@
 # Document model (design, draft)
 
-Status: design agreed, 2026-11-11. Steps 1 and 2 are implemented
-(`src-tauri/src/document/`): the importer reads files through the tree and its projection. It replaces
+Status: design agreed, 2026-11-11. Steps 1, 2 and 3a are implemented
+(`src-tauri/src/document/`): the importer reads files through the tree and its projection,
+and an edited word is merged into its XML (`merge.rs`). It replaces
 the segment manifest and the patcher's way of writing edited words, and prepares the
 shorthand redesign (see "Shorthand (DSL)" in `TODO.md`).
 
@@ -300,9 +301,16 @@ text).
    the tree equals libxml2's for each.
 2. **Projection.** `get` on the tree. Gate: the same shorthand as today's importer for
    every file. The importer then uses it.
-3. **`put` through operations.** Replaces the patcher. Gates: GetPut and PutGet on every
-   file; a fuzzed edit in every word keeps all markup outside the edited range (Locality);
-   the existing round-trip tests.
+3. **`put` through operations.** Replaces the patcher, in two parts:
+   - **3a, merging edited words** (done): the patcher still decides which word is which,
+     but an edited word's XML is no longer compiled from scratch; the change between the
+     compiled old and new shorthand is merged into the word as written (`merge.rs`).
+     Gate: in every file, every 25th word edited keeps all elements.
+   - **3b, operations:** the tree replaces segments; replaced and removed words are kept
+     as records; GetPut and PutGet on every file; a fuzzed edit in every word keeps all
+     markup outside the edited range (Locality); the existing round-trip tests.
+   Both need the shorthand to read as the same tokens as the file's words, which most
+   Menota files don't yet (see `TODO.md`); until then the gate skips those files.
 4. **Profile and levels.** The profile with the import dialog; derived and pinned levels.
 5. **Word panel** on the typed layer.
 6. **New documents and the file format.** The same path for new documents; the new
