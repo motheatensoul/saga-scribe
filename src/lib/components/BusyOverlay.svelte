@@ -52,7 +52,7 @@
             {title}
         </p>
         {#if step !== null}
-            <p id="{id}-step" class="text-sm text-base-content/70" aria-live="polite">
+            <p id="{id}-step" class="text-sm text-base-content/80" aria-live="polite">
                 {step}
             </p>
         {/if}

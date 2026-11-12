@@ -5,6 +5,32 @@ All notable changes to Saga-Scribe will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - Unreleased
+
+### Added
+
+- **System notifications**: when an import or an HTML or PDF export finishes or fails while the window is in the background, the system shows a notification (the freedesktop notification service on Linux, including the Flatpak; toast notifications on Windows; Notification Center on macOS)
+- **Nix development environment**: `nix develop` provides bun, the pinned Rust toolchain and the system libraries for building
+- **Numerals and escaped characters in the shorthand**: `#.x.#` is a numeral (`<num>`), a token of its own whose dots belong to it. A backslash makes the next character plain text, part of the word (`ꝼæ\;ðꝛ`, `\(anno\)`); right after punctuation it continues the punctuation (`,\,` is one `<pc>`). Projects saved before have their `\` and `#` escaped when opened, so they read as before (project format 1.7)
+- **Any line or page break number**: a number that isn't just digits (line breaks) or contains a space (page breaks) is written in braces, `//{56r}`, `///{fol. 1r}`
+- **Shorthand in supplied text**: `<…>` and `[...3<…>]` take shorthand, such as entities, abbreviations and line breaks (`kæn<n~//14:thorn:>a`), and stay part of the word they are in. Entities in supplied text used to be written literally
+
+### Changed
+
+- **Toolbar grouped by what the actions apply to**: file (Open, Import, Save, Export), document (template, template manager, **Metadata**, **Validate**), lemmatization (undo, redo) and application (log, help, settings). The template manager, metadata editor, validation and log moved there from the editor header, which now has only the actions on the text (undo, redo, search, entities). In a narrow window the toolbar shows icons only and wraps whole groups onto a second row
+- **Light theme without black buttons**: buttons, the active tab, focus outlines and other accents use a dark coffee brown instead of black, and turn a lighter brown when pointed at
+
+### Fixed
+
+- **Imported files whose shorthand didn't read as their words**: in 194 of the 288 Menota texts and charters, elements written together in the XML ran together in the shorthand (`skrims^{sic}` for a word and the note after it, `þꝩiat` for two words) and words containing punctuation fell apart (`.x.`, `iðran;`), so an edit could be paired with the wrong word and rewrite words that weren't edited. The shorthand now keeps such neighbours apart (`skrims ^{sic}`, `þꝩi|at`), escapes characters that would split a word (`iðran\;`) and writes numerals as `#.x.#`. Now all 288 do. Files imported before keep their shorthand
+- **Editing a word in an imported file lost markup the shorthand doesn't show**: the word was written anew from its shorthand, which dropped expansions in diplomatic-only transcriptions (`hæn<ex>n</ex>aR`), supplied text and other elements inside a level, a gap's attributes (`extent`, `unit`), comments, and could add a normalized level the file doesn't have. The edit is now merged into the word as written: only what was edited changes, markup the shorthand doesn't show moves with the text, and a level is kept as it was where the edit can't be placed in it (such as a curated normalized form)
+- **Keyboard use of dialogs and panels**: focus moves into a dialog when it opens (to the search field in the word panel and the entity browser), Tab stays within it, and focus returns to where it was when it closes. Tab bars (preview, word panel, help) switch with the arrow keys. A focused word in the preview is outlined; on lemmatized or annotated words the focus wasn't visible at all. The entity browser's edit and delete buttons show when reached with the keyboard, not only on hover
+- **Screen readers**: the log, validation, entity browser and word panel are announced as dialogs with their titles; icon-only buttons (page navigation, removing entries in the metadata editor, entity and template actions) and the metadata editor's fields have names that say what they act on, e.g. "Remove editor 2"
+- **Contrast**: secondary text (hints, word numbers, timestamps, the file name in the toolbar, words with a suggested lemma) was too faint to read comfortably in both themes, and red and yellow text was hard to read in the light theme. All text now meets WCAG AA (4.5:1): errors and warnings are shown in the normal text colour with a red or yellow icon beside them, the log's error and warning counts likewise, and delete buttons are no longer red but turn red-tinted when pointed at or focused. In the Text and XSLT views, a confirmed lemma has a green outline with a thicker line underneath, a suggested one a dotted line underneath (it had a faint yellow outline that could hardly be seen); the wavy line under words edited since import is grey instead of a pale yellow, and the lines marking notes and semantic annotations are lighter in the dark theme, where they were hard to see; in the XSLT view and the HTML export, paragraph marks, line-break hyphens and gaps are less faint; in the editor, commands such as `.abbr` and deletions are a darker red in the light theme, unclear readings and `|`/`~` an amber brown instead of yellow, and notes less faint; the divider between editor and preview is wider, with a visible grip
+- **Imported files with a note right after a page break changed when saved unedited**: the shorthand put the note directly after the page number (`///109r^{…}`), where it read as part of the number. The text after a page break now starts on a new line. Files imported before keep their shorthand as it was
+- **Notes containing `<` could not be imported**: editors' notes such as `^{ð < t}` ("ð corrected from t") were read as an unclosed bracket, so the document had errors and could not be saved. In notes, only braces now pair up, so `<` and `[` are plain text there
+- **Ctrl+Shift+Z in the editor did two things**: it redid a text change and undid a lemmatization. In the editor it now only redoes (on every platform); elsewhere it still undoes a lemmatization. Likewise **Ctrl+/** in the editor no longer also wrapped the selection in a note `^{…}`: it opens the help
+
 ## [0.7.0] - 2026-10-31
 
 ### Added

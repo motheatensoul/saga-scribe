@@ -24,6 +24,8 @@ element {
   Note |
   Unclear |
   Entity |
+  Literal |
+  Numeral |
   WordBoundary |
   CompoundJoin |
   Text
@@ -72,6 +74,10 @@ NormBlock { normKeyword BlockContent }
   Unclear,
   // :name:
   Entity,
+  // \c: the character c as text
+  Literal,
+  // #.x.#: a numeral
+  Numeral,
   // |
   WordBoundary,
   // ~ between word parts (upp~haf → upphaf in norm)

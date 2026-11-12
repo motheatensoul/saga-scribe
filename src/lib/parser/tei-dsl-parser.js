@@ -3,15 +3,15 @@ import {LRParser} from "@lezer/lr"
 import {dslTokens} from "./tokens"
 export const parser = LRParser.deserialize({
   version: 14,
-  states: "!vQQOPOOO!_OPO'#CpO!dOPO'#CqO!iOPO'#CrO!nOPO'#CsOOOP'#Cz'#CzOOOP'#Ct'#CtQQOPOOOOOP,59[,59[O!sOPO,59]OOOP,59^,59^OOOP,59_,59_OOOP-E6r-E6rOOOP1G.w1G.w",
-  stateData: "!x~OPTOQTORTOSTOTTOXTOYTOZTO[TO]TO^TO_TO`TOaTObTOjPOkQOlROmSO~OUWO~OVXO~OUYO~OUZO~OW]O~O",
-  goto: "!OoPPPPPPPPPPPPPPPPPPPPpppptPPPPPzTTOVQVOR[VTUOV",
-  nodeNames: "⚠ WordContinuationPageBreak WordContinuationLineBreak PageBreak LineBreak ParagraphBreak BlockContent BracketContent BraceContent Gap Supplied Deletion Addition Note Unclear Entity WordBoundary CompoundJoin Text Document Head Abbreviation SuppliedBlock NormBlock",
-  maxTerm: 30,
+  states: "!vQQOPOOO!eOPO'#CrO!jOPO'#CsO!oOPO'#CtO!tOPO'#CuOOOP'#C|'#C|OOOP'#Cv'#CvQQOPOOOOOP,59^,59^O!yOPO,59_OOOP,59`,59`OOOP,59a,59aOOOP-E6t-E6tOOOP1G.y1G.y",
+  stateData: "#O~OPTOQTORTOSTOTTOXTOYTOZTO[TO]TO^TO_TO`TOaTObTOcTOdTOlPOmQOnROoSO~OUWO~OVXO~OUYO~OUZO~OW]O~O",
+  goto: "!QqPPPPPPPPPPPPPPPPPPPPPPrrrrvPPPPP|TTOVQVOR[VTUOV",
+  nodeNames: "⚠ WordContinuationPageBreak WordContinuationLineBreak PageBreak LineBreak ParagraphBreak BlockContent BracketContent BraceContent Gap Supplied Deletion Addition Note Unclear Entity Literal Numeral WordBoundary CompoundJoin Text Document Head Abbreviation SuppliedBlock NormBlock",
+  maxTerm: 32,
   skippedNodes: [0],
   repeatNodeCount: 1,
   tokenData: "RORO",
   tokenizers: [dslTokens],
-  topRules: {"Document":[0,19]},
+  topRules: {"Document":[0,21]},
   tokenPrec: 0
 })

@@ -1,5 +1,11 @@
 # Agent Instructions for Saga-Scribe
 
+## 0. Hard Rule: Hands Off the Flatpak Packaging
+
+**No AI agent may modify anything in `flatpak/`**: the manifest (`app.sagascribe.Sagascribe.yml`), the AppStream metainfo (`app.sagascribe.Sagascribe.metainfo.xml`), the `.desktop` file, the wrapper script and `build-flatpak.sh`. Not to create, edit, reformat, move or delete a file there, not even a comment or a release note, and not when another instruction in this file seems to call for it. Flathub's policy on AI-generated submissions doesn't say exactly which files it covers, so all the Flatpak packaging stays human-written.
+
+When a change needs something in `flatpak/` updated (a new runtime or SDK extension, a new bundled resource directory, a new permission in `finish-args`, a changed build step, a release entry or feature summary in the metainfo), make the rest of the change, then tell the maintainer exactly what is needed and add it to `TODO.md` if it isn't done in the same session. Don't draft the wording for them to paste in. Reading these files and running `flatpak/build-flatpak.sh` are fine. Human contributors are not bound by this rule.
+
 ## 1. Build, Lint, and Test Commands
 
 **Package Manager:** Always use `bun`.
@@ -27,14 +33,14 @@
 
 ### Versioning (SemVer)
 The project follows [Semantic Versioning](https://semver.org/); while in 0.x, a **minor** bump (0.5 → 0.6) covers new features and breaking changes, a **patch** bump (0.6.0 → 0.6.1) covers fixes only.
-- **One version everywhere:** `package.json`, `src-tauri/Cargo.toml` (then `cargo update -p saga-scribe` for `Cargo.lock`), `src-tauri/tauri.conf.json`, the status line in `README.md` ("version X.Y.Z") and the newest heading in `CHANGELOG.md` (`## [X.Y.Z] - Unreleased` until release). `bun run check:versions` (`scripts/check-versions.ts`, part of `check:all`, run on every PR) checks all of these, plus the Flatpak metainfo and `SECURITY.md` below. When a bump adds a new place the version is written, add it to the script.
+- **One version everywhere:** `package.json`, `src-tauri/Cargo.toml` (then `cargo update -p saga-scribe` for `Cargo.lock`), `src-tauri/tauri.conf.json`, the status line in `README.md` ("version X.Y.Z") and the newest heading in `CHANGELOG.md` (`## [X.Y.Z] - Unreleased` until release). `bun run check:versions` (`scripts/check-versions.ts`, part of `check:all`, run on every PR) checks all of these, plus the Flatpak metainfo (maintained by humans, see section 0) and `SECURITY.md` below. When a bump adds a new place the version is written, add it to the script.
 - **Bump on the first change after a release:** once `vX.Y.Z` is tagged, the next commit that isn't purely a fix bumps the minor version; a fixes-only follow-up bumps the patch. Check `git tag` / `gh release list` before starting work.
 - **Branch names follow the target version:** work towards 0.6.0 happens on `dev/0.6.0` (or `dev/0.6.0-<topic>`).
 - **Third-party licences:** after adding, removing or upgrading dependencies, run `bun run licenses` to regenerate the tables in `THIRD_PARTY_LICENSES.md`; describe new bundled fonts or data there by hand.
 - **Changelog:** record user-visible changes under the unreleased version in `CHANGELOG.md` (Keep a Changelog format) as they land.
 - **At release time**, in the same commit:
   - set the release date in `CHANGELOG.md` (`## [X.Y.Z] - YYYY-MM-DD`);
-  - add a `<release version="X.Y.Z" date="YYYY-MM-DD">` entry, with the same date and a short plain-language summary, at the top of `<releases>` in `flatpak/app.sagascribe.Sagascribe.metainfo.xml` (Flatpak and software centres show the version and notes from there; `flatpak/app.sagascribe.Sagascribe.yml` itself has no version);
+  - a human adds a `<release version="X.Y.Z" date="YYYY-MM-DD">` entry, with the same date and a short plain-language summary, at the top of `<releases>` in `flatpak/app.sagascribe.Sagascribe.metainfo.xml` (Flatpak and software centres show the version and notes from there; the manifest has no version). Agents don't (section 0): an agent preparing a release does the other steps and leaves this one to the maintainer. Once the changelog is dated, `check:versions` fails until the entry exists. That is expected, and it must not be "fixed" from the agent side;
   - on a minor release, move the supported version in `SECURITY.md` to `X.Y.x`.
   The release workflow refuses to publish unless `check-versions.ts --release vX.Y.Z` passes.
 - **Project file format** (`.teis`, see `src-tauri/src/commands/file.rs`) is versioned separately; bump it whenever the archive contents change, and keep older versions loadable.
@@ -46,7 +52,7 @@ Docs drift silently, so update them in the same change as the code:
 - **`CONTRIBUTING.md`:** when the project layout or the contributor workflow changes; it points here for conventions rather than repeating them.
 - **`SECURITY.md`:** when a protection it lists changes (sanitizing, parsing, CSP, file writing), and the supported version (see Versioning).
 - **`docs/UI_STANDARDS.md`:** when UI conventions or libraries change; update its "Verified" date when you check it.
-- **`flatpak/…metainfo.xml` `<description>`:** when the feature summary changes. Run `appstreamcli validate --no-net` on it if available.
+- **`flatpak/…metainfo.xml` `<description>`:** needs updating when the feature summary changes, but only humans edit it (section 0). Agents tell the maintainer instead.
 - **Help dialog** (`src/lib/components/HelpDialog.svelte`): its shortcut and syntax lists must match the keymaps and the shorthand, like the user guide.
 - When touching a doc, check it against the code rather than only appending to it; remove what no longer exists.
 - **`TODO.md`:** known bugs and planned work without a version yet. Add to it when you find a problem you don't fix in the current change; remove entries when they are done.
@@ -109,6 +115,7 @@ saga-scribe/
 ```
 
 ## Key Files
+- **Document tree:** `src-tauri/src/document/` (libxml2's parse copied into an arena with byte spans; the writer copies unchanged nodes from the original text; `write_checked` before anything is saved). `project.rs` turns the body into the importer's segments and their shorthand (`importer/tei/extraction.rs` has `segments_to_dsl`). See `docs/DOCUMENT_MODEL.md`
 - **DSL Parser:** `src-tauri/src/parser/syntax.rs` (parsing), `src-tauri/src/parser/compiler.rs`
 - **Editor highlighting:** `src/lib/parser/tei-dsl.grammar`, whose tokens come from `src/lib/parser/tokens.ts`: a rule-for-rule copy of `syntax.rs`'s scanning. Change both together (run `bun run build:grammar` after editing the grammar); the corpus test catches drift
 - **Word Tokenizer:** `src-tauri/src/parser/wordtokenizer.rs`
@@ -122,17 +129,21 @@ saga-scribe/
 | `//` | `<lb/>` | Line break |
 | `//n` | `<lb n="n"/>` | Numbered line break |
 | `///n` | `<pb n="n"/>` | Page break |
+| `//{n}`, `///{n}` | `<lb n="n"/>` | Any break number (letters, spaces) |
 | `.p` | `</p><p>` | New paragraph (standalone token; `¶` itself is the MENOTA character `:para:`) |
 | `.abbr[a]{b}` | `<choice><abbr>a</abbr><expan>b</expan></choice>` | Abbreviation |
 | `[...]` | `<gap/>` | Gap |
 | `[...<txt>]` | `<gap/><supplied>txt</supplied>` | Gap + Supplied |
-| `<txt>` | `<supplied>txt</supplied>` | Supplied |
+| `<txt>` | `<supplied>txt</supplied>` | Supplied (content is DSL: entities, breaks, abbreviations) |
 | `-{txt}-` | `<del>txt</del>` | Deletion |
 | `+{txt}+` | `<add>txt</add>` | Addition |
 | `:name:` | `&name;` | Entity |
+| `#.x.#` | `<num>.x.</num>` | Numeral (a token of its own, not a word) |
+| `\c` | `c` | The character `c` as text, part of the word (`ꝼæ\;ðꝛ`); after punctuation it continues it (`,\,`) |
 
 ## Testing
-- Rust: `cd src-tauri; cargo test` (~200 tests: parser incl. differential tests against the original lexer, compiler, importer round-trip, normalizer, dictionary)
+- Rust: `cd src-tauri; cargo test` (~280 tests: parser incl. differential tests against the original lexer, compiler, importer round-trip, normalizer, dictionary, the document tree)
+- Menota corpus (opt-in): `scripts/fetch-menota-corpus.sh` downloads the whole Menota catalogue (texts and charters) into `tests/corpus/menota` (not committed); `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1 --nocapture` runs the corpus gates of `docs/DOCUMENT_MODEL.md` (a few minutes; one at a time, as each loads the whole corpus). Run it when changing how XML is read or written
 - Frontend: `bun run test:js` (rendered-text parsing, incremental rendering equivalence, XSLT sanitizing, text diff, highlighting grammar against the shared DSL corpus)
 - DSL corpus: `tests/fixtures/dsl-corpus.json` holds DSL inputs with the constructs the Rust parser finds; the editor's grammar must find the same (`src/lib/parser/corpus.test.ts`). After changing the DSL syntax or adding cases, regenerate it with `cd src-tauri; UPDATE_DSL_CORPUS=1 cargo test corpus` and review the diff
 - Note: jsdom has no `XSLTProcessor`; XSLT transforms themselves are not covered by unit tests.
@@ -144,9 +155,10 @@ Uses **Junicode** (in `static/fonts/`) for MUFI characters.
 The user's file is privileged. Reading it must never change it:
 - Unedited content is emitted byte-for-byte: the importer records source spans (`src-tauri/src/importer/tei/source_map.rs`) and the patcher splices edits into the original bytes (`patching.rs`).
 - Whitespace-only or otherwise non-semantic DSL changes must produce no XML change.
+- An edited word is merged into its XML, not written anew (`src-tauri/src/document/merge.rs`): markup the DSL doesn't show moves with the text, a level the edit can't be placed in is kept, and a level the word doesn't have is never added. Gate: `corpus_edited_words_keep_their_markup`.
 - Invalid DSL is an error, never an empty document; save/export refuse to write a failed compile.
 - Confirmed lemmas are written into the words' start tags (`write_lemmas`), but only where they differ from what the tag says with references resolved: lemmas loaded from the file must leave it byte-identical (`test_menota_file_with_its_own_lemmas_stays_byte_identical`).
-- The XML and the DSL generated from it read as the same tokens, one to one (`test_menota_file_xml_and_dsl_read_as_the_same_tokens`); DSL → XML → DSL likewise. A new XML construct the DSL can't express breaks this: give it DSL syntax rather than special-casing the patcher.
+- The XML and the DSL generated from it read as the same tokens, one to one (`test_menota_file_xml_and_dsl_read_as_the_same_tokens`, corpus gate `corpus_xml_and_shorthand_read_as_the_same_tokens` on all 288 Menota files); DSL → XML → DSL likewise. Neighbours with nothing between them in the XML are set apart (a note by a space, others by `|`), characters that would split a token are escaped (`\;`), a `<num>` is `#…#` (DSL rules 3), break numbers the plain form can't hold are in braces and supplied text with markup in a word is `<…>` (rules 4; `document/project.rs`, `segments_to_dsl`). A new XML construct the DSL can't express breaks this: give it DSL syntax rather than special-casing the patcher.
 - Word numbers: lemmas and annotations are stored by word number (the n-th `<w>` of the body, as the previews count). The backend tracks which token is which across edits in both modes (`src-tauri/src/identity.rs`; `Tracked`, the compiler's word keys), and each compile returns `renumbering`: where the previous compile's words went. `src/lib/stores/compileSession.ts` runs compiles one at a time, applies the renumbering (`onRenumbering`) and only then lets the next compile gather its payload: annotations sent to the backend are always numbered by its previous compile. A compile without guidance means a new document (no renumbering). Anything new that stores word numbers must be renumbered in `onRenumbering`.
 - Word identity: the backend `Patcher` (`patching.rs`) remembers each token of the last compiled DSL and which original word it is. The editor's changes since then (`src/lib/editor/editHistory.ts`, sent as `Guidance`) let untouched words keep their identity outright; only edited ranges are matched by comparison. Guidance only refines which word is which: without it (or out of step) the patcher compares whole documents, and the output must be correct either way (`test_guided_character_edits_always_reimport_as_edited` fuzzes this).
 - Parse TEI documents with `crate::xml::parse` (`src-tauri/src/xml.rs`), never libxml2 directly: it declares the document's entities first (libxml2 2.9 drops undeclared ones, 2.14+ keeps them) and disables network access. CI tests on Ubuntu's libxml2 2.9 while local machines usually have 2.14+, so entity handling bugs may show up in only one of them.
@@ -155,8 +167,9 @@ The user's file is privileged. Reading it must never change it:
 
 ## Development Notes
 - **Toolchain:** Rust is pinned in `rust-toolchain.toml` (CI reads it too, via `.github/actions/setup-rust`); the crate MSRV is `rust-version` in `src-tauri/Cargo.toml`.
+- **Nix:** `flake.nix` provides the development environment (`nix develop`), reading the Rust toolchain from `rust-toolchain.toml`. When a build prerequisite changes (CI's `apt-get`/`brew` lines), update the flake too.
 - **CI:** PRs to `main` run `test.yml`; pushes to `main` run the full multi-platform `build.yml`. The nightly release is `nightly.yml`: every night it builds the newest `dev/X.Y.Z` branch (skipping one already tagged `vX.Y.Z` or unchanged since the last nightly) through `build.yml`, into a new draft that replaces the previous nightly (and moves the `nightly` tag to the built commit) only once every platform succeeded. Run it manually to publish a nightly now, optionally of another branch (`gh workflow run nightly.yml -f branch=<branch>`). Dev branches don't build automatically: to check every platform before merging, run "Build" manually on the branch (`gh workflow run build.yml --ref <branch>`), which builds without publishing. Windows libxml2 setup lives in `.github/actions/setup-libxml2-windows` (shared by build and release).
-- **Flatpak:** the app is compiled inside the GNOME SDK (`flatpak/app.sagascribe.Sagascribe.yml`, with the Rust and LLVM SDK extensions), so it links the runtime's libraries; only the frontend is built outside (`bun run build`). Build locally with `flatpak/build-flatpak.sh`. Don't package a binary built on the host or Ubuntu: it links that system's libraries (e.g. `libxml2.so.2`, which GNOME runtimes no longer ship). When moving to a new GNOME runtime, check its SDK's `org.freedesktop.Sdk.Extension` version (`flatpak info --show-location org.gnome.Sdk//N`, `metadata`) and the extensions available for it.
+- **Flatpak:** the app is compiled inside the GNOME SDK (`flatpak/app.sagascribe.Sagascribe.yml`, with the Rust and LLVM SDK extensions), so it links the runtime's libraries; only the frontend is built outside (`bun run build`). Build locally with `flatpak/build-flatpak.sh`. Don't package a binary built on the host or Ubuntu: it links that system's libraries (e.g. `libxml2.so.2`, which GNOME runtimes no longer ship). Agents never edit anything in `flatpak/` (see section 0); moving to a new GNOME runtime is the maintainer's job. An agent asked to help may look up the new SDK's `org.freedesktop.Sdk.Extension` version (`flatpak info --show-location org.gnome.Sdk//N`, `metadata`) and the extensions available for it, and report what the manifest should say. The CI workflows' Flatpak container image (`gnome-N` in `build.yml`/`release.yml`) must match the manifest's runtime, so agents change it only together with the maintainer's manifest change.
 - **SvelteKit 3:** configuration lives in `vite.config.ts` (`sveltekit({...})`); there is no `svelte.config.js`. The `$lib` alias is configured there.
 - **PDF export:** the main window paginates the export HTML with Vivliostyle in an off-screen iframe (`src/lib/utils/paginate.ts`; hidden windows throttle timers, which makes Vivliostyle ~20x slower) and hands the static pages to the hidden `/print` window, which prints them with zero native margins. Page layout (margins, page numbers) lives in `withPrintStyles()` (`src/lib/utils/pdfExport.ts`). Vivliostyle is AGPL-3.0, compatible with our GPL-3.0-or-later.
 - **XSLT preview by page:** stylesheets declaring `<?saga-scribe render="page"?>` (like `static/xsl/simple.xsl`) are applied one page at a time and only re-run on changed pages (`src/lib/rendered/xsltPages.ts`). Such a stylesheet's output for an element may only depend on the element and its ancestors: when editing `simple.xsl`, don't use `preceding::`/`following::`, keys or document-wide counts (pass document-wide facts as parameters instead, like `lineBased`), or remove the declaration.

@@ -49,6 +49,11 @@ pub enum Node {
     Unclear(String),
     /// Custom entity: :name:
     Entity(String),
+    /// A character written with `\` before it: text, and part of the word
+    /// even where it would otherwise be punctuation or syntax (`ꝼæ\;ðꝛ`)
+    Literal(String),
+    /// Numeral: `#.x.#` (`<num>`), its content as DSL text
+    Numeral(String),
     /// Word continuation marker: ~ (used before line/page breaks)
     WordContinuation,
     /// Compound word join: ~ between words (upp~haf → upphaf in norm)

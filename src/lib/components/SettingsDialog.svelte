@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { dialogFocus } from "$lib/utils/dialogFocus";
     import { open } from "@tauri-apps/plugin-dialog";
     import { deleteStylesheet, importStylesheet, listStylesheets } from "$lib/tauri";
     import { settings } from "$lib/stores/settings";
@@ -135,6 +136,7 @@
         aria-modal="true"
         aria-labelledby="settings-title"
         tabindex="-1"
+        {@attach dialogFocus}
     >
         <div
             class="bg-base-100 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col"
@@ -165,7 +167,7 @@
                             <!-- Theme -->
                             <div class="form-control">
                                 <div class="mb-2">
-                                    <span class="label-text font-medium">Theme</span>
+                                    <label for="theme-select" class="label-text font-medium">Theme</label>
                                 </div>
                                 <select
                                     id="theme-select"
@@ -177,7 +179,7 @@
                                     <option value="dark">Dark</option>
                                 </select>
                                 <div class="mt-1">
-                                    <span class="label-text-alt text-base-content/60"
+                                    <span class="label-text-alt text-base-content/80"
                                         >Choose the color scheme. System follows
                                         your OS theme preference</span
                                     >
@@ -187,7 +189,7 @@
                             <!-- Font Size -->
                             <div class="form-control">
                                 <div class="flex justify-between items-center mb-2">
-                                    <span class="label-text font-medium">Editor Font Size</span>
+                                    <label for="font-size-input" class="label-text font-medium">Editor Font Size</label>
                                     <span class="badge badge-sm">{localSettings.fontSize}px</span>
                                 </div>
                                 <input
@@ -227,7 +229,7 @@
                                     />
                                     <div class="flex flex-col">
                                         <span class="label-text font-medium">Auto-preview</span>
-                                        <span class="label-text-alt text-base-content/60">
+                                        <span class="label-text-alt text-base-content/80">
                                             Automatically update preview as you type
                                         </span>
                                     </div>
@@ -238,7 +240,7 @@
                             {#if localSettings.autoPreview}
                                 <div class="form-control pl-8">
                                     <div class="flex justify-between items-center mb-2">
-                                        <span class="label-text font-medium">Preview Delay</span>
+                                        <label for="preview-delay-input" class="label-text font-medium">Preview Delay</label>
                                         <span class="badge badge-sm">{localSettings.previewDelay}ms</span>
                                     </div>
                                     <input
@@ -256,7 +258,7 @@
                                         <span>1000ms</span>
                                         <span>2000ms</span>
                                     </div>
-                                    <div class="mt-2 text-xs text-base-content/60">
+                                    <div class="mt-2 text-xs text-base-content/80">
                                         Time to wait after typing before updating preview
                                     </div>
                                 </div>
@@ -293,7 +295,7 @@
                                     {/each}
                                 </select>
                                 <div class="mt-1">
-                                    <span class="label-text-alt text-base-content/60"
+                                    <span class="label-text-alt text-base-content/80"
                                         >Used for XSLT preview and exports</span
                                     >
                                 </div>
@@ -308,7 +310,7 @@
                                 </button>
                                 <button
                                     type="button"
-                                    class="btn btn-ghost btn-sm text-error"
+                                    class="btn btn-ghost btn-sm hover:bg-error/15 focus-visible:bg-error/15"
                                     onclick={handleRemoveStylesheet}
                                     disabled={activeStylesheet?.builtIn ?? true}
                                 >
@@ -327,8 +329,8 @@
                         </h3>
                         <div class="form-control">
                             <div class="mb-2">
-                                <span class="label-text font-medium"
-                                    >Active Template</span
+                                <label for="template-select" class="label-text font-medium"
+                                    >Active Template</label
                                 >
                             </div>
                             <select
@@ -344,7 +346,7 @@
                                 {/each}
                             </select>
                             <div class="mt-1">
-                                <span class="label-text-alt text-base-content/60"
+                                <span class="label-text-alt text-base-content/80"
                                     >The template to use for new projects</span
                                 >
                             </div>

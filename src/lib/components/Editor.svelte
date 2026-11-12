@@ -31,6 +31,9 @@
         const bindings = [
             ...defaultKeymap,
             ...historyKeymap,
+            // CodeMirror binds this on Linux and macOS only; in the editor it redoes
+            // on every platform (outside it, the window binds it to lemma undo).
+            { key: 'Mod-Shift-z', run: redoCommand, preventDefault: true },
             ...searchKeymap,
             ...foldKeymap,
         ] as unknown as KeyBinding[];

@@ -1,6 +1,6 @@
 [package]
 name = "saga-scribe"
-version = "0.7.0"
+version = "0.8.0"
 description = "TEI-XML manuscript transcription editor with custom DSL shorthand"
 authors = ["Autumn Carcosa"]
 license = "GPL-3.0-or-later"
@@ -28,14 +28,23 @@ zip = { version = "9.1", default-features = false, features = ["deflate"] }
 libxml = "0.3"
 tokio = { version = "1.49.0", features = ["sync"] }
 
-# Platform webview access for direct PDF export (commands/pdf.rs). Same versions
-# as wry uses, so nothing extra is compiled.
+# Platform webview access for direct PDF export (commands/pdf.rs) and system
+# notifications (commands/notify.rs). Same versions as Tauri uses, so these add no
+# crates of their own (on macOS, objc2-user-notifications is the one Tauri locks).
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 glib = "0.18"
 webkit2gtk = "2.0"
+dbus = "0.9"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
 windows-core = "0.62"
 windows-strings = "0.5"
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSError", "NSString"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "bitflags", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }

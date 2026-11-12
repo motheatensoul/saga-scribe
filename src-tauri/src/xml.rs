@@ -88,6 +88,13 @@ fn used_entities(xml: &str) -> BTreeSet<&str> {
         .collect()
 }
 
+/// The byte range of the document type declaration (`<!DOCTYPE …>`), if any.
+pub fn doctype_span(xml: &str) -> Option<std::ops::Range<usize>> {
+    let start = xml.find("<!DOCTYPE")?;
+    let doctype = find_doctype(xml)?;
+    Some(start..doctype.end + 1)
+}
+
 struct Doctype {
     /// Offset of the DOCTYPE's closing `>`
     end: usize,

@@ -22,7 +22,7 @@
     import { wordNormalizedForm, wordsWithDiplomaticForm } from "$lib/utils/wordNorm";
     import { settings } from "$lib/stores/settings";
     import { stylesheetStore } from "$lib/stores/stylesheets";
-    import { errorStore, errorCounts } from "$lib/stores/errors";
+    import { errorStore } from "$lib/stores/errors";
     import { validationStore } from "$lib/stores/validation";
     import * as metadataStore from "$lib/stores/metadata.svelte";
     import { importedStore } from "$lib/stores/imported.svelte";
@@ -39,6 +39,7 @@
         exportHtml,
         exportPdf,
         cancelPdfExport,
+        notifyInBackground,
         pdfExportSupported,
         openFile,
         importFile,
@@ -50,6 +51,8 @@
     import { loadAppResources } from "$lib/startup";
     import { perfEnabled, perfRecord, perfTime, perfTimeSync } from "$lib/perf";
     import { importedLemmas } from "$lib/utils/importedLemmas";
+    import { dialogFocus } from "$lib/utils/dialogFocus";
+    import { tablist } from "$lib/utils/tabs";
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
     import { printToPdf, withPrintStyles } from "$lib/utils/pdfExport";
     import {
@@ -68,11 +71,6 @@
 
     //Icon imports
     import {
-        BookDashed,
-        ScrollText,
-        MessageCircleWarning,
-        FileCheck,
-        FileText,
         Undo,
         Redo,
         Search,
@@ -647,24 +645,28 @@
 
     /**
      * Runs an export behind the progress overlay. The work yields between steps,
-     * so the UI stays painted and the user can cancel.
+     * so the UI stays painted and the user can cancel. A task that finishes the export
+     * itself returns where it went, for a system notification if the window is in the
+     * background meanwhile.
      */
     async function withExportProgress(
         what: string,
-        task: (signal: AbortSignal) => Promise<void>,
+        task: (signal: AbortSignal) => Promise<string | void>,
     ) {
         const controller = new AbortController();
         exportController = controller;
         exportProgress = "Starting…";
         const started = performance.now();
         try {
-            await task(controller.signal);
+            const done = await task(controller.signal);
             perfRecord("export", performance.now() - started, { format: what });
+            if (done) void notifyInBackground(`${what} export finished`, done);
         } catch (e) {
             if (controller.signal.aborted) {
                 errorStore.info("Export", `${what} export cancelled`);
             } else {
                 errorStore.error("Export", `Failed to export ${what}: ${e}`);
+                void notifyInBackground(`${what} export failed`, String(e));
             }
         } finally {
             exportProgress = null;
@@ -716,6 +718,7 @@
             exportProgress = "Writing file…";
             await exportHtml(path, fullHtml);
             errorStore.info("Export", `Exported HTML to ${path}`);
+            return `Exported HTML to ${path}`;
         });
     }
 
@@ -761,6 +764,7 @@
                 }
                 signal.throwIfAborted();
                 errorStore.info("Export", `Exported PDF to ${path}`);
+                return `Exported PDF to ${path}`;
             } else {
                 exportProgress = "Laying out pages…";
                 await printToPdf(fullHtml, { pageSize: "A4" });
@@ -850,12 +854,14 @@
             } else {
                 errorStore.info("Import", `Imported content from ${pathStr}`);
             }
+            void notifyInBackground("Import finished", `Imported ${pathStr}`);
 
             if (compiled !== null) {
                 previewContent = compiled;
             }
         } catch (e) {
             errorStore.error("Import", `Failed to import: ${e}`);
+            void notifyInBackground("Import failed", String(e));
         } finally {
             isImporting = false;
         }
@@ -863,10 +869,14 @@
 
     // Keyboard shortcuts
     function handleKeydown(event: KeyboardEvent) {
+        // A key the editor (or a dialog) already handled is theirs: in the editor,
+        // Ctrl+Shift+Z redoes a text change rather than undoing a lemma.
+        if (event.defaultPrevented) return;
+
         // Escape: Close any open modal (a11y requirement)
         if (event.key === "Escape") {
             if (showLemmatizer) {
-                showLemmatizer = false;
+                handleLemmatizerClose();
                 return;
             }
             if (showEntityBrowser) {
@@ -942,8 +952,12 @@
         onexportdict={handleExportDictionary}
         onexporthtml={handleExportHtml}
         onexportpdf={handleExportPdf}
+        ontemplates={() => (showTemplateManager = true)}
+        onmetadata={() => (showMetadataEditor = true)}
+        onvalidate={() => (showValidationPanel = true)}
         onundo={handleLemmaUndo}
         onredo={handleLemmaRedo}
+        onlogs={() => (showErrorPanel = true)}
         onsettings={() => (showSettings = true)}
         onhelp={() => (showHelp = true)}
     />
@@ -965,79 +979,46 @@
                                 </span>
                             {/if}
                         </div>
-                        <div class="flex gap-1">
+                        <!-- Only actions on the editor's text; document and
+                             application actions are in the toolbar -->
+                        <div class="flex items-center gap-1" role="group" aria-label="Editor">
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Undo (Ctrl+Z)"
+                                aria-label="Undo"
                                 onclick={() =>
                                     editorComponent?.triggerUndo()}
                             >
-                                <Undo class="size-3/4" />
+                                <Undo class="size-3/4" aria-hidden="true" />
                             </button>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Redo (Ctrl+Y)"
+                                aria-label="Redo"
                                 onclick={() =>
                                     editorComponent?.triggerRedo()}
                             >
-                                <Redo class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Search and Replace (Ctrl+F)"
-                                onclick={() =>
-                                    editorComponent?.triggerSearch()}
-                            >
-                                <Search class="size-3/4" />
+                                <Redo class="size-3/4" aria-hidden="true" />
                             </button>
                             <div
                                 class="divider divider-horizontal mx-0 h-4 self-center"
                             ></div>
                             <button
+                                class="btn btn-ghost btn-xs xl:btn-sm"
+                                title="Search and Replace (Ctrl+F)"
+                                aria-label="Search and replace"
+                                onclick={() =>
+                                    editorComponent?.triggerSearch()}
+                            >
+                                <Search class="size-3/4" aria-hidden="true" />
+                            </button>
+                            <button
                                 class="btn btn-ghost btn-xs xl:btn-sm text-xs xl:text-sm"
                                 title="Insert entity"
+                                aria-label="Insert entity"
                                 onclick={() => (showEntityBrowser = true)}
                             >
-                                ꝥ
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Manage templates"
-                                onclick={() => (showTemplateManager = true)}
-                            >
-                                <BookDashed class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Edit manuscript metadata"
-                                onclick={() => (showMetadataEditor = true)}
-                            >
-                                <FileText class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Validate XML"
-                                onclick={() => (showValidationPanel = true)}
-                            >
-                                <FileCheck class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                class:text-error={$errorCounts.error > 0}
-                                title="View logs"
-                                onclick={() => (showErrorPanel = true)}
-                            >
-                                {#if $errorCounts.error > 0}
-                                    <MessageCircleWarning
-                                        size="14"
-                                        color="var(--color-error)"
-                                    />
-                                {:else}
-                                    <ScrollText
-                                        class="size-3/4"
-                                        color="var(--color-success)"
-                                    />
-                                {/if}
+                                <span aria-hidden="true">ꝥ</span>
                             </button>
                         </div>
                     </div>
@@ -1076,7 +1057,14 @@
                 role="none"
                 onclick={() => (showEntityBrowser = false)}
             ></div>
-            <div class="modal-box max-w-4xl">
+            <div
+                class="modal-box max-w-4xl"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-labelledby="entity-browser-title"
+            >
                 <EntityBrowser
                     oninsert={handleEntityInsert}
                     onclose={() => (showEntityBrowser = false)}
@@ -1093,7 +1081,14 @@
                 role="none"
                 onclick={() => (showErrorPanel = false)}
             ></div>
-            <div class="modal-box max-w-3xl">
+            <div
+                class="modal-box max-w-3xl"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-labelledby="log-title"
+            >
                 <ErrorPanel onclose={() => (showErrorPanel = false)} />
             </div>
         </div>
@@ -1107,7 +1102,14 @@
                 role="none"
                 onclick={() => (showValidationPanel = false)}
             ></div>
-            <div class="modal-box max-w-3xl">
+            <div
+                class="modal-box max-w-3xl"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-labelledby="validation-title"
+            >
                 <ValidationPanel
                     xmlContent={previewContent}
                     onclose={() => (showValidationPanel = false)}
@@ -1124,21 +1126,43 @@
                 role="none"
                 onclick={handleLemmatizerClose}
             ></div>
-            <div class="modal-box max-w-2xl p-0">
+            <div
+                class="modal-box max-w-2xl p-0"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-label="Word: {selectedWordFacsimile || selectedWordDiplomatic}"
+            >
                 <!-- Tabs -->
-                <div class="tabs tabs-boxed bg-base-200 rounded-none">
+                <div
+                    class="tabs tabs-boxed bg-base-200 rounded-none"
+                    role="tablist"
+                    aria-label="Word panel"
+                    {@attach tablist}
+                >
                     <button
                         type="button"
+                        id="word-tab-lemmatize"
                         class="tab"
                         class:tab-active={wordPanelTab === "lemmatize"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "lemmatize"}
+                        aria-controls="word-panel-lemmatize"
+                        tabindex={wordPanelTab === "lemmatize" ? 0 : -1}
                         onclick={() => wordPanelTab = "lemmatize"}
                     >
                         Lemmatize
                     </button>
                     <button
                         type="button"
+                        id="word-tab-annotate"
                         class="tab"
                         class:tab-active={wordPanelTab === "annotate"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "annotate"}
+                        aria-controls="word-panel-annotate"
+                        tabindex={wordPanelTab === "annotate" ? 0 : -1}
                         onclick={() => wordPanelTab = "annotate"}
                     >
                         Annotate
@@ -1146,7 +1170,12 @@
                 </div>
                 <!-- Tab content -->
                 <div class="p-4">
-                    <div class:hidden={wordPanelTab !== "lemmatize"}>
+                    <div
+                        id="word-panel-lemmatize"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-lemmatize"
+                        class:hidden={wordPanelTab !== "lemmatize"}
+                    >
                         {#key selectedWordIndex}
                             <Lemmatizer
                                 facsimile={selectedWordFacsimile || ""}
@@ -1158,7 +1187,12 @@
                             />
                         {/key}
                     </div>
-                    <div class:hidden={wordPanelTab !== "annotate"}>
+                    <div
+                        id="word-panel-annotate"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-annotate"
+                        class:hidden={wordPanelTab !== "annotate"}
+                    >
                         <AnnotationPanel
                             facsimile={selectedWordFacsimile || ""}
                             diplomatic={selectedWordDiplomatic}
@@ -1203,17 +1237,42 @@
         flex-shrink: 0;
     }
 
+    /* A grip in the middle: base-300 alone is too close to the panes' background to be
+       seen (needs 3:1); base-content at 60% keeps 3:1 in both themes */
+    :global(.splitpanes.themed .splitpanes__splitter::after) {
+        content: "";
+        position: absolute;
+        inset: 0;
+        margin: auto;
+        border-radius: 1px;
+        background-color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+    }
+
+    :global(.splitpanes.themed .splitpanes__splitter:hover::after) {
+        background-color: var(--color-primary-content);
+    }
+
+    :global(.splitpanes.themed.splitpanes--vertical > .splitpanes__splitter::after) {
+        width: 2px;
+        height: 2rem;
+    }
+
+    :global(.splitpanes.themed.splitpanes--horizontal > .splitpanes__splitter::after) {
+        width: 2rem;
+        height: 2px;
+    }
+
     :global(.splitpanes.themed .splitpanes__splitter:hover) {
         background-color: var(--color-primary);
     }
 
     :global(.splitpanes.themed.splitpanes--vertical > .splitpanes__splitter) {
-        width: 6px;
+        width: 8px;
         cursor: col-resize;
     }
 
     :global(.splitpanes.themed.splitpanes--horizontal > .splitpanes__splitter) {
-        height: 6px;
+        height: 8px;
         cursor: row-resize;
     }
 </style>

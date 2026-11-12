@@ -1,6 +1,10 @@
 mod annotations;
 mod commands;
 mod dictionary;
+// The importer uses the tree and its projection (steps 1 and 2 of
+// docs/DOCUMENT_MODEL.md); editing it comes with step 3
+#[allow(dead_code)]
+mod document;
 mod identity;
 pub mod entities;
 mod importer;
@@ -111,6 +115,7 @@ pub fn run() {
             commands::parse::compile_imported,
             commands::parse::set_imported_document,
             commands::parse::check_dsl,
+            commands::notify::notify,
             commands::pdf::pdf_export_supported,
             commands::pdf::export_pdf,
             commands::pdf::take_print_document,

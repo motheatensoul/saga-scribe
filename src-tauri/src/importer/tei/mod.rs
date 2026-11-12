@@ -9,7 +9,7 @@
 //! fidelity for round-trip export:
 //!
 //! ```text
-//! TEI-XML → [Extractor] → Segments → [segments_to_dsl] → DSL
+//! TEI-XML → document tree → [project_body] → Segments → [segments_to_dsl] → DSL
 //!                            ↓
 //!                     (preserved for export)
 //!                            ↓
@@ -19,7 +19,10 @@
 //!
 //! ## Key Components
 //!
-//! - **[`extraction`]**: Extracts segments from TEI-XML, converting content to DSL
+//! - **[`crate::document`]**: The document as a tree, and its projection to
+//!   segments ([`project_body`](crate::document::project_body))
+//! - **[`extraction`]**: Writes segments as DSL ([`segments_to_dsl`](extraction::segments_to_dsl));
+//!   its extractor is kept for tests, as the reference the projection matches
 //! - **[`segments`]**: Defines the [`Segment`](segments::Segment) manifest structure
 //! - **[`patching`]**: Computes and applies diffs for round-trip export
 //! - **[`helpers`]**: XML serialization and attribute handling utilities
@@ -38,8 +41,8 @@
 //!
 //! For MENOTA documents with three-level transcription, the importer extracts the
 //! facsimile level for editing and preserves the full multi-level structure for export.
-//! The [`menota_abbr_expansion`](extraction::Extractor::menota_abbr_expansion) function
-//! detects abbreviation patterns (am/ex markers) and converts them to `.abbr[]{}` syntax.
+//! The projection detects abbreviation patterns (`<am>`/`<ex>` markers) and converts
+//! them to `.abbr[]{}` syntax.
 
 pub mod helpers;
 pub mod segments;

@@ -13,7 +13,7 @@
         type OnpFullEntry,
         type InflectedForm,
     } from '$lib/tauri';
-    import { X as CloseButton } from "@lucide/svelte";
+    import { X as CloseButton, TriangleAlert } from "@lucide/svelte";
     import { importedStore } from '$lib/stores/imported.svelte';
     import { analysisKey, sameAnalysis } from '$lib/utils/msa';
     import { resolveEntityReferences } from '$lib/utils/wordNorm';
@@ -520,9 +520,9 @@
     <div class="flex items-center justify-between sticky top-0 bg-base-100 pb-2">
         <div>
             <h3 class="font-bold text-lg">Lemmatize: <span class="text-primary">{facsimile}</span></h3>
-            <span class="text-xs opacity-60">Word #{wordIndex}</span>
+            <span class="text-xs opacity-80">Word #{wordIndex}</span>
             {#if facsimile !== diplomatic}
-                <span class="text-xs opacity-60 ml-2">(dipl: {diplomatic})</span>
+                <span class="text-xs opacity-80 ml-2">(dipl: {diplomatic})</span>
             {/if}
             {#if sessionConfirmation}
                 <span class="badge badge-success badge-xs ml-2">confirmed</span>
@@ -537,7 +537,7 @@
     </div>
 
     {#if importedStore.editedWords.has(wordIndex)}
-        <div role="status" class="alert alert-warning alert-soft text-sm py-2">
+        <div role="status" class="alert alert-warning alert-soft text-base-content text-sm py-2">
             This word was edited after import. Its lemma, analysis and normalized
             form are still the original word's: check that they fit.
         </div>
@@ -546,11 +546,11 @@
     {#if sessionConfirmation}
         <div class="flex items-center justify-between gap-2 rounded-lg border border-success/40 p-3">
             <div class="text-sm">
-                <span class="opacity-70">Lemma:</span>
+                <span class="opacity-80">Lemma:</span>
                 <span class="font-medium">{sessionConfirmation.lemma}</span>
                 <code class="ml-1 text-xs px-1 rounded bg-base-300">{sessionConfirmation.msa}</code>
             </div>
-            <button type="button" class="btn btn-sm btn-outline btn-error" onclick={handleRemoveLemma}>
+            <button type="button" class="btn btn-sm btn-ghost border-base-300 hover:bg-error/15 focus-visible:bg-error/15" onclick={handleRemoveLemma}>
                 Remove lemma
             </button>
         </div>
@@ -584,7 +584,7 @@
                                 class:bg-base-300={!isSelected}
                             >{mapping.analysis}</code>
                             {#if mapping.normalized}
-                                <span class="ml-2 text-xs opacity-70">→ {mapping.normalized}</span>
+                                <span class="ml-2 text-xs opacity-80">→ {mapping.normalized}</span>
                             {/if}
                         </button>
                         <button
@@ -607,7 +607,7 @@
         <label class="label" for="lemma-search">
             <span class="label-text">Search ONP dictionary</span>
             {#if !$dictionaryStore.loaded}
-                <span class="label-text-alt text-warning">Dictionary not loaded</span>
+                <span class="label-text-alt flex items-center gap-1"><TriangleAlert size={14} class="text-warning" aria-hidden="true" />Dictionary not loaded</span>
             {/if}
         </label>
         <input
@@ -615,6 +615,7 @@
             type="text"
             class="input input-bordered"
             placeholder="Headword, e.g. maðr"
+            data-autofocus
             bind:value={searchQuery}
             disabled={!$dictionaryStore.loaded}
         />
@@ -623,13 +624,13 @@
     {#if isSearching}
         <div class="flex items-center justify-center py-4">
             <span class="loading loading-spinner loading-sm"></span>
-            <span class="ml-2 text-sm opacity-70">Searching...</span>
+            <span class="ml-2 text-sm opacity-80">Searching...</span>
         </div>
     {:else if searchResults.length > 0}
         <div class="max-h-40 overflow-y-auto border border-base-300 rounded-lg">
             <ul class="menu menu-sm p-0" role="listbox" aria-label="Search results">
                 {#each searchResults as entry}
-                    <li>
+                    <li role="presentation">
                         <button
                             type="button"
                             role="option"
@@ -648,7 +649,7 @@
             </ul>
         </div>
     {:else if searchQuery.length >= 1}
-        <p class="text-sm opacity-70 text-center py-2">
+        <p class="text-sm opacity-80 text-center py-2">
             No headword “{searchQuery}”. Search for the dictionary form (maðr, not manni).
         </p>
     {/if}
@@ -676,10 +677,10 @@
             {#if isLoadingFull}
                 <div class="flex items-center py-2">
                     <span class="loading loading-spinner loading-xs"></span>
-                    <span class="ml-2 text-sm opacity-70">Loading definition...</span>
+                    <span class="ml-2 text-sm opacity-80">Loading definition...</span>
                 </div>
             {:else if fullEntryError}
-                <div role="status" class="alert alert-warning alert-soft text-sm py-2 mb-3">
+                <div role="status" class="alert alert-warning alert-soft text-base-content text-sm py-2 mb-3">
                     <span>
                         {fullEntryError} The definition isn't available; you can still
                         choose the word class and analysis below.
@@ -831,7 +832,7 @@
 
                 {#if msaString}
                     <div class="mt-3 p-2 bg-base-300 rounded">
-                        <span class="text-xs opacity-70">me:msa:</span>
+                        <span class="text-xs opacity-80">me:msa:</span>
                         <code class="ml-1 font-mono text-sm">{msaString}</code>
                     </div>
                 {/if}
@@ -877,7 +878,7 @@
                 {/if}
             </div>
             {#if normChanged && !sessionConfirmation && (!selectedEntry || !msaString)}
-                <div class="text-xs opacity-60 mt-1">Saved without a lemma</div>
+                <div class="text-xs opacity-80 mt-1">Saved without a lemma</div>
             {/if}
         </div>
     {/if}

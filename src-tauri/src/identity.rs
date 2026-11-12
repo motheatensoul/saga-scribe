@@ -337,6 +337,7 @@ pub fn is_token(node: &Node) -> bool {
             | Node::Head(_)
             | Node::SuppliedBlock(_)
             | Node::Norm(_)
+            | Node::Numeral(_)
             | Node::ParagraphBreak
     )
 }
@@ -347,14 +348,12 @@ pub fn is_token(node: &Node) -> bool {
 pub fn node_to_dsl(node: &Node) -> String {
     match node {
         Node::Text(t) => t.clone(),
-        Node::LineBreak(n) => {
-            if let Some(num) = n {
-                format!("//{}", num)
-            } else {
-                "//".to_string()
-            }
-        }
-        Node::PageBreak(n) => format!("///{}", n),
+        Node::LineBreak(n) => match n {
+            Some(num) => format!("//{}", crate::parser::syntax::break_number_dsl(num, false)),
+            None => "//".to_string(),
+        },
+        Node::PageBreak(n) if n.is_empty() => "///".to_string(),
+        Node::PageBreak(n) => format!("///{}", crate::parser::syntax::break_number_dsl(n, true)),
         Node::Abbreviation { abbr, expansion } => format!(".abbr[{}]{{{}}}", abbr, expansion),
         Node::Gap { quantity, supplied } => {
             let mut s = "[...".to_string();
@@ -378,11 +377,22 @@ pub fn node_to_dsl(node: &Node) -> String {
         Node::Head(t) => format!(".head{{{}}}", t),
         Node::Unclear(t) => format!("?{{{}}}?", t),
         Node::Entity(name) => format!(":{}:", name),
+        Node::Literal(c) => format!("\\{}", c),
+        Node::Numeral(content) => format!("#{}#", content),
         Node::WordContinuation => "~".to_string(),
         Node::CompoundJoin => "~".to_string(),
         Node::WordBoundary => "|".to_string(),
         Node::ParagraphBreak => PARAGRAPH.to_string(),
-        Node::Word(nodes) | Node::Punctuation(nodes) => nodes.iter().map(node_to_dsl).collect(),
+        // A break inside a word is one the word continues across: `~//`, so
+        // the token reads the same on its own (`uppta-~//~//ka`, not the
+        // page break in `uppta-////ka`)
+        Node::Word(nodes) | Node::Punctuation(nodes) => nodes
+            .iter()
+            .map(|node| match node {
+                Node::LineBreak(_) | Node::PageBreak(_) => format!("~{}", node_to_dsl(node)),
+                other => node_to_dsl(other),
+            })
+            .collect(),
     }
 }
 

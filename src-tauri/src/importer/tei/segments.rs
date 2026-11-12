@@ -133,7 +133,18 @@ pub struct ImportedDocument {
 ///
 /// - 0: before 0.6.0
 /// - 1: entity punctuation (`:middot:`) is set off by spaces
-pub const DSL_RULES: u32 = 1;
+/// - 2: a word or punctuation right after a page break starts a new line
+///   (before, `///109r^{note}` read the note as part of the page number)
+/// - 3: every word, numeral and punctuation reads as one token of the DSL:
+///   characters that would split or end it are escaped (`ꝼæ\;ðꝛ`), a
+///   `<num>` is `#…#`, and neighbours with nothing between them in the XML
+///   are set apart (`skrims ^{sic}`, `þꝩi|at`). The escaping is in the
+///   segments' `dsl_content`; projects from before it are escaped when
+///   opened (`.teis` 1.7).
+/// - 4: a break number the plain form can't hold is in braces (`//{56r}`,
+///   `///{fol. 1r}`), and supplied text with markup inside a word is `<…>`
+///   with shorthand content (`.supplied{…}` would end the word).
+pub const DSL_RULES: u32 = 4;
 
 impl ImportedDocument {
     /// Parses a manifest as stored in segments.json.

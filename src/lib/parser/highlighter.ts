@@ -35,6 +35,10 @@ export const teiDslHighlightStyle = HighlightStyle.define([
   { tag: tags.separator, class: "cmt-separator" },
   // Gap [...]
   { tag: tags.special(tags.string), class: "cmt-gap" },
+  // Escaped character \c
+  { tag: tags.escape, class: "cmt-escape" },
+  // Numeral #.x.#
+  { tag: tags.number, class: "cmt-number" },
 ]);
 
 /**
@@ -87,6 +91,10 @@ const parserWithMetadata = parser.configure({
       // Entity
       Entity: tags.atom,
 
+      // Escaped character, numeral
+      Literal: tags.escape,
+      Numeral: tags.number,
+
       // Word boundary and compound join
       WordBoundary: tags.separator,
       CompoundJoin: tags.separator,
@@ -100,10 +108,9 @@ const parserWithMetadata = parser.configure({
  * @lezer/lr and @codemirror/language's nested @lezer/lr dependency
  */
 export const teiDslLanguage = LRLanguage.define({
+  // No commentTokens: `^{…}` is a note, not a comment, and CodeMirror's comment
+  // toggle would take Ctrl+/ (Help) in the editor.
   parser: parserWithMetadata as any,
-  languageData: {
-    commentTokens: { block: { open: "^{", close: "}" } },
-  },
 });
 
 /**

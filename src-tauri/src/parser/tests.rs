@@ -1285,3 +1285,93 @@ fn test_tokens_know_their_source_ranges() {
     let plain = WordTokenizer::new().tokenize(Lexer::new(dsl).parse().unwrap().nodes);
     assert_eq!(tokens.into_iter().map(|(n, _)| n).collect::<Vec<_>>(), plain);
 }
+
+// ============================================================================
+// Escaped characters and numerals
+// ============================================================================
+
+fn token_texts(dsl: &str) -> Vec<String> {
+    let nodes = Lexer::new(dsl).parse().unwrap().nodes;
+    WordTokenizer::new().tokenize(nodes).iter().map(crate::identity::node_to_dsl).collect()
+}
+
+#[test]
+fn test_escaped_characters_are_part_of_the_token() {
+    // Punctuation inside a word, and editorial brackets around one
+    assert_eq!(token_texts(r"ꝼæ\;ðꝛ iðran\; \(anno\) \[l\]ange"), [r"ꝼæ\;ðꝛ", r"iðran\;", r"\(anno\)", r"\[l\]ange"]);
+    // Right after punctuation, an escaped character continues it: one <pc>
+    assert_eq!(token_texts(r"a ,\, b .\,"), ["a", r",\,", "b", r".\,"]);
+    // `|` keeps them apart
+    assert_eq!(token_texts(r",|\(x\)"), [",", r"\(x\)"]);
+    // Syntax characters as text
+    assert_eq!(token_texts(r"\#1 a\\b \.p \//"), [r"\#1", r"a\\b", r"\.p", r"\//"]);
+}
+
+#[test]
+fn test_escaped_characters_compile_as_text() {
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let mut compiler = Compiler::new().with_config(config);
+    let xml = compiler.compile(r"ꝼæ\;ðꝛ \(anno\) ,\, a\\b \#").unwrap();
+    assert!(xml.contains("<w>ꝼæ;ðꝛ</w>"), "{xml}");
+    assert!(xml.contains("<w>(anno)</w>"), "{xml}");
+    assert!(xml.contains("<pc>,,</pc>"), "{xml}");
+    assert!(xml.contains(r"<w>a\b</w>"), "{xml}");
+    // A token of escaped symbols alone is punctuation
+    assert!(xml.contains("<pc>#</pc>"), "{xml}");
+    // Inside constructs too, where an escaped bracket doesn't close
+    let xml = compiler.compile(r"-{a\}b}- ^{x \} y} <a\>b> ?{\}?}?").unwrap();
+    for expected in ["<del>a}b</del>", "<note>x } y</note>", "<supplied>a&gt;b</supplied>", "<unclear>}?</unclear>"] {
+        assert!(xml.contains(expected), "{expected} in {xml}");
+    }
+}
+
+#[test]
+fn test_numerals_are_tokens_of_their_own() {
+    assert_eq!(token_texts("a #.x.# b #.v:iacute:.#,"), ["a", "#.x.#", "b", "#.v:iacute:.#", ","]);
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+    let mut compiler = Compiler::new().with_config(config);
+    let xml = compiler.compile("ok #.x.# ok").unwrap();
+    assert!(xml.contains("<num>\n  <choice>\n    <me:facs>.x.</me:facs>\n    <me:dipl>.x.</me:dipl>"), "{xml}");
+    // Not a word: only the two words are numbered
+    assert_eq!(compiler.word_keys().len(), 2);
+    let mut compiler = Compiler::new();
+    assert!(compiler.compile(r"#x\#y#").unwrap().contains("<num>x#y</num>"));
+}
+
+#[test]
+fn test_unclosed_numeral_is_an_error() {
+    let error = Lexer::new("a #.x. b").parse().unwrap_err();
+    assert!(error.contains("Expected '#'"), "{error}");
+}
+
+#[test]
+fn test_break_numbers_in_braces() {
+    assert_eq!(token_texts("a //{56r} b ///{fol. 1r} c~//{-3}d"), ["a", "//{56r}", "b", "///{fol. 1r}", "c~//{-3}d"]);
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let xml = Compiler::new().with_config(config).compile(r"a //{56r} ///{fol. 1r} //{a\}b}").unwrap();
+    for expected in [r#"<lb n="56r"/>"#, r#"<pb n="fol. 1r"/>"#, r#"<lb n="a}b"/>"#] {
+        assert!(xml.contains(expected), "{expected} in {xml}");
+    }
+    // Plain where that reads back the same
+    use super::syntax::break_number_dsl;
+    assert_eq!(break_number_dsl("12", false), "12");
+    assert_eq!(break_number_dsl("12v", false), "{12v}");
+    assert_eq!(break_number_dsl("12v", true), "12v");
+    assert_eq!(break_number_dsl("fol. 1r", true), "{fol. 1r}");
+    assert_eq!(break_number_dsl("", false), "{}");
+}
+
+#[test]
+fn test_supplied_text_is_shorthand() {
+    // One word: supplied text with a line break and an entity inside it
+    assert_eq!(token_texts("sa<m~//14:thorn:>yct ok"), ["sa<m~//14:thorn:>yct", "ok"]);
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+    let mut compiler = Compiler::new().with_config(config);
+    let xml = compiler.compile("sa<m~//14þ>yct [...2<a:et:>]").unwrap();
+    assert!(xml.contains(r#"<me:facs>sa<lb n="14"/>yct</me:facs>"#), "{xml}");
+    assert!(xml.contains(r#"<me:dipl>sa<supplied>m<lb n="14"/>þ</supplied>yct</me:dipl>"#), "{xml}");
+    assert!(!xml.contains(":et:"), "{xml}");
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let xml = Compiler::new().with_config(config).compile("sa<m~//14þ>yct").unwrap();
+    assert!(xml.contains(r#"<w>sa<supplied>m<lb n="14"/>þ</supplied>yct</w>"#), "{xml}");
+}

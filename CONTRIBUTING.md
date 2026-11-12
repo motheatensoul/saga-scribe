@@ -19,6 +19,9 @@ bun run tauri dev
 ```
 
 The Rust toolchain is pinned in `rust-toolchain.toml`; rustup installs it automatically.
+With Nix, `nix develop` provides all of the prerequisites instead (`flake.nix`, which reads
+the toolchain from the same file). When a build prerequisite changes, update the flake along
+with CI and the README.
 
 ## Where things are
 
@@ -44,7 +47,8 @@ saga-scribe/
 ├── static/                   # Fonts, entity and dictionary data, schemas, XSLT
 ├── docs/                     # User guide, UI standards
 ├── flatpak/                  # Flatpak manifest and AppStream metadata
-└── tests/fixtures/           # Shared test inputs (e.g. the shorthand corpus)
+├── tests/fixtures/           # Shared test inputs (e.g. the shorthand corpus)
+└── tests/corpus/             # Menota corpus for opt-in tests (downloaded, not committed)
 ```
 
 ## Making changes

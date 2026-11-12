@@ -34,6 +34,7 @@
 //! Patches:  Keep(A), Keep(B), Modify(C→X), Modify(D→Y), Keep(E)
 //! ```
 
+use crate::parser::syntax::break_number_dsl;
 use crate::importer::tei::extraction::segments_to_dsl;
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::{ImportedDocument, Segment};
@@ -515,11 +516,11 @@ fn segment_token_text(seg: &Segment) -> Option<String> {
             (!dsl_content.trim().is_empty()).then(|| dsl_content.clone())
         }
         Segment::LineBreak { attributes, .. } => Some(match attributes.get("n") {
-            Some(num) => format!("//{}", num),
+            Some(num) => format!("//{}", break_number_dsl(num, false)),
             None => "//".to_string(),
         }),
-        Segment::PageBreak { attributes, .. } => Some(match attributes.get("n") {
-            Some(num) => format!("///{}", num),
+        Segment::PageBreak { attributes, .. } => Some(match attributes.get("n").filter(|n| !n.is_empty()) {
+            Some(num) => format!("///{}", break_number_dsl(num, true)),
             None => "///".to_string(),
         }),
         Segment::Paragraph { .. } => Some(PARAGRAPH.to_string()),
@@ -1285,6 +1286,7 @@ fn render_modify(
             Segment::Word {
                 attributes,
                 original_xml,
+                dsl_content,
                 ..
             },
             TokenKind::Word,
@@ -1298,7 +1300,30 @@ fn render_modify(
                 .then(|| level_content(original, "norm"))
                 .flatten()
                 .map(without_breaks);
-            compiler.compile_word_from_dsl(new_dsl, attributes, norm.as_deref())
+            let compiled = compiler.compile_word_from_dsl(new_dsl, attributes, norm.as_deref());
+            // The edit is merged into the word as written, so markup the
+            // shorthand doesn't show stays (see document/merge.rs). The old
+            // shorthand is read as a token, as `new_dsl` was, so the two
+            // differ only by the edit
+            let old_token = match parse_dsl_to_tokens(dsl_content).as_deref() {
+                Ok([token]) => token.clone(),
+                _ => dsl_content.clone(),
+            };
+            let before = compiler.compile_word_from_dsl(&old_token, attributes, norm.as_deref());
+            match crate::document::merge_word_edit(original, &before, &compiled) {
+                Some(merged) => {
+                    if !merged.kept_levels.is_empty() || !merged.removed.is_empty() {
+                        log::info!(
+                            "Edited word {:?}: levels kept as they were {:?}, removed with their text {:?}",
+                            new_dsl,
+                            merged.kept_levels,
+                            merged.removed
+                        );
+                    }
+                    merged.xml
+                }
+                None => compiled,
+            }
         }
         (Segment::Punctuation { .. }, TokenKind::Punctuation) => {
             compiler.compile_punctuation_from_dsl(new_dsl)

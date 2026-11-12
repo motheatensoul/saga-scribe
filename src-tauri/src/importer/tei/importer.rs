@@ -20,7 +20,7 @@ use crate::metadata::{
     Availability, DateRange, History, Language, Metadata, MsContents, MsIdentifier, Person,
     PhysDesc, PublicationStmt, RespStmt, TitleStmt,
 };
-use crate::importer::tei::extraction::Extractor;
+use crate::document::{find_body as find_tree_body, project_body, Tree};
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::{ImportedDocument, Segment, SourceSpans, DSL_RULES};
 use libxml::tree::{Document, Node, NodeType};
@@ -85,22 +85,29 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
     // Check if this is a MENOTA file (has me:facs/me:dipl/me:norm structure)
     let is_menota = has_menota_structure(&body);
 
-    // Split original XML into preamble/body/postamble for exact preservation
-    let (original_preamble, original_body_xml, original_postamble) =
-        match split_xml_sections(xml_content) {
-            Some((preamble, body_xml, postamble)) => (preamble, body_xml, postamble),
-            None => (
-                String::new(),
-                helpers::serialize_node(&body),
-                String::new(),
-            ),
-        };
+    // The document as a tree, and its body as segments: what each is in
+    // the shorthand, and where each editable one sits in the original body
+    // text so unedited content can be emitted byte-for-byte
+    let tree = Tree::from_document(&doc, xml_content);
+    let tree_body = find_tree_body(&tree).ok_or("No <body> element found in XML")?;
+    let projection = project_body(&tree, tree_body);
+    let segments = projection.segments;
+    let spans = projection.spans;
 
-    // Extract segments, recording where each editable segment sits in the
-    // original body text so unedited content can be emitted byte-for-byte.
-    let mut extractor = Extractor::with_source(&original_body_xml);
-    let segments = extractor.extract_segments(&body);
-    let spans = extractor.take_spans();
+    // Split original XML into preamble/body/postamble for exact preservation;
+    // the spans are relative to the body's start
+    let (original_preamble, original_body_xml, original_postamble) =
+        match tree.span(tree_body).filter(|_| tree.has_spans()) {
+            Some(span) => (
+                xml_content[..span.start].to_string(),
+                xml_content[span.clone()].to_string(),
+                xml_content[span.end..].to_string(),
+            ),
+            None => match split_xml_sections(xml_content) {
+                Some((preamble, body_xml, postamble)) => (preamble, body_xml, postamble),
+                None => (String::new(), helpers::serialize_node(&body), String::new()),
+            },
+        };
 
     // Generate DSL from segments (this is the new, segment-aware path)
     let dsl = crate::importer::tei::extraction::segments_to_dsl(&segments, DSL_RULES);
@@ -144,11 +151,16 @@ pub fn recompute_spans(
     segments: &[Segment],
 ) -> Option<SourceSpans> {
     let xml = format!("{}{}{}", preamble, original_body_xml, postamble);
-    let doc = parse_document(&xml).ok()?;
-    let body = find_body(&doc.get_root_element()?)?;
-    let mut extractor = Extractor::with_source(original_body_xml);
-    let fresh = extractor.extract_segments(&body);
-    let spans = extractor.take_spans()?;
+    let tree = Tree::parse(&xml).ok()?;
+    let body = find_tree_body(&tree)?;
+    // The spans are relative to the body's start, which must be where the
+    // stored preamble ends
+    if tree.span(body)?.start != preamble.len() {
+        return None;
+    }
+    let projection = project_body(&tree, body);
+    let fresh = projection.segments;
+    let spans = projection.spans?;
 
     let same = fresh.len() == segments.len()
         && fresh

@@ -3,12 +3,18 @@
 //! gives the same nodes; wherever it rejected input, the new parser rejects it
 //! with the same message. The only intended difference: errors inside block
 //! content (`.head{...}` etc.) are now reported, where the old lexer accepted
-//! the block and its content failed later, when compiled.
+//! the block and its content failed later, when compiled. Syntax added
+//! since (`\c`, `#numeral#`, `//{n}`) is new to the parser, so input with
+//! `\`, `#` or `//{` isn't compared. Supplied text (`<…>`) is now parsed as
+//! DSL, so errors in it are reported (as nested ones).
 
 use super::legacy_lexer::LegacyLexer;
 use super::syntax;
 
 fn assert_equivalent(source: &str) {
+    if source.contains(['\\', '#']) || source.contains("//{") {
+        return;
+    }
     let legacy = LegacyLexer::new(source).parse();
     let tree = syntax::parse(source);
     match legacy {

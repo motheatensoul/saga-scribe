@@ -1,1233 +1,11 @@
-//! # TEI-XML Segment Extraction
+//! # Shorthand from segments
 //!
-//! This module extracts segments from TEI-XML documents, converting editable content
-//! to DSL representation while preserving structural elements.
-//!
-//! ## Extraction Pipeline
-//!
-//! The extractor walks the XML DOM tree and categorizes nodes:
-//!
-//! ```text
-//! <body>                  → Structural (open)
-//!   <div>                 → Structural (open)
-//!     <pb n="1r"/>        → PageBreak segment
-//!     <lb n="1"/>         → LineBreak segment
-//!     <w lemma="maðr">    → Word segment with DSL content
-//!       <choice>
-//!         <me:facs>maþr</me:facs>  → Extracted as DSL
-//!         <me:dipl>...</me:dipl>   → Preserved in original_xml
-//!         <me:norm>...</me:norm>   → Preserved in original_xml
-//!       </choice>
-//!     </w>
-//!   </div>                → Structural (close)
-//! </body>                 → Structural (close)
-//! ```
-//!
-//! ## MENOTA Abbreviation Detection
-//!
-//! The [`menota_abbr_expansion`] function detects abbreviation patterns:
-//! 1. Look for `<am>` (abbreviation marker) in facs level
-//! 2. Look for `<ex>` (expansion) in dipl level
-//! 3. If both present, emit `.abbr[facs]{dipl}` DSL syntax
-//!
-//! ## DSL Conversion
-//!
-//! The [`node_to_dsl`] function recursively converts TEI elements to DSL:
-//! - `<supplied>text</supplied>` → `<text>`
-//! - `<del>text</del>` → `-{text}-`
-//! - `<add>text</add>` → `+{text}+`
-//! - `<gap quantity="3"/>` → `[...3]`
-//! - `<note>text</note>` → `^{text}`
-//! - `<lb n="5"/>` inside word → `~//5` (continuation marker)
-//! - Entity references → `:entityname:`
-
-use crate::importer::tei::helpers;
-use crate::importer::tei::segments::{Segment, SourceSpans};
-use crate::importer::tei::source_map::SourceCursor;
-use libxml::tree::{Node, NodeType};
-use std::collections::HashMap;
-use std::ops::Range;
-
-/// Extracts segments from TEI-XML DOM nodes.
-///
-/// The extractor maintains an incrementing ID counter to assign unique
-/// identifiers to each segment, enabling the patching system to track edits.
-pub struct Extractor {
-    /// Next segment ID to assign
-    next_id: usize,
-    /// Cursor over the original body source, when span tracking is enabled.
-    /// Dropped (set to `None`) as soon as the source and DOM disagree.
-    cursor: Option<SourceCursor>,
-    /// Byte spans of editable segments in the original body source, by segment ID.
-    spans: HashMap<usize, Range<usize>>,
-}
-
-impl Extractor {
-    pub fn new() -> Self {
-        Self {
-            next_id: 0,
-            cursor: None,
-            spans: HashMap::new(),
-        }
-    }
-
-    /// Creates an extractor that also records where each editable segment lives
-    /// in `body_source`, the exact original text of the `<body>` element.
-    pub fn with_source(body_source: &str) -> Self {
-        Self {
-            cursor: Some(SourceCursor::new(body_source)),
-            ..Self::new()
-        }
-    }
-
-    /// Returns the recorded source spans, or `None` if tracking was not enabled
-    /// or the source could not be aligned with the DOM.
-    pub fn take_spans(&mut self) -> Option<SourceSpans> {
-        self.cursor.as_ref()?;
-        let mut spans = vec![None; self.next_id];
-        for (id, range) in self.spans.drain() {
-            spans[id] = Some((range.start, range.end));
-        }
-        Some(spans)
-    }
-
-    /// Runs a cursor operation; on failure, abandons span tracking entirely.
-    fn track<T>(&mut self, op: impl FnOnce(&mut SourceCursor) -> Option<T>) -> Option<T> {
-        let cursor = self.cursor.as_mut()?;
-        let result = op(cursor);
-        if result.is_none() {
-            log::warn!("Source span tracking lost alignment; edits will fall back to reconstruction");
-            self.cursor = None;
-            self.spans.clear();
-        }
-        result
-    }
-
-    /// Consumes the whole element in the source and returns its span.
-    fn track_element(&mut self, node: &Node) -> Option<Range<usize>> {
-        let qname = helpers::qualified_name(node);
-        self.track(|c| c.element(&qname))
-    }
-
-    fn push_spanned(
-        &mut self,
-        segments: &mut Vec<Segment>,
-        segment: Segment,
-        span: Option<Range<usize>>,
-    ) {
-        if let Some(span) = span {
-            self.spans.insert(segment.id(), span);
-        }
-        segments.push(segment);
-    }
-
-    fn next_id(&mut self) -> usize {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
-    }
-
-    /// Extracts all segments from the given XML node (typically the `<body>` element).
-    ///
-    /// Recursively processes the DOM tree, converting each node to the appropriate
-    /// segment type. Returns an ordered list of segments representing the document.
-    pub fn extract_segments(&mut self, node: &Node) -> Vec<Segment> {
-        let mut segments = Vec::new();
-        self.process_node(node, &mut segments);
-        segments
-    }
-
-    /// Processes a single DOM node, dispatching to the appropriate handler.
-    ///
-    /// # Element Handling
-    ///
-    /// - `<w>`: Extracts as Word segment via [`extract_word`]
-    /// - `<pc>`: Extracts as Punctuation segment via [`extract_punctuation`]
-    /// - `<lb>`, `<pb>`: Extracts as LineBreak/PageBreak segments
-    /// - `<choice>`: Extracts as Word (may be abbreviation or multi-level)
-    /// - `<gap>`, `<supplied>`, `<del>`, `<add>`: Inline TEI elements → DSL
-    /// - Other elements: Treated as structural, preserved verbatim
-    fn process_node(&mut self, node: &Node, segments: &mut Vec<Segment>) {
-        match node.get_type() {
-            Some(NodeType::ElementNode) => {
-                let local_name = helpers::local_name(node);
-                match local_name.as_str() {
-                    "w" => {
-                        let span = self.track_element(node);
-                        let segment = self.extract_word(node);
-                        self.push_spanned(segments, segment, span);
-                    }
-                    "pc" => {
-                        let span = self.track_element(node);
-                        let segment = self.extract_punctuation(node);
-                        self.push_spanned(segments, segment, span);
-                    }
-                    "lb" => {
-                        let span = self.track_element(node);
-                        let segment = Segment::LineBreak {
-                            id: self.next_id(),
-                            attributes: self.extract_attributes(node),
-                        };
-                        self.push_spanned(segments, segment, span);
-                    }
-                    "pb" => {
-                        let span = self.track_element(node);
-                        let segment = Segment::PageBreak {
-                            id: self.next_id(),
-                            attributes: self.extract_attributes(node),
-                        };
-                        self.push_spanned(segments, segment, span);
-                    }
-                    "handShift" => {
-                        let span = self.track_element(node);
-                        let segment = Segment::HandShift {
-                            id: self.next_id(),
-                            attributes: self.extract_attributes(node),
-                        };
-                        self.push_spanned(segments, segment, span);
-                    }
-                    "choice" => {
-                        let span = self.track_element(node);
-                        let segment = self.extract_choice(node);
-                        self.push_spanned(segments, segment, span);
-                    }
-                    "head" => {
-                        let mut content = String::new();
-                        let mut dummy = false;
-                        Self::node_to_dsl(node, &mut content, &mut dummy);
-                        let trimmed = content.trim();
-                        let span = self.track_element(node);
-                        if !trimmed.is_empty() {
-                            let dsl = format!(".head{{{}}}", trimmed);
-                            let segment = self.extract_inline_element(node, &dsl);
-                            self.push_spanned(segments, segment, span);
-                        }
-                    }
-                    // Handle TEI elements that should be converted to DSL notation
-                    // even when they appear outside of <w> tags
-                    "gap" => {
-                        let dsl = Self::gap_dsl(node, None);
-                        let span = self.track_element(node);
-                        let segment = self.extract_inline_element(node, &dsl);
-                        self.push_spanned(segments, segment, span);
-                    }
-                    "supplied" => {
-                        let mut content = String::new();
-                        let mut dummy = false;
-                        if Self::has_element_children(node) {
-                            Self::node_to_dsl_with_options(node, &mut content, &mut dummy, false);
-                            let trimmed = content.trim();
-                            if !trimmed.is_empty() {
-                                let dsl = format!(".supplied{{{}}}", trimmed);
-                                let span = self.track_element(node);
-                                let segment = self.extract_inline_element(node, &dsl);
-                                self.push_spanned(segments, segment, span);
-                            } else {
-                                self.emit_structural(node, segments);
-                            }
-                        } else {
-                            Self::node_to_dsl(node, &mut content, &mut dummy);
-                            let trimmed = content.trim();
-                            if !trimmed.is_empty() {
-                                let dsl = format!("<{}>", trimmed);
-                                let span = self.track_element(node);
-                                let segment = self.extract_inline_element(node, &dsl);
-                                self.push_spanned(segments, segment, span);
-                            } else {
-                                self.emit_structural(node, segments);
-                            }
-                        }
-                    }
-                    "del" => {
-                        let mut content = String::new();
-                        let mut dummy = false;
-                        Self::node_to_dsl(node, &mut content, &mut dummy);
-                        let trimmed = content.trim();
-                        if !trimmed.is_empty() {
-                            let dsl = format!("-{{{}}}-", trimmed);
-                            let span = self.track_element(node);
-                                let segment = self.extract_inline_element(node, &dsl);
-                                self.push_spanned(segments, segment, span);
-                        } else {
-                            self.emit_structural(node, segments);
-                        }
-                    }
-                    "add" => {
-                        let mut content = String::new();
-                        let mut dummy = false;
-                        Self::node_to_dsl(node, &mut content, &mut dummy);
-                        let trimmed = content.trim();
-                        if !trimmed.is_empty() {
-                            let dsl = format!("+{{{}}}+", trimmed);
-                            let span = self.track_element(node);
-                                let segment = self.extract_inline_element(node, &dsl);
-                                self.push_spanned(segments, segment, span);
-                        } else {
-                            self.emit_structural(node, segments);
-                        }
-                    }
-                    "unclear" => {
-                        let mut content = String::new();
-                        let mut dummy = false;
-                        Self::node_to_dsl(node, &mut content, &mut dummy);
-                        let trimmed = content.trim();
-                        if !trimmed.is_empty() {
-                            let dsl = format!("?{{{}}}?", trimmed);
-                            let span = self.track_element(node);
-                                let segment = self.extract_inline_element(node, &dsl);
-                                self.push_spanned(segments, segment, span);
-                        } else {
-                            self.emit_structural(node, segments);
-                        }
-                    }
-                    "note" => {
-                        // For notes, recursively convert children to DSL notation
-                        let mut note_content = String::new();
-                        let mut dummy = false;
-                        Self::node_to_dsl(node, &mut note_content, &mut dummy);
-                        let trimmed = note_content.trim();
-                        let span = self.track_element(node);
-                        if !trimmed.is_empty() {
-                            let dsl = format!("^{{{}}}", trimmed);
-                            let segment = self.extract_inline_element(node, &dsl);
-                            self.push_spanned(segments, segment, span);
-                        }
-                    }
-                    "am" => {
-                        if Self::has_element_children(node) {
-                            self.emit_structural(node, segments);
-                        } else {
-                            // Abbreviation marker - keep raw content (entities handled in node_to_dsl)
-                            let mut content = String::new();
-                            let mut dummy = false;
-                            Self::node_to_dsl(node, &mut content, &mut dummy);
-                            let trimmed = content.trim();
-                            let span = self.track_element(node);
-                            if !trimmed.is_empty() {
-                                let segment = self.extract_inline_element(node, trimmed);
-                                self.push_spanned(segments, segment, span);
-                            }
-                        }
-                    }
-                    _ => {
-                        // Structural element
-                        self.emit_structural(node, segments);
-                    }
-                }
-            }
-            Some(NodeType::TextNode) => {
-                let content = node.get_content();
-                let offsets = self.track(|c| c.text(&content));
-                if content.trim().is_empty() {
-                    // Pure whitespace
-                    segments.push(Segment::Whitespace {
-                        id: self.next_id(),
-                        content,
-                    });
-                } else {
-                    // Split text into words separated by whitespace
-                    // This handles cases like "word1  word2\n\nword3\tword4"
-                    let mut current_word = String::new();
-                    let mut current_ws = String::new();
-                    let mut word_start = 0;
-
-                    for (i, c) in content.chars().enumerate() {
-                        if c.is_whitespace() {
-                            if !current_word.is_empty() {
-                                let span = offsets.as_ref().map(|o| o[word_start]..o[i]);
-                                self.push_text_word(segments, std::mem::take(&mut current_word), span);
-                            }
-                            current_ws.push(c);
-                        } else {
-                            if !current_ws.is_empty() {
-                                segments.push(Segment::Whitespace {
-                                    id: self.next_id(),
-                                    content: current_ws.clone(),
-                                });
-                                current_ws.clear();
-                            }
-                            if current_word.is_empty() {
-                                word_start = i;
-                            }
-                            current_word.push(c);
-                        }
-                    }
-
-                    if !current_word.is_empty() {
-                        let span = offsets.as_ref().map(|o| o[word_start]..o[o.len() - 1]);
-                        self.push_text_word(segments, current_word, span);
-                    }
-
-                    if !current_ws.is_empty() {
-                        segments.push(Segment::Whitespace {
-                            id: self.next_id(),
-                            content: current_ws,
-                        });
-                    }
-                }
-            }
-            Some(NodeType::CommentNode) => {
-                self.track(|c| c.comment());
-                segments.push(Segment::Structural {
-                    id: self.next_id(),
-                    xml: format!("<!--{}-->", node.get_content()),
-                });
-            }
-            Some(NodeType::CDataSectionNode) => {
-                self.track(|c| c.cdata());
-            }
-            Some(NodeType::PiNode) => {
-                self.track(|c| c.processing_instruction());
-            }
-            Some(NodeType::EntityRefNode) => {
-                let name = node.get_name();
-                self.track(|c| c.entity_ref(&name));
-            }
-            _ => {
-                // Unknown node kind: we cannot know what it consumed in the source.
-                self.track(|_| None::<()>);
-            }
-        }
-    }
-
-    /// Pushes a word that came from a bare text node (not a `<w>` element).
-    fn push_text_word(
-        &mut self,
-        segments: &mut Vec<Segment>,
-        word: String,
-        span: Option<Range<usize>>,
-    ) {
-        let segment = Segment::Word {
-            id: self.next_id(),
-            original_xml: helpers::escape_xml_text(&word),
-            attributes: HashMap::new(),
-            dsl_content: word,
-            has_inline_lb: false,
-        };
-        self.push_spanned(segments, segment, span);
-    }
-
-    fn open_tag(&self, node: &Node) -> String {
-        let name = helpers::qualified_name(node);
-        let mut tag = format!("<{}", name);
-        for (key, value) in helpers::attributes_with_ns(node) {
-            tag.push_str(&format!(
-                " {}=\"{}\"",
-                key,
-                helpers::escape_xml_attr(&value)
-            ));
-        }
-        tag.push('>');
-        tag
-    }
-
-    fn emit_structural(&mut self, node: &Node, segments: &mut Vec<Segment>) {
-        let qname = helpers::qualified_name(node);
-        // Tags carry spans, so `.p` edits can split and merge paragraphs
-        let open_span = self.track(|c| c.open_tag(&qname));
-        let id = self.next_id();
-        let xml = self.open_tag(node);
-        let open = if helpers::local_name(node) == "p" {
-            Segment::Paragraph { id, xml }
-        } else {
-            Segment::Structural { id, xml }
-        };
-        self.push_spanned(segments, open, open_span);
-
-        let mut child = node.get_first_child();
-        while let Some(c) = child {
-            self.process_node(&c, segments);
-            child = c.get_next_sibling();
-        }
-
-        let close_span = self.track(|c| c.close_tag(&qname));
-        let close = Segment::Structural {
-            id: self.next_id(),
-            xml: format!("</{}>", qname),
-        };
-        self.push_spanned(segments, close, close_span);
-    }
-
-    fn has_element_children(node: &Node) -> bool {
-        let mut child = node.get_first_child();
-        while let Some(c) = child {
-            if c.get_type() == Some(NodeType::ElementNode) {
-                return true;
-            }
-            child = c.get_next_sibling();
-        }
-        false
-    }
-
-    fn find_descendant(node: &Node, target: &str) -> Option<Node> {
-        let mut child = node.get_first_child();
-        while let Some(c) = child {
-            if c.get_type() == Some(NodeType::ElementNode) {
-                let name = helpers::local_name(&c);
-                if name == target {
-                    return Some(c);
-                }
-                if let Some(found) = Self::find_descendant(&c, target) {
-                    return Some(found);
-                }
-            }
-            child = c.get_next_sibling();
-        }
-        None
-    }
-
-    fn extract_attributes(&self, node: &Node) -> HashMap<String, String> {
-        helpers::attributes_with_ns(node).into_iter().collect()
-    }
-
-    /// Converts a `<gap>` element to DSL syntax.
-    ///
-    /// Handles optional attributes:
-    /// - `quantity="3"` → `[...3]`
-    /// - With supplied text → `[...3<supplied text>]`
-    fn gap_dsl(node: &Node, supplied: Option<&str>) -> String {
-        let quantity = node.get_property("quantity");
-        let digits = quantity
-            .as_deref()
-            .map(|value| value.chars().filter(|c| c.is_ascii_digit()).collect::<String>())
-            .filter(|value| !value.is_empty());
-
-        let mut dsl = "[...]".to_string();
-        if let Some(q) = digits {
-            dsl.insert_str(dsl.len() - 1, &q);
-        }
-        if let Some(text) = supplied {
-            if !text.trim().is_empty() {
-                dsl.insert_str(dsl.len() - 1, &format!("<{}>", text.trim()));
-            }
-        }
-        dsl
-    }
-
-    /// Extract an inline TEI element (gap, supplied, del, add, etc.) as a Word segment
-    /// with the provided DSL content. Preserves the original XML for round-trip.
-    fn extract_inline_element(&mut self, node: &Node, dsl: &str) -> Segment {
-        Segment::Word {
-            id: self.next_id(),
-            original_xml: helpers::serialize_node(node),
-            attributes: HashMap::new(),
-            dsl_content: dsl.to_string(),
-            has_inline_lb: false,
-        }
-    }
-
-    fn extract_word(&mut self, node: &Node) -> Segment {
-        let attributes = self.extract_attributes(node);
-        let original_xml = helpers::serialize_node(node);
-
-        let facs_node = Self::find_descendant(node, "facs");
-
-        let mut dsl_content = String::new();
-        let mut has_inline_lb = false;
-
-        if let Some((abbr, expan)) = Self::menota_abbr_expansion(node, &mut has_inline_lb) {
-            dsl_content = format!(".abbr[{}]{{{}}}", abbr, expan);
-        } else {
-            let facs_text = Self::menota_level_text(node, "facs", &mut has_inline_lb);
-            let dipl_text = Self::menota_level_text(node, "dipl", &mut has_inline_lb);
-            let norm_text = Self::menota_level_text(node, "norm", &mut has_inline_lb);
-
-            if facs_text.is_none() && dipl_text.is_none() {
-                if let Some(text) = norm_text.clone() {
-                    dsl_content = format!(".norm{{{}}}", text);
-                }
-            }
-
-            if dsl_content.is_empty() {
-                if let Some(text) = facs_text.or(dipl_text).or(norm_text) {
-                    dsl_content = text;
-                } else if let Some(facs) = facs_node {
-                    Self::node_to_dsl(&facs, &mut dsl_content, &mut has_inline_lb);
-                } else {
-                    Self::node_to_dsl(node, &mut dsl_content, &mut has_inline_lb);
-                }
-            }
-        }
-
-        Segment::Word {
-            id: self.next_id(),
-            original_xml,
-            attributes,
-            dsl_content: join_written_words(&dsl_content),
-            has_inline_lb,
-        }
-    }
-
-    fn extract_punctuation(&mut self, node: &Node) -> Segment {
-        let original_xml = helpers::serialize_node(node);
-
-        // Look for me:facs child (or direct content)
-        let facs_node = Self::find_descendant(node, "facs");
-
-        let mut dsl_content = String::new();
-        let mut has_inline_lb = false;
-
-        let facs_text = Self::menota_level_text(node, "facs", &mut has_inline_lb);
-        let dipl_text = Self::menota_level_text(node, "dipl", &mut has_inline_lb);
-        let norm_text = Self::menota_level_text(node, "norm", &mut has_inline_lb);
-
-        if facs_text.is_none() && dipl_text.is_none() {
-            if let Some(text) = norm_text.clone() {
-                dsl_content = format!(".norm{{{}}}", text);
-            }
-        }
-
-        if dsl_content.is_empty() {
-            if let Some(text) = facs_text.or(dipl_text).or(norm_text) {
-                dsl_content = text;
-            } else if let Some(facs) = facs_node {
-                Self::node_to_dsl(&facs, &mut dsl_content, &mut has_inline_lb);
-            } else {
-                Self::node_to_dsl(node, &mut dsl_content, &mut has_inline_lb);
-            }
-        }
-
-        Segment::Punctuation {
-            id: self.next_id(),
-            original_xml,
-            dsl_content,
-        }
-    }
-
-    fn extract_choice(&mut self, node: &Node) -> Segment {
-        let attributes = self.extract_attributes(node);
-        let original_xml = helpers::serialize_node(node);
-
-        // First check if this choice contains abbr/expan (abbreviation pattern)
-        let mut abbr_text = String::new();
-        let mut expan_text = String::new();
-        let mut found_abbr = false;
-        let mut found_expan = false;
-        let mut facs_node = None;
-
-        let mut child = node.get_first_child();
-        while let Some(c) = child {
-            if c.get_type() == Some(NodeType::ElementNode) {
-                let name = helpers::local_name(&c);
-                match name.as_str() {
-                    "abbr" => {
-                        found_abbr = true;
-                        let mut dummy = false;
-                        Self::node_to_dsl(&c, &mut abbr_text, &mut dummy);
-                    }
-                    "expan" => {
-                        found_expan = true;
-                        let mut dummy = false;
-                        Self::node_to_dsl(&c, &mut expan_text, &mut dummy);
-                    }
-                    "facs" => {
-                        facs_node = Some(c.clone());
-                    }
-                    _ => {}
-                }
-            }
-            child = c.get_next_sibling();
-        }
-
-        let mut dsl_content = String::new();
-        let mut has_inline_lb = false;
-
-        if found_abbr && found_expan {
-            // Abbreviation pattern: .abbr[abbr]{expan}
-            dsl_content = format!(".abbr[{}]{{{}}}", abbr_text, expan_text);
-        } else if let Some((abbr, expan)) = Self::menota_abbr_expansion(node, &mut has_inline_lb) {
-            dsl_content = format!(".abbr[{}]{{{}}}", abbr, expan);
-        } else {
-            let facs_text = Self::menota_level_text(node, "facs", &mut has_inline_lb);
-            let dipl_text = Self::menota_level_text(node, "dipl", &mut has_inline_lb);
-            let norm_text = Self::menota_level_text(node, "norm", &mut has_inline_lb);
-
-            if facs_text.is_none() && dipl_text.is_none() {
-                if let Some(text) = norm_text.clone() {
-                    dsl_content = format!(".norm{{{}}}", text);
-                }
-            }
-
-            if dsl_content.is_empty() {
-                if let Some(text) = facs_text.or(dipl_text).or(norm_text) {
-                    dsl_content = text;
-                } else if let Some(facs) = facs_node {
-                    // Fallback: extract from facs if available
-                    Self::node_to_dsl(&facs, &mut dsl_content, &mut has_inline_lb);
-                } else {
-                    // Fallback: process all children
-                    Self::node_to_dsl(node, &mut dsl_content, &mut has_inline_lb);
-                }
-            }
-        }
-
-        Segment::Word {
-            id: self.next_id(),
-            original_xml,
-            attributes,
-            dsl_content,
-            has_inline_lb,
-        }
-    }
-
-    fn node_children_to_dsl_with_options(
-        node: &Node,
-        output: &mut String,
-        has_inline_lb: &mut bool,
-        allow_norm_wrapper: bool,
-    ) {
-        let mut child = node.get_first_child();
-        while let Some(c) = child {
-            // Handle text nodes directly since node_to_dsl_with_options processes
-            // children of its input, not the input itself
-            if c.get_type() == Some(NodeType::TextNode) {
-                let content = c.get_content();
-                let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
-                if !normalized.is_empty() {
-                    let has_leading = content
-                        .chars()
-                        .next()
-                        .map(|ch| ch.is_whitespace())
-                        .unwrap_or(false);
-                    let has_trailing = content
-                        .chars()
-                        .last()
-                        .map(|ch| ch.is_whitespace())
-                        .unwrap_or(false);
-
-                    if has_leading && !output.is_empty() && !output.ends_with(' ') {
-                        output.push(' ');
-                    }
-                    output.push_str(&normalized);
-                    if has_trailing {
-                        let next = c.get_next_sibling();
-                        if next.is_some() && !output.ends_with(' ') {
-                            output.push(' ');
-                        }
-                    }
-                }
-            } else {
-                Self::node_to_dsl_with_options(&c, output, has_inline_lb, allow_norm_wrapper);
-            }
-            child = c.get_next_sibling();
-        }
-    }
-
-    fn menota_level_text(
-        node: &Node,
-        level: &str,
-        has_inline_lb: &mut bool,
-    ) -> Option<String> {
-        Self::find_descendant(node, level).and_then(|child| {
-            let mut text = String::new();
-            Self::node_to_dsl(&child, &mut text, has_inline_lb);
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
-    }
-
-    /// Detects and extracts MENOTA abbreviation patterns.
-    ///
-    /// MENOTA encodes abbreviations with expansion using `<am>` (abbreviation marker)
-    /// in the facsimile level and `<ex>` (expansion) in the diplomatic level.
-    ///
-    /// # Detection Algorithm
-    ///
-    /// 1. Find `<me:facs>` descendant containing `<am>` element
-    /// 2. Find `<me:dipl>` descendant containing `<ex>` element
-    /// 3. If both present, return `(facs_text, dipl_text)` for `.abbr[]{}` syntax
-    ///
-    /// # Example
-    ///
-    /// Input XML:
-    /// ```xml
-    /// <w><choice>
-    ///   <me:facs>w<am>̄</am></me:facs>
-    ///   <me:dipl>w<ex>ið</ex></me:dipl>
-    ///   <me:norm>við</me:norm>
-    /// </choice></w>
-    /// ```
-    ///
-    /// Returns: `Some(("w̄", "wið"))` → produces `.abbr[w̄]{wið}`
-    fn menota_abbr_expansion(
-        node: &Node,
-        has_inline_lb: &mut bool,
-    ) -> Option<(String, String)> {
-        let facs_node = Self::find_descendant(node, "facs")?;
-        let dipl_node = Self::find_descendant(node, "dipl")?;
-        // MENOTA's <me:am>/<me:ex>, or the <abbr>/<expan> Saga-Scribe writes
-        let has_am = Self::find_descendant(&facs_node, "am").is_some()
-            || Self::find_descendant(&facs_node, "abbr").is_some();
-        let has_ex = Self::find_descendant(&dipl_node, "ex").is_some()
-            || Self::find_descendant(&dipl_node, "expan").is_some();
-
-        if !has_am && !has_ex {
-            return None;
-        }
-
-        let mut abbr = String::new();
-        Self::node_to_dsl(&facs_node, &mut abbr, has_inline_lb);
-        let mut expan = String::new();
-        Self::node_to_dsl(&dipl_node, &mut expan, has_inline_lb);
-
-        let abbr = abbr.trim();
-        let expan = expan.trim();
-
-        if abbr.is_empty() || expan.is_empty() {
-            None
-        } else {
-            Some((abbr.to_string(), expan.to_string()))
-        }
-    }
-
-    /// Converts an XML node's content to DSL notation.
-    ///
-    /// This is a convenience wrapper around [`node_to_dsl_with_options`] with
-    /// `allow_norm_wrapper = true`.
-    fn node_to_dsl(node: &Node, output: &mut String, has_inline_lb: &mut bool) {
-        Self::node_to_dsl_with_options(node, output, has_inline_lb, true);
-    }
-
-    /// Recursively converts XML content to DSL notation.
-    ///
-    /// # Parameters
-    ///
-    /// - `node`: The XML node to convert
-    /// - `output`: String buffer to append DSL to
-    /// - `has_inline_lb`: Set to true if `<lb>` is encountered inside a word
-    /// - `allow_norm_wrapper`: If true, norm-only content emits `.norm{}`; if false, raw text
-    ///
-    /// # Element Conversions
-    ///
-    /// | Element | DSL Output |
-    /// |---------|------------|
-    /// | `<choice>` | Abbreviation or level extraction |
-    /// | `<add>` | `+{content}+` |
-    /// | `<del>` | `-{content}-` |
-    /// | `<supplied>` | `<content>` or `.supplied{content}` |
-    /// | `<gap>` | `[...]` with quantity and supplied |
-    /// | `<unclear>` | `?{content}?` |
-    /// | `<note>` | `^{content}` |
-    /// | `<lb n="x">` | `~//x` (word continuation) |
-    fn node_to_dsl_with_options(
-        node: &Node,
-        output: &mut String,
-        has_inline_lb: &mut bool,
-        allow_norm_wrapper: bool,
-    ) {
-        let mut child = node.get_first_child();
-        while let Some(c) = child {
-            let mut next_child = c.get_next_sibling();
-            match c.get_type() {
-                Some(NodeType::TextNode) => {
-                    let content = c.get_content();
-                    let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
-                    if normalized.is_empty() {
-                        // Pure whitespace is indentation, except between an
-                        // entity and more text (`&et; &thorn;a`): a word space
-                        let after_entity = c
-                            .get_prev_sibling()
-                            .is_some_and(|p| p.get_type() == Some(NodeType::EntityRefNode));
-                        let before_text = next_child.as_ref().is_some_and(|n| {
-                            matches!(n.get_type(), Some(NodeType::EntityRefNode | NodeType::TextNode))
-                        });
-                        if after_entity && before_text && !output.ends_with(' ') {
-                            output.push(' ');
-                        }
-                    } else {
-                        let has_leading = content
-                            .chars()
-                            .next()
-                            .map(|ch| ch.is_whitespace())
-                            .unwrap_or(false);
-                        let has_trailing = content
-                            .chars()
-                            .last()
-                            .map(|ch| ch.is_whitespace())
-                            .unwrap_or(false);
-
-                        if has_leading && !output.is_empty() && !output.ends_with(' ') {
-                            output.push(' ');
-                        }
-
-                        output.push_str(&normalized);
-
-                        if has_trailing {
-                            let next = c.get_next_sibling();
-                            if next.is_some() && !output.ends_with(' ') {
-                                output.push(' ');
-                            }
-                        }
-                    }
-                }
-                Some(NodeType::EntityRefNode) => {
-                    let name = c.get_name();
-                    if !name.is_empty() {
-                        output.push(':');
-                        output.push_str(&name);
-                        output.push(':');
-                    } else {
-                        output.push_str(&c.get_content());
-                    }
-                }
-                Some(NodeType::ElementNode) => {
-                    let name = helpers::local_name(&c);
-                    match name.as_str() {
-                        "choice" => {
-                            let mut abbr_text = String::new();
-                            let mut expan_text = String::new();
-                            let mut found_abbr = false;
-                            let mut found_expan = false;
-                            let mut facs_node = None;
-
-                            let mut gc = c.get_first_child();
-                            while let Some(gcc) = gc {
-                                if gcc.get_type() == Some(NodeType::ElementNode) {
-                                    let gc_name = helpers::local_name(&gcc);
-                                    if gc_name == "abbr" {
-                                        found_abbr = true;
-                                        Self::node_to_dsl_with_options(
-                                            &gcc,
-                                            &mut abbr_text,
-                                            has_inline_lb,
-                                            allow_norm_wrapper,
-                                        );
-                                    } else if gc_name == "expan" {
-                                        found_expan = true;
-                                        Self::node_to_dsl_with_options(
-                                            &gcc,
-                                            &mut expan_text,
-                                            has_inline_lb,
-                                            allow_norm_wrapper,
-                                        );
-                                    } else if gc_name == "facs" {
-                                        facs_node = Some(gcc.clone());
-                                    }
-                                }
-                                gc = gcc.get_next_sibling();
-                            }
-
-                            if found_abbr && found_expan {
-                                output.push_str(&format!(".abbr[{}]{{{}}}", abbr_text, expan_text));
-                            } else if let Some((abbr, expan)) =
-                                Self::menota_abbr_expansion(&c, has_inline_lb)
-                            {
-                                output.push_str(&format!(".abbr[{}]{{{}}}", abbr, expan));
-                            } else {
-                                let mut handled = false;
-                                let facs_text = Self::menota_level_text(&c, "facs", has_inline_lb);
-                                let dipl_text = Self::menota_level_text(&c, "dipl", has_inline_lb);
-                                let norm_text = Self::menota_level_text(&c, "norm", has_inline_lb);
-
-                                if facs_text.is_none() && dipl_text.is_none() {
-                                    if let Some(text) = norm_text.as_ref() {
-                                        if allow_norm_wrapper {
-                                            output.push_str(&format!(".norm{{{}}}", text));
-                                        } else {
-                                            output.push_str(text);
-                                        }
-                                        handled = true;
-                                    }
-                                }
-
-                                if !handled {
-                                    if let Some(text) = facs_text
-                                        .as_ref()
-                                        .or(dipl_text.as_ref())
-                                        .or(norm_text.as_ref())
-                                    {
-                                        output.push_str(text);
-                                        handled = true;
-                                    }
-                                }
-
-                                if !handled {
-                                    if let Some(facs) = facs_node {
-                                        Self::node_to_dsl_with_options(
-                                            &facs,
-                                            output,
-                                            has_inline_lb,
-                                            allow_norm_wrapper,
-                                        );
-                                    } else {
-                                        let mut gc = c.get_first_child();
-                                        while let Some(gcc) = gc {
-                                            if gcc.get_type() == Some(NodeType::ElementNode) {
-                                                let gc_name = helpers::local_name(&gcc);
-                                                if gc_name == "dipl" || gc_name == "norm" {
-                                                    gc = gcc.get_next_sibling();
-                                                    continue;
-                                                }
-                                            }
-                                            Self::node_to_dsl_with_options(
-                                                &gcc,
-                                                output,
-                                                has_inline_lb,
-                                                allow_norm_wrapper,
-                                            );
-                                            gc = gcc.get_next_sibling();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        "am" => {
-                            Self::node_to_dsl_with_options(
-                                &c,
-                                output,
-                                has_inline_lb,
-                                allow_norm_wrapper,
-                            );
-                        }
-                        "w" => {
-                            if !output.is_empty() && !output.ends_with(' ') {
-                                output.push(' ');
-                            }
-
-                            if let Some((abbr, expan)) =
-                                Self::menota_abbr_expansion(&c, has_inline_lb)
-                            {
-                                output.push_str(&format!(".abbr[{}]{{{}}}", abbr, expan));
-                            } else {
-                                let facs_text =
-                                    Self::menota_level_text(&c, "facs", has_inline_lb);
-                                let dipl_text =
-                                    Self::menota_level_text(&c, "dipl", has_inline_lb);
-                                let norm_text =
-                                    Self::menota_level_text(&c, "norm", has_inline_lb);
-                                let mut handled = false;
-
-                                if facs_text.is_none() && dipl_text.is_none() {
-                                    if let Some(text) = norm_text.as_ref() {
-                                        if allow_norm_wrapper {
-                                            output.push_str(&format!(".norm{{{}}}", text));
-                                        } else {
-                                            output.push_str(text);
-                                        }
-                                        handled = true;
-                                    }
-                                }
-
-                                if !handled {
-                                    if let Some(text) = facs_text
-                                        .as_ref()
-                                        .or(dipl_text.as_ref())
-                                        .or(norm_text.as_ref())
-                                    {
-                                        output.push_str(text);
-                                        handled = true;
-                                    }
-                                }
-
-                                if !handled {
-                                    Self::node_children_to_dsl_with_options(
-                                        &c,
-                                        output,
-                                        has_inline_lb,
-                                        allow_norm_wrapper,
-                                    );
-                                }
-                            }
-                        }
-                        "pc" => {
-                            let facs_text = Self::menota_level_text(&c, "facs", has_inline_lb);
-                            let dipl_text = Self::menota_level_text(&c, "dipl", has_inline_lb);
-                            let norm_text = Self::menota_level_text(&c, "norm", has_inline_lb);
-                            let mut handled = false;
-
-                            if facs_text.is_none() && dipl_text.is_none() {
-                                if let Some(text) = norm_text.as_ref() {
-                                    if allow_norm_wrapper {
-                                        output.push_str(&format!(".norm{{{}}}", text));
-                                    } else {
-                                        output.push_str(text);
-                                    }
-                                    handled = true;
-                                }
-                            }
-
-                            if !handled {
-                                if let Some(text) = facs_text
-                                    .as_ref()
-                                    .or(dipl_text.as_ref())
-                                    .or(norm_text.as_ref())
-                                {
-                                    output.push_str(text);
-                                    handled = true;
-                                }
-                            }
-
-                            if !handled {
-                                Self::node_children_to_dsl_with_options(
-                                    &c,
-                                    output,
-                                    has_inline_lb,
-                                    allow_norm_wrapper,
-                                );
-                            }
-                        }
-                        "c" => {
-                            let mut inner = String::new();
-                            Self::node_to_dsl_with_options(
-                                &c,
-                                &mut inner,
-                                has_inline_lb,
-                                allow_norm_wrapper,
-                            );
-                            if inner.is_empty() {
-                                output.push_str(&c.get_content());
-                            } else {
-                                output.push_str(&inner);
-                            }
-                        }
-                        "add" => {
-                            let mut inner = String::new();
-                            Self::node_to_dsl_with_options(
-                                &c,
-                                &mut inner,
-                                has_inline_lb,
-                                allow_norm_wrapper,
-                            );
-                            let trimmed = inner.trim();
-                            if !trimmed.is_empty() {
-                                output.push_str("+{");
-                                output.push_str(trimmed);
-                                output.push_str("}+");
-                            }
-                        }
-                        "del" => {
-                            let mut inner = String::new();
-                            Self::node_to_dsl_with_options(
-                                &c,
-                                &mut inner,
-                                has_inline_lb,
-                                allow_norm_wrapper,
-                            );
-                            let trimmed = inner.trim();
-                            if !trimmed.is_empty() {
-                                output.push_str("-{");
-                                output.push_str(trimmed);
-                                output.push_str("}-");
-                            }
-                        }
-                        "unclear" => {
-                            let mut inner = String::new();
-                            Self::node_to_dsl_with_options(
-                                &c,
-                                &mut inner,
-                                has_inline_lb,
-                                allow_norm_wrapper,
-                            );
-                            let trimmed = inner.trim();
-                            if !trimmed.is_empty() {
-                                output.push_str("?{");
-                                output.push_str(trimmed);
-                                output.push_str("}?");
-                            }
-                        }
-                        "supplied" => {
-                            let has_children = Self::has_element_children(&c);
-                            let mut inner = String::new();
-                            if has_children {
-                                Self::node_to_dsl_with_options(
-                                    &c,
-                                    &mut inner,
-                                    has_inline_lb,
-                                    false,
-                                );
-                            } else {
-                                Self::node_children_to_dsl_with_options(
-                                    &c,
-                                    &mut inner,
-                                    has_inline_lb,
-                                    allow_norm_wrapper,
-                                );
-                            }
-                            let trimmed = inner.trim();
-                            if !trimmed.is_empty() {
-                                if has_children {
-                                    output.push_str(&format!(".supplied{{{}}}", trimmed));
-                                } else {
-                                    output.push('<');
-                                    output.push_str(trimmed);
-                                    output.push('>');
-                                }
-                            }
-                        }
-                        "gap" => {
-                            let mut supplied_text = None;
-                            if let Some(next) = c.get_next_sibling() {
-                                if next.get_type() == Some(NodeType::ElementNode)
-                                    && helpers::local_name(&next) == "supplied"
-                                {
-                                    let mut inner = String::new();
-                                    Self::node_to_dsl_with_options(
-                                        &next,
-                                        &mut inner,
-                                        has_inline_lb,
-                                        allow_norm_wrapper,
-                                    );
-                                    let trimmed = inner.trim();
-                                    if !trimmed.is_empty() {
-                                        supplied_text = Some(trimmed.to_string());
-                                        next_child = next.get_next_sibling();
-                                    }
-                                }
-                            }
-                            output.push_str(&Self::gap_dsl(&c, supplied_text.as_deref()));
-                        }
-                        "note" => {
-                            let mut inner = String::new();
-                            Self::node_to_dsl_with_options(
-                                &c,
-                                &mut inner,
-                                has_inline_lb,
-                                allow_norm_wrapper,
-                            );
-                            let trimmed = inner.trim();
-                            if !trimmed.is_empty() {
-                                output.push_str("^{");
-                                output.push_str(trimmed);
-                                output.push('}');
-                            }
-                        }
-                        "lb" => {
-                            *has_inline_lb = true;
-                            output.push_str("~//");
-                            if let Some(n) = c.get_property("n") {
-                                output.push_str(&n);
-                            }
-                        }
-                        "dipl" | "norm" => {
-                            // Skip
-                        }
-                        _ => {
-                            Self::node_to_dsl_with_options(
-                                &c,
-                                output,
-                                has_inline_lb,
-                                allow_norm_wrapper,
-                            );
-                        }
-                    }
-                }
-                _ => {}
-            }
-            child = next_child;
-        }
-    }
-}
-
-/// Convenience function to extract segments from a body node.
-#[allow(dead_code)]
-pub fn extract_segments(body_node: &Node) -> Vec<Segment> {
-    let mut extractor = Extractor::new();
-    extractor.extract_segments(body_node)
-}
+//! [`segments_to_dsl`] writes the shorthand of an imported document from its
+//! segments, which the document tree's projection makes
+//! ([`crate::document::project_body`]); [`join_written_words`] is the rule for
+//! the written words within one `<w>`.
+
+use crate::importer::tei::segments::Segment;
 
 /// Joins the written words of one `<w>` with `~` (compound join), so the DSL
 /// reads them as one word, as the XML does: `þo at` → `þo~at`. Whitespace
@@ -1237,7 +15,38 @@ pub fn join_written_words(dsl: &str) -> String {
     let mut out = String::with_capacity(dsl.len());
     let mut depth = 0usize;
     let mut chars = dsl.trim().chars().peekable();
+    // Whether the last character written was escaped (`\~` is no join)
+    let mut escaped = false;
     while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(c);
+                out.push(next);
+                escaped = true;
+                continue;
+            }
+        }
+        // A note is free prose, where only braces nest (`^{u < ?}`)
+        if c == '^' && depth == 0 && chars.peek() == Some(&'{') {
+            out.push(c);
+            let mut braces = 0usize;
+            while let Some(c) = chars.next() {
+                out.push(c);
+                match c {
+                    '\\' => out.extend(chars.next()),
+                    '{' => braces += 1,
+                    '}' => {
+                        braces -= 1;
+                        if braces == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            escaped = false;
+            continue;
+        }
         match c {
             '[' | '{' | '<' => depth += 1,
             ']' | '}' | '>' => depth = depth.saturating_sub(1),
@@ -1246,14 +55,68 @@ pub fn join_written_words(dsl: &str) -> String {
         if depth == 0 && c.is_whitespace() {
             while chars.next_if(|c| c.is_whitespace()).is_some() {}
             let after_break = out.trim_end_matches(|c: char| c.is_ascii_digit()).ends_with("~//");
-            if !after_break && !out.ends_with('~') {
+            if !after_break && (escaped || !out.ends_with('~')) {
                 out.push('~');
             }
+            escaped = false;
             continue;
         }
         out.push(c);
+        escaped = false;
     }
     out
+}
+
+/// Whether two tokens' shorthand, written without whitespace between them,
+/// would read as other tokens (`skrims^{sic}` is one word with a note in
+/// it, `þꝩiat` one word, `,\,` one punctuation).
+fn glued(previous: &str, next: &str) -> bool {
+    // Punctuation that starts a token splits from what is before it (but
+    // `?{` is unclear text)
+    let second = next.chars().nth(1);
+    let construct = match next.chars().next() {
+        Some('?') => second == Some('{'),
+        // `.abbr[`, `.norm{`, …
+        Some('.') => second.is_some_and(char::is_alphabetic),
+        _ => true,
+    };
+    if !construct || next.starts_with([',', ';', '!', '(', ')']) {
+        return false;
+    }
+    let tokens = |dsl: &str| -> Option<Vec<String>> {
+        let nodes = crate::parser::Lexer::new(dsl).parse().ok()?.nodes;
+        Some(
+            crate::parser::WordTokenizer::new()
+                .tokenize(nodes)
+                .iter()
+                .filter(|node| crate::identity::is_token(node))
+                .map(crate::identity::node_to_dsl)
+                .collect(),
+        )
+    };
+    match (tokens(previous), tokens(next), tokens(&format!("{previous}{next}"))) {
+        (Some(mut apart), Some(next), Some(together)) => {
+            apart.extend(next);
+            apart != together
+        }
+        _ => false,
+    }
+}
+
+/// A break's number in the shorthand: from rules 4 on in braces where the
+/// plain form can't hold it (`//{56r}`).
+fn break_number(n: &str, page: bool, dsl_rules: u32) -> String {
+    if dsl_rules >= 4 {
+        crate::parser::syntax::break_number_dsl(n, page)
+    } else {
+        n.to_string()
+    }
+}
+
+/// Whether a token's shorthand ends with a break it continues across
+/// (`míſ~//2`, `ꝩand~///10v`): whitespace after it doesn't end the word.
+fn ends_with_continued_break(dsl: &str) -> bool {
+    dsl.rfind("~//").is_some_and(|at| !dsl[at..].contains(char::is_whitespace))
 }
 
 /// Whether a punctuation segment's DSL is made only of punctuation entities
@@ -1283,7 +146,8 @@ fn is_entity_punctuation(dsl: &str) -> bool {
 ///   punctuation (`:middot:`), which is set off by spaces
 /// - Paragraph starts: `.p`, set off by spaces
 /// - Line breaks: newline + `//n` + space
-/// - Page breaks: newline + `///n`
+/// - Page breaks: newline + `///n`; from rules 2 on, a word or punctuation
+///   right after one starts a new line, so the page number doesn't run into it
 /// - Structural elements are skipped (not represented in DSL)
 ///
 /// `dsl_rules` is the document's [`DSL_RULES`](super::segments::DSL_RULES) version.
@@ -1291,17 +155,52 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
     let mut dsl = String::new();
     let mut last_was_linebreak = false;
     let mut pending_space = false;  // Track if we should add a space before next word
+    // The last word or punctuation written, while nothing else follows it
+    let mut previous: Option<&str> = None;
+
+    // From rules 3 on, a token written right after another that it would
+    // run into is set apart: a note by a space, others by `|`. After a word
+    // continued across a break (`míſ~//2`) a space doesn't end the word, so
+    // it is replaced by `|`.
+    let separate = |dsl: &mut String, previous: Option<&str>, next: &str| {
+        let Some(previous) = previous else { return };
+        if dsl_rules < 3 {
+            return;
+        }
+        let spaced = dsl.ends_with(char::is_whitespace);
+        if spaced && !ends_with_continued_break(previous) {
+            return;
+        }
+        let space = if spaced { " " } else { "" };
+        if !glued(&format!("{previous}{space}"), next) {
+            return;
+        }
+        if next.starts_with("^{") && !ends_with_continued_break(previous) {
+            dsl.push(' ');
+        } else {
+            dsl.truncate(dsl.trim_end().len());
+            dsl.push('|');
+        }
+    };
 
     for segment in segments {
         match segment {
             Segment::Word { dsl_content, .. } => {
+                if last_was_linebreak && dsl_rules >= 2 {
+                    dsl.push('\n');
+                }
                 // Only add space if there was whitespace in the source XML
                 if pending_space && !last_was_linebreak {
                     dsl.push(' ');
                 }
+                separate(&mut dsl, previous, dsl_content);
                 dsl.push_str(dsl_content);
                 last_was_linebreak = false;
                 pending_space = false;
+                // A word without shorthand (an empty `<w>`) isn't a token
+                if !dsl_content.trim().is_empty() {
+                    previous = Some(dsl_content);
+                }
             }
             Segment::Punctuation { dsl_content, .. }
                 if dsl_rules >= 1 && is_entity_punctuation(dsl_content) =>
@@ -1313,35 +212,51 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 dsl.push_str(dsl_content);
                 last_was_linebreak = false;
                 pending_space = true;
+                previous = Some(dsl_content);
             }
             Segment::Punctuation { dsl_content, .. } => {
+                if last_was_linebreak && dsl_rules >= 2 {
+                    dsl.push('\n');
+                }
                 // Punctuation typically follows immediately after word (no space)
+                separate(&mut dsl, previous, dsl_content);
                 dsl.push_str(dsl_content);
                 last_was_linebreak = false;
                 pending_space = false;
+                previous = Some(dsl_content);
             }
             Segment::LineBreak { attributes, .. } => {
+                // After a word continued across a break, a break of its own
+                // is set apart (the word would run on across it)
+                if dsl_rules >= 3 && previous.is_some_and(ends_with_continued_break) {
+                    dsl.push('|');
+                }
                 // Line break on new line, then continue on same line
                 dsl.push('\n');
                 if let Some(n) = attributes.get("n") {
-                    dsl.push_str(&format!("//{}", n));
+                    dsl.push_str(&format!("//{}", break_number(n, false, dsl_rules)));
                 } else {
                     dsl.push_str("//");
                 }
                 dsl.push(' ');
                 last_was_linebreak = false;
                 pending_space = false;
+                previous = None;
             }
             Segment::PageBreak { attributes, .. } => {
+                if dsl_rules >= 3 && previous.is_some_and(ends_with_continued_break) {
+                    dsl.push('|');
+                }
                 // Page break: put on new line, no trailing newline (content follows)
                 dsl.push('\n');
                 if let Some(n) = attributes.get("n") {
-                    dsl.push_str(&format!("///{}", n));
+                    dsl.push_str(&format!("///{}", break_number(n, true, dsl_rules)));
                 } else {
                     dsl.push_str("///");
                 }
                 last_was_linebreak = true;
                 pending_space = false;
+                previous = None;
             }
             Segment::HandShift { .. } => {
                 // HandShift is preserved structurally, not shown in DSL
@@ -1354,6 +269,7 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 dsl.push_str(".p ");
                 last_was_linebreak = false;
                 pending_space = false;
+                previous = None;
             }
             Segment::Structural { .. } => {
                 // Skip structural elements in DSL output
