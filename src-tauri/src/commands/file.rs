@@ -31,6 +31,8 @@
 //! | 1.4 | Added original_preamble.xml and original_postamble.xml |
 //! | 1.5 | segments.json is always the full manifest (incl. `is_menota`, source spans) |
 //! | 1.6 | Paragraph start tags are `paragraph` segments (`.p` in the DSL); spans cover all tags |
+//! | 1.7 | `\` escapes a character and `#…#` is a numeral; older shorthand is escaped when opened |
+//! | 1.8 | segments.json holds the answers for replaced and deleted words (`decisions`) |
 //!
 //! All writes are atomic: data is written to a temporary file next to the target
 //! and renamed over it, so a crash mid-save never leaves a truncated file.
@@ -318,7 +320,7 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     // Create and write manifest.json
     let now = chrono_lite_now();
     let manifest = ProjectManifest {
-        version: "1.7".to_string(),
+        version: "1.8".to_string(),
         template_id,
         created: now.clone(),
         modified: now,
@@ -603,7 +605,7 @@ mod tests {
 
         assert_eq!(project.source, "//1 maþr");
         assert_eq!(project.output, "<TEI/>");
-        assert_eq!(project.manifest.version, "1.7");
+        assert_eq!(project.manifest.version, "1.8");
         assert_eq!(project.manifest.template_id, "menota");
         assert!(project.imported_document.unwrap().is_menota);
         assert_eq!(project.original_body_xml.as_deref(), Some("<body></body>"));

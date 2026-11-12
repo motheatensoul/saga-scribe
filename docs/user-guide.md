@@ -447,6 +447,8 @@ exported:
   (expansions `<ex>`, abbreviation marks `<am>`, editors' attributes, comments) stays with
   its text, a transcription level the edit cannot be placed in (such as a curated
   normalized form) is kept as it was, and no level the word did not have is added.
+- A word with a lemma or analysis that you edit, retype or delete is marked in the editor
+  until you say what happened to it (see [below](#replaced-and-deleted-words)).
 - Lemmas confirmed in Saga-Scribe are written into the words' `lemma` and `me:msa` (or
   `msa`) attributes; a changed normalized form is written into the word's `<me:norm>`.
   Removing a lemma removes these attributes.
@@ -456,6 +458,35 @@ exported:
   between elements such as sentences (`<s>`), not inside one.
 - If the shorthand contains an error, the document is not saved or exported, rather than
   written incomplete.
+
+### Replaced and deleted words
+
+How a word was changed in the editor says little about what was meant: a misread word is
+often fixed by selecting it and typing it again, which looks the same as putting another
+word in its place. So when a word of the imported file that has a lemma or an analysis is
+edited, Saga-Scribe asks whether it is still the same word. The line gets a mark in the
+editor's margin, and the word is underlined; pointing at it, or moving to it with **F8**,
+shows the question and its answers:
+
+- **Same word**: the word was corrected. It keeps its lemma, analysis and normalized form.
+- **Different word**: another word stands in its place. Its lemma, analysis and normalized
+  form are removed.
+
+Saga-Scribe suggests an answer: the same word if the old and new forms are alike, otherwise
+a different word. Until you answer, the file follows the suggestion. In both cases the
+transcription markup the shorthand does not show (such as expansions) stays with the text.
+A corrected word is marked lightly (an information mark), another word in its place more
+strongly (a warning). **Accept all suggestions** answers every open question with its
+suggestion at once, for instance after fixing a number of typos.
+
+A deleted word that had a lemma, an analysis or markup the shorthand does not show is
+marked where it was, with two answers: **Restore** puts it back into the shorthand (and so
+into the file, as it was), **Remove** confirms that it goes with its data.
+
+**Ctrl+Shift+M** lists all marks in a panel below the editor, with their answers, which can
+be chosen with the keyboard. The answers are saved with the project and can be given after
+saving and reopening it. An answered word keeps a faint dotted underline instead of the
+mark; pointing at it offers the other answer, so an answer can be changed later.
 
 ### Plain text
 
@@ -530,6 +561,8 @@ focus then returns to where it was, such as the word that opened the word panel.
 | Shift+F3 or Ctrl+Shift+G | Previous match                      |
 | Ctrl+D           | Select next occurrence of the selection     |
 | Alt+↑ / Alt+↓    | Move line up / down                         |
+| F8 / Shift+F8    | Next / previous mark (errors, replaced and deleted words) |
+| Ctrl+Shift+M     | List all marks, with their answers          |
 
 ### Folding
 

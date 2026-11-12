@@ -1,9 +1,9 @@
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
 use crate::identity::{numbers_by_key, renumbering, Guidance, Renumbering, Tracked};
-use crate::importer::tei::patching::{compiler_config_for, render_body, write_lemmas, Patcher};
+use crate::importer::tei::patching::{apply_decisions, compiler_config_for, render_body, write_lemmas, Patcher, WordRecord};
 use crate::importer::tei::apply::TreeSource;
-use crate::importer::tei::segments::ImportedDocument;
+use crate::importer::tei::segments::{Decision, ImportedDocument};
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping, WordKey};
 use crate::perf;
@@ -126,7 +126,7 @@ pub async fn compile_dsl(
                 ("xml_bytes", xml.len().into()),
             ],
         );
-        Ok(CompileOutput { xml, revision, renumbering: renumbered, edited_words: Vec::new() })
+        Ok(CompileOutput { xml, revision, renumbering: renumbered, edited_words: Vec::new(), records: Vec::new() })
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
@@ -256,6 +256,7 @@ pub async fn compile_imported(
     custom_mappings: Option<HashMap<String, String>>,
     lemma_mappings_json: Option<String>,
     guidance: Option<Guidance>,
+    decisions: Option<HashMap<usize, Decision>>,
     xml_base: Option<u64>,
     sent: State<'_, SentOutput>,
 ) -> Result<CompileReply, String> {
@@ -316,7 +317,8 @@ pub async fn compile_imported(
             compiler = compiler.with_dictionary(dict);
         }
 
-        let output = compile_imported_source(source, &mut compiler, &edited_dsl, guidance.as_ref(), lemmas)?;
+        let decisions = decisions.unwrap_or_default();
+        let output = compile_imported_source(source, &mut compiler, &edited_dsl, guidance.as_ref(), &decisions, lemmas)?;
         total.done(
             "compile_imported",
             [
@@ -342,6 +344,7 @@ pub(crate) fn compile_imported_source(
     compiler: &mut Compiler,
     edited_dsl: &str,
     guidance: Option<&Guidance>,
+    decisions: &HashMap<usize, Decision>,
     lemmas: HashMap<u32, LemmaMapping>,
 ) -> Result<CompileOutput, String> {
     // Compute patches between original segments and edited DSL, using the
@@ -350,8 +353,14 @@ pub(crate) fn compile_imported_source(
     let patcher = source.patcher.get_or_insert_with(|| {
         Patcher::new(&source.document.segments, source.document.dsl_rules)
     });
-    let (patches, state) = patcher.compute(edited_dsl, guidance)?;
+    let (mut patches, state) = patcher.compute(edited_dsl, guidance)?;
     timer.lap("compile.compute_patches", [("patches", patches.len().into())]);
+
+    // Replaced and deleted words, with the patcher's answers as suggestions;
+    // the editor's answers win
+    let records = patcher.records(&source.document.segments, &patches, &state, decisions, compiler);
+    apply_decisions(&source.document.segments, &mut patches, decisions);
+    timer.lap("compile.records", [("records", records.len().into())]);
 
     // Apply patches to the document's tree (made on the first edit: the
     // unedited document is the original body)
@@ -410,6 +419,7 @@ pub(crate) fn compile_imported_source(
         revision: patcher.revision(),
         renumbering: renumbered,
         edited_words: body.edited_word_indices(),
+        records,
         xml: format!("{}{}{}", source.preamble, body_xml, source.postamble),
     })
 }
@@ -430,6 +440,8 @@ pub struct CompileOutput {
     /// Words (by number, in document order) edited in the DSL whose lemma, msa
     /// and normalized form were kept from the original and should be reviewed
     pub edited_words: Vec<u32>,
+    /// Words of the original replaced or deleted in the DSL (imported documents)
+    pub records: Vec<WordRecord>,
 }
 
 /// What the frontend gets of a compile: the document whole, or only what
@@ -444,6 +456,7 @@ pub struct CompileReply {
     pub revision: u64,
     pub renumbering: Option<Renumbering>,
     pub edited_words: Vec<u32>,
+    pub records: Vec<WordRecord>,
 }
 
 /// A change to a document: `from..to` (in UTF-16 code units, as JavaScript
@@ -475,13 +488,14 @@ impl SentOutput {
             "compile.xml_delta",
             [("delta", delta.is_some().into()), ("insert_bytes", delta.as_ref().map_or(0, |d| d.insert.len()).into())],
         );
-        let CompileOutput { xml, revision, renumbering, edited_words } = output;
+        let CompileOutput { xml, revision, renumbering, edited_words, records } = output;
         let reply = CompileReply {
             xml: if delta.is_some() { None } else { Some(xml.clone()) },
             delta,
             revision,
             renumbering,
             edited_words,
+            records,
         };
         *last = Some((revision, xml));
         reply
@@ -630,7 +644,7 @@ mod tests {
     #[test]
     fn test_output_is_sent_as_a_change_only_to_the_output_the_frontend_holds() {
         let sent = SentOutput::default();
-        let output = |xml: &str, revision| CompileOutput { xml: xml.into(), revision, renumbering: None, edited_words: vec![] };
+        let output = |xml: &str, revision| CompileOutput { xml: xml.into(), revision, renumbering: None, edited_words: vec![], records: vec![] };
         // Nothing held yet: whole
         let first = sent.reply(output("<w>ok</w>", 1), Some(1));
         assert_eq!((first.xml.as_deref(), first.delta), (Some("<w>ok</w>"), None));
@@ -762,6 +776,7 @@ mod word_identity_tests {
 mod imported_identity_tests {
     use super::*;
     use crate::identity::TextChange;
+    use crate::importer::tei::patching::RecordKind;
 
     const TWO_OKS: &str = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="ok" me:msa="xCC"><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w> <w><choice><me:facs>maþr</me:facs><me:dipl>maþr</me:dipl><me:norm>maðr</me:norm></choice></w></p></body></text></TEI>"#;
 
@@ -801,7 +816,89 @@ mod imported_identity_tests {
                 (*n, mapping)
             })
             .collect();
-        compile_imported_source(source, &mut compiler, dsl, guidance.as_ref(), lemmas).unwrap()
+        compile_imported_source(source, &mut compiler, dsl, guidance.as_ref(), &HashMap::new(), lemmas).unwrap()
+    }
+
+    /// Compiles `dsl` as an edit of `from` (guided), with `decisions`.
+    fn compile_decided(source: &mut ImportedSource, from: &str, dsl: &str, decisions: &[(usize, Decision)]) -> CompileOutput {
+        let prefix = from.chars().zip(dsl.chars()).take_while(|(a, b)| a == b).count();
+        let suffix = from[prefix..].chars().rev().zip(dsl[prefix..].chars().rev()).take_while(|(a, b)| a == b).count();
+        let utf16 = |s: &str, chars: usize| s.chars().take(chars).map(char::len_utf16).sum::<usize>();
+        let (from_len, dsl_len) = (from.chars().count(), dsl.chars().count());
+        let change = crate::identity::TextChange {
+            from_a: utf16(from, prefix),
+            to_a: utf16(from, from_len - suffix),
+            from_b: utf16(dsl, prefix),
+            to_b: utf16(dsl, dsl_len - suffix),
+        };
+        let guidance = Guidance { base_revision: source.patcher.as_ref().map_or(0, |p| p.revision()), changes: vec![change] };
+        let mut compiler = Compiler::new().with_config(compiler_config_for(&source.document));
+        let decisions: HashMap<usize, Decision> = decisions.iter().copied().collect();
+        compile_imported_source(source, &mut compiler, dsl, Some(&guidance), &decisions, HashMap::new()).unwrap()
+    }
+
+    #[test]
+    fn test_corrected_word_is_a_record_suggested_as_the_same_word() {
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[]);
+        let edited = dsl.replacen("ok", "okk", 1);
+        let out = compile_decided(&mut source, &dsl, &edited, &[]);
+        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
+        assert_eq!((record.kind, record.suggestion, record.decision), (RecordKind::Replaced, Decision::Same, None));
+        assert_eq!(&edited[record.from..record.to], "okk");
+        assert_eq!((record.was.as_str(), record.lemma.as_deref(), record.msa.as_deref()), ("ok", Some("ok"), Some("xCC")));
+        assert!(out.xml.contains(r#"<w lemma="ok" me:msa="xCC">"#), "{}", out.xml);
+        // Answered as another word, it loses its lemma, analysis and normalized form
+        let out = compile_decided(&mut source, &edited, &edited, &[(record.key, Decision::Different)]);
+        assert_eq!(out.records[0].decision, Some(Decision::Different));
+        assert!(!out.xml.contains("lemma=\"ok\"") && out.xml.contains("<me:facs>okk</me:facs>"), "{}", out.xml);
+    }
+
+    #[test]
+    fn test_retyped_other_word_is_suggested_as_different_and_can_be_kept() {
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[]);
+        let edited = dsl.replacen("ok", "þá", 1);
+        let out = compile_decided(&mut source, &dsl, &edited, &[]);
+        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
+        assert_eq!((record.kind, record.suggestion), (RecordKind::Replaced, Decision::Different));
+        assert!(!out.xml.contains("lemma=\"ok\""), "{}", out.xml);
+        let out = compile_decided(&mut source, &edited, &edited, &[(record.key, Decision::Same)]);
+        assert!(out.xml.contains(r#"<w lemma="ok" me:msa="xCC">"#) && out.xml.contains("þá"), "{}", out.xml);
+        // A word without a lemma has nothing to lose: no record
+        let edited2 = edited.replacen("maþr", "maðr", 1);
+        let out = compile_decided(&mut source, &edited, &edited2, &[(record.key, Decision::Same)]);
+        assert_eq!(out.records.len(), 1, "{:?}", out.records);
+    }
+
+    #[test]
+    fn test_deleted_word_is_a_record_where_it_was() {
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[]);
+        let edited = dsl.replacen("ok ", "", 1);
+        let out = compile_decided(&mut source, &dsl, &edited, &[]);
+        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
+        assert_eq!((record.kind, record.suggestion, record.from, record.to), (RecordKind::Removed, Decision::Removed, 2, 2));
+        let out = compile_decided(&mut source, &edited, &edited, &[(record.key, Decision::Removed)]);
+        assert_eq!(out.records[0].decision, Some(Decision::Removed));
+        // An answer of the wrong kind doesn't count
+        let out = compile_decided(&mut source, &edited, &edited, &[(record.key, Decision::Same)]);
+        assert_eq!(out.records[0].decision, None);
+    }
+
+    #[test]
+    fn test_restored_word_is_the_original_again() {
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[]);
+        let edited = dsl.replacen(" ok", "", 1);
+        let out = compile_decided(&mut source, &dsl, &edited, &[]);
+        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
+        // As the editor's Restore does (records.ts): set apart after the word before
+        let restored = format!("{} {}{}", &edited[..record.from], record.was, &edited[record.from..]);
+        assert_eq!(restored, dsl);
+        let out = compile_decided(&mut source, &edited, &restored, &[]);
+        assert!(out.records.is_empty(), "{:?}", out.records);
+        assert_eq!(out.xml, TWO_OKS);
     }
 
     #[test]
@@ -906,9 +1003,10 @@ mod imported_identity_tests {
     fn test_another_word_in_place_of_one_is_a_new_word() {
         let (mut source, dsl) = open(TWO_OKS);
         compile(&mut source, &dsl, None, &[(0, "ok", "xCC")]);
-        // "ok" (lemma ok) replaced with "geck": nothing of "ok" carries over
+        // "ok" (lemma ok) replaced with "geck": the word's data doesn't
+        // carry over (its transcription markup would follow the text)
         let out = replace_word(&mut source, &dsl, "ok", "geck", &[(0, "ok", "xCC")]);
-        assert!(out.xml.contains("<w>\n  <choice>\n    <me:facs>geck</me:facs>"), "{}", out.xml);
+        assert!(out.xml.contains("<w><choice><me:facs>geck</me:facs>"), "{}", out.xml);
         assert!(out.xml.contains("<me:norm>geck</me:norm>"), "{}", out.xml);
         assert!(!out.xml.contains(r#"lemma="ok""#), "{}", out.xml);
         assert!(out.edited_words.is_empty());

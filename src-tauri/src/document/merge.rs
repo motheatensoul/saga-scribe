@@ -94,6 +94,30 @@ pub fn merge_word_edit(word_xml: &str, old_compiled: &str, new_compiled: &str) -
     Some(MergedWord { xml: word.node_xml(w).ok()?, kept_levels, removed })
 }
 
+/// `word_xml` (an edited word, merged) made another word: without the
+/// lemma and analysis of the word it replaced, and with the normalized form
+/// of `new_compiled` (none, if that has none) instead of its own. Its other
+/// attributes, levels and markup stay. `None` if the fragments can't be read.
+pub fn as_different_word(word_xml: &str, new_compiled: &str) -> Option<String> {
+    let (mut word, w) = parse_word(word_xml)?;
+    let (new, new_w) = parse_word(new_compiled)?;
+    for name in ["lemma", "me:msa", "msa"] {
+        word.set_attribute(w, name, None).ok()?;
+    }
+    let find = |tree: &Tree, w: NodeId| levels(tree, w).into_iter().find(|(name, _)| name == "norm").map(|(_, id)| id);
+    if let Some(norm) = find(&word, w) {
+        for child in word.children(norm).to_vec() {
+            word.remove(child);
+        }
+        if let Some(new_norm) = find(&new, new_w) {
+            for (i, &child) in new.children(new_norm).iter().enumerate() {
+                word.graft(&new, child, norm, i);
+            }
+        }
+    }
+    word.node_xml(w).ok()
+}
+
 /// The name of a word's own content when it has no levels.
 const CONTENT: &str = "content";
 

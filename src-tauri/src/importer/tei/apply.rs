@@ -367,11 +367,13 @@ pub(super) fn apply_to_tree(
                                 Anchor::After(node)
                             }
                             _ => {
-                                let xml = if *fresh {
+                                // Another word in its place keeps the
+                                // transcription markup that follows the text
+                                let xml = if *fresh && !keeps_word_data(segment, new_dsl) {
                                     render_insert(new_dsl, compiler)
                                 } else {
                                     let original = applier.tree.node_xml(node).ok()?;
-                                    render_modify(segment, Some(&original), new_dsl, compiler)
+                                    render_modify(segment, Some(&original), new_dsl, !fresh, compiler)
                                 };
                                 let parent = applier.tree.parent(node)?;
                                 let index = applier.tree.index_in_parent(node)?;

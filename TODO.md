@@ -25,9 +25,11 @@ when it is done (and record it in CHANGELOG.md if users notice).
   the shorthand doesn't show), and the shorthand of all 288 Menota files reads as their
   words token for token (DSL rules 3 and 4, 2026-11-12), which 3b needs. The 3b gates
   (GetPut, PutGet, Locality: `corpus_edits_are_put_back_locally`) pass, and edits are
-  applied to the file's tree instead of spliced into its text (2026-11-12). **Next in 3b:**
-  the patcher pairing tokens with tree nodes instead of segments, and replaced/removed word
-  records (see the steps in the design). It comes before the
+  applied to the file's tree instead of spliced into its text (2026-11-12). Replaced and deleted
+  words are asked about in the editor (first version, 2026-11-12). **Next in 3b:** the
+  patcher pairing tokens with tree nodes instead of segments; the rest of the records
+  (listed in the design under 3b: word panel, previews, Validate, count on saving,
+  annotations, moved words). The look of the gutter mark is to be checked with testers. It comes before the
   shorthand redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).

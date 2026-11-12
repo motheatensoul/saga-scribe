@@ -134,6 +134,34 @@ export interface ImportedDocument {
   spans?: ([number, number] | null)[];
   /** DSL rules version the document was imported with (absent: 0) */
   dsl_rules?: number;
+  /** The editor's answers for replaced and deleted words, by the original word's segment id */
+  decisions?: Record<number, Decision>;
+}
+
+/**
+ * The answer for a word of the original replaced or deleted in the DSL:
+ * the same word corrected (keeps lemma, analysis, normalized form), another
+ * word in its place (loses them), or a deleted word that stays deleted.
+ */
+export type Decision = "same" | "different" | "removed";
+
+/** A word of the original that the edited DSL replaces or deletes, with what it would lose. */
+export interface WordRecord {
+  /** The original word's segment id; decisions are kept by it */
+  key: number;
+  kind: "replaced" | "removed";
+  /** The answer the XML follows until the editor decides */
+  suggestion: Decision;
+  decision: Decision | null;
+  /** Where it is in the DSL that was compiled (UTF-16): the new word, or where the deleted one was */
+  from: number;
+  to: number;
+  /** Its shorthand */
+  was: string;
+  lemma: string | null;
+  msa: string | null;
+  /** Elements in it the shorthand doesn't show (deleted words) */
+  hidden: string[];
 }
 
 export interface ImportResult {
@@ -288,6 +316,8 @@ export interface CompileResult {
    * form were kept from the original and should be reviewed
    */
   editedWords: number[];
+  /** Words of the original replaced or deleted in the DSL (imported documents) */
+  records: WordRecord[];
 }
 
 /** Compiles edited DSL against the document loaded with {@link setImportedDocument}. */
@@ -296,6 +326,7 @@ export async function compileImported(
   options?: CompileImportedOptions,
   guidance?: CompileGuidance,
   xmlBase?: number,
+  decisions?: Record<number, Decision>,
 ): Promise<CompileResult> {
   return invoke("compile_imported", {
     editedDsl,
@@ -305,6 +336,7 @@ export async function compileImported(
     customMappings: options?.customMappings ?? null,
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     guidance: guidance ?? null,
+    decisions: decisions ?? null,
     xmlBase: xmlBase ?? null,
   });
 }

@@ -20,7 +20,7 @@ mod project;
 mod tree;
 mod write;
 
-pub use merge::merge_word_edit;
+pub use merge::{as_different_word, merge_word_edit};
 pub use project::{find_body, project_body};
 pub use tree::{Element, NodeId, NodeKind, Tree};
 pub use write::Piece;

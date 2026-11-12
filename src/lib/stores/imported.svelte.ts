@@ -2,8 +2,10 @@ import {
   compileImported,
   setImportedDocument,
   type CompileImportedOptions,
+  type Decision,
   type ImportedDocument,
   type Segment,
+  type WordRecord,
 } from "$lib/tauri";
 import { compileSession } from "$lib/stores/compileSession";
 
@@ -18,6 +20,7 @@ export interface ImportedState {
   backMatter: string;
   isMenota: boolean;
   dslRules: number;
+  decisions: Record<number, Decision>;
 }
 
 class ImportedStore {
@@ -37,6 +40,12 @@ class ImportedStore {
    * normalized form; updated by every compile
    */
   editedWords = $state<ReadonlySet<number>>(new Set());
+  /** Words of the original replaced or deleted in the DSL, from the last compile */
+  records = $state<WordRecord[]>([]);
+  /** The editor's answers for them, by the original word's key; saved with the manifest */
+  decisions = $state<Record<number, Decision>>({});
+  /** Called after an answer changes, to compile with it (set by the page) */
+  onDecided: (() => void) | null = null;
 
   /**
    * Backend session updates, chained so they apply in call order: a quick
@@ -53,6 +62,8 @@ class ImportedStore {
   reset() {
     this.isImportedMode = false;
     this.editedWords = new Set();
+    this.records = [];
+    this.decisions = {};
     compileSession.reset();
     this.segments = [];
     this.spans = undefined;
@@ -69,6 +80,8 @@ class ImportedStore {
   load(data: Partial<ImportedState>) {
     this.isImportedMode = true;
     this.editedWords = new Set();
+    this.records = [];
+    this.decisions = { ...(data.decisions ?? {}) };
     compileSession.reset();
     if (data.segments) this.segments = data.segments;
     this.spans = data.spans ?? undefined;
@@ -94,8 +107,24 @@ class ImportedStore {
       is_menota: this.isMenota,
       dsl_rules: this.dslRules,
       spans: this.spans,
+      decisions: this.decisions,
     };
     return JSON.stringify(manifest);
+  }
+
+  /** Answers for the original word `key`, and compiles with the answer. */
+  decide(key: number, decision: Decision) {
+    this.decisions = { ...this.decisions, [key]: decision };
+    this.onDecided?.();
+  }
+
+  /** Answers several open records with their suggestions. */
+  acceptSuggestions(records: WordRecord[]) {
+    if (records.length === 0) return;
+    const decisions = { ...this.decisions };
+    for (const record of records) decisions[record.key] = record.suggestion;
+    this.decisions = decisions;
+    this.onDecided?.();
   }
 
   /**
@@ -110,9 +139,10 @@ class ImportedStore {
     const result = await compileSession.run(editedDsl, async (guidance, xmlBase) => {
       // Make sure the backend holds this document (rejects if loading it failed)
       await this.backendSync;
-      return compileImported(editedDsl, options(), guidance, xmlBase);
+      return compileImported(editedDsl, options(), guidance, xmlBase, this.decisions);
     });
     this.editedWords = new Set(result.editedWords);
+    this.records = result.records ?? [];
     return result.xml;
   }
 }

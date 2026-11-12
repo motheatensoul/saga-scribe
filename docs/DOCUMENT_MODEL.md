@@ -320,9 +320,19 @@ text).
      instead of spliced into the text: a word is replaced by its merged version, a deleted
      word goes with the elements it leaves empty, `.p` splits or merges `<p>` elements, and
      the tree's writer copies everything else. The tree's nodes are shared between copies
-     (copy on write), so each compile copies only what it changes. Left: the patcher still
-     works on segments (the tree should replace them, which also halves the memory a
-     session holds), and replaced and removed words aren't kept as records yet.
+     (copy on write), so each compile copies only what it changes.
+     Then the records, first version: each compile reports the original words with a lemma
+     or analysis that the shorthand replaces, and the deleted ones with a lemma, analysis
+     or hidden markup (`Patcher::records`), with the patcher's answer as the suggestion.
+     The editor shows open ones as lint marks with a gutter mark and quick fixes
+     (`src/lib/editor/records.ts`); answers are kept by the original word's segment ID in
+     the manifest (`.teis` 1.8) and override the suggestion (`apply_decisions`). Left:
+     the patcher still works on segments (the tree should replace them, which also halves
+     the memory a session holds); records keep only the old word's shorthand and data, not
+     its whole XML, so a word that answered "Different" can't get its lemma back except by
+     answering again; the word panel, the previews and Validate don't show records yet;
+     saving doesn't say how many are open; annotations other than lemmas aren't counted as
+     data a word loses; cut and paste isn't offered as a moved word.
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
    and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,
    shorthand in `<…>`) brought that from 94 to all 288 files. Gate:

@@ -122,6 +122,8 @@
     let currentMetadata = $state<Metadata | undefined>(undefined);
 
     onMount(async () => {
+        // An answer for a replaced or deleted word is applied by compiling
+        importedStore.onDecided = () => void compileNow();
         ({ normalizerJson, entityMappingsJson } = await loadAppResources());
     });
 
@@ -410,6 +412,7 @@
             originalPostamble: postamble,
             isMenota: document.is_menota ?? false,
             dslRules: document.dsl_rules ?? 0,
+            decisions: document.decisions ?? {},
         });
         preservationStore.setSections({ preamble, postamble });
         return true;

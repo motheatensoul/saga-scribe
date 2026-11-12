@@ -126,6 +126,26 @@ pub struct ImportedDocument {
     /// 0 for documents imported before rules were versioned.
     #[serde(default)]
     pub dsl_rules: u32,
+    /// The editor's answers for words replaced or deleted in the shorthand,
+    /// by the segment ID of the original word (see `patching::WordRecord`).
+    /// Kept by the frontend, and saved with the manifest (`.teis` 1.8).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub decisions: HashMap<usize, Decision>,
+}
+
+/// The editor's answer for a word of the original that was replaced or
+/// deleted in the shorthand (`docs/DOCUMENT_MODEL.md`, "Replacing and
+/// deleting words").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Decision {
+    /// The same word, corrected: it keeps its lemma, analysis and normalized form
+    Same,
+    /// Another word in its place: those are removed (its markup still
+    /// follows the text)
+    Different,
+    /// A deleted word stays deleted
+    Removed,
 }
 
 /// Version of the rules for writing imported XML as DSL. Documents keep the
@@ -169,6 +189,7 @@ impl ImportedDocument {
             is_menota,
             spans: None,
             dsl_rules: 0,
+            decisions: HashMap::new(),
         })
     }
 }

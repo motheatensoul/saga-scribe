@@ -118,6 +118,7 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
         is_menota,
         spans,
         dsl_rules: DSL_RULES,
+        decisions: Default::default(),
     };
 
     // Trim output to avoid massive trailing/leading whitespace
