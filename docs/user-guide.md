@@ -447,8 +447,8 @@ exported:
   (expansions `<ex>`, abbreviation marks `<am>`, editors' attributes, comments) stays with
   its text, a transcription level the edit cannot be placed in (such as a curated
   normalized form) is kept as it was, and no level the word did not have is added.
-- A word with a lemma or analysis that you edit, retype or delete is marked in the editor
-  until you say what happened to it (see [below](#replaced-and-deleted-words)).
+- A word with a lemma or analysis that you replace with another word is marked until you
+  say in the word panel whether it is the same word (see [below](#replaced-words)).
 - Lemmas confirmed in Saga-Scribe are written into the words' `lemma` and `me:msa` (or
   `msa`) attributes; a changed normalized form is written into the word's `<me:norm>`.
   Removing a lemma removes these attributes.
@@ -459,34 +459,30 @@ exported:
 - If the shorthand contains an error, the document is not saved or exported, rather than
   written incomplete.
 
-### Replaced and deleted words
+### Replaced words
 
 How a word was changed in the editor says little about what was meant: a misread word is
 often fixed by selecting it and typing it again, which looks the same as putting another
 word in its place. So when a word of the imported file that has a lemma or an analysis is
-edited, Saga-Scribe asks whether it is still the same word. The line gets a mark in the
-editor's margin, and the word is underlined; pointing at it, or moving to it with **F8**,
-shows the question and its answers:
+replaced in the editor, Saga-Scribe asks whether it is still the same word. The word gets
+a wavy underline in the editor and in the Text and XSLT views. Click it in a view to open
+the word panel. The **Lemmatize** tab names the word it replaced and that word's lemma,
+with two buttons:
 
-- **Same word**: the word was corrected. It keeps its lemma, analysis and normalized form.
-- **Different word**: another word stands in its place. Its lemma, analysis and normalized
-  form are removed.
+- **Keep the old lemma**: the word was corrected. It keeps its lemma, analysis and
+  normalized form.
+- **Set a new lemma**: another word stands in its place. Its lemma, analysis and normalized
+  form are removed, and a new lemma can be chosen below.
 
-Saga-Scribe suggests an answer: the same word if the old and new forms are alike, otherwise
-a different word. Until you answer, the file follows the suggestion. In both cases the
-transcription markup the shorthand does not show (such as expansions) stays with the text.
-A corrected word is marked lightly (an information mark), another word in its place more
-strongly (a warning). **Accept all suggestions** answers every open question with its
-suggestion at once, for instance after fixing a number of typos.
+Choosing a lemma for the word in the panel answers the question as well. Saga-Scribe
+suggests an answer, and until you choose, the file follows it: the old word's lemma is kept
+if the old and new forms are alike, and removed otherwise. In both cases the transcription
+markup the shorthand does not show (such as expansions) stays with the text. Once
+answered, the wavy line goes away, and the panel still offers the other answer. The
+answers are saved with the project.
 
-A deleted word that had a lemma, an analysis or markup the shorthand does not show is
-marked where it was, with two answers: **Restore** puts it back into the shorthand (and so
-into the file, as it was), **Remove** confirms that it goes with its data.
-
-**Ctrl+Shift+M** lists all marks in a panel below the editor, with their answers, which can
-be chosen with the keyboard. The answers are saved with the project and can be given after
-saving and reopening it. An answered word keeps a faint dotted underline instead of the
-mark; pointing at it offers the other answer, so an answer can be changed later.
+A deleted word is not asked about: it is removed with its lemma, and **Undo** brings it
+back.
 
 ### Plain text
 
@@ -561,8 +557,6 @@ focus then returns to where it was, such as the word that opened the word panel.
 | Shift+F3 or Ctrl+Shift+G | Previous match                      |
 | Ctrl+D           | Select next occurrence of the selection     |
 | Alt+↑ / Alt+↓    | Move line up / down                         |
-| F8 / Shift+F8    | Next / previous mark (errors, replaced and deleted words) |
-| Ctrl+Shift+M     | List all marks, with their answers          |
 
 ### Folding
 

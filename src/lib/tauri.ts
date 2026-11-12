@@ -134,34 +134,33 @@ export interface ImportedDocument {
   spans?: ([number, number] | null)[];
   /** DSL rules version the document was imported with (absent: 0) */
   dsl_rules?: number;
-  /** The editor's answers for replaced and deleted words, by the original word's segment id */
+  /** The editor's answers for replaced words, by the original word's segment id */
   decisions?: Record<number, Decision>;
 }
 
 /**
- * The answer for a word of the original replaced or deleted in the DSL:
- * the same word corrected (keeps lemma, analysis, normalized form), another
- * word in its place (loses them), or a deleted word that stays deleted.
+ * The answer for a word of the original replaced by another word in the DSL:
+ * the same word corrected (keeps lemma, analysis, normalized form), or
+ * another word in its place (loses them).
  */
-export type Decision = "same" | "different" | "removed";
+export type Decision = "same" | "different";
 
-/** A word of the original that the edited DSL replaces or deletes, with what it would lose. */
+/** A word of the original that the edited DSL replaces, with the lemma and analysis it would lose. */
 export interface WordRecord {
   /** The original word's segment id; decisions are kept by it */
   key: number;
-  kind: "replaced" | "removed";
   /** The answer the XML follows until the editor decides */
   suggestion: Decision;
   decision: Decision | null;
-  /** Where it is in the DSL that was compiled (UTF-16): the new word, or where the deleted one was */
+  /** The new word's number in the compiled text (as the previews count), if it is a <w> */
+  word: number | null;
+  /** Where the new word is in the DSL that was compiled (UTF-16) */
   from: number;
   to: number;
-  /** Its shorthand */
+  /** The old word's shorthand */
   was: string;
   lemma: string | null;
   msa: string | null;
-  /** Elements in it the shorthand doesn't show (deleted words) */
-  hidden: string[];
 }
 
 export interface ImportResult {
@@ -316,7 +315,7 @@ export interface CompileResult {
    * form were kept from the original and should be reviewed
    */
   editedWords: number[];
-  /** Words of the original replaced or deleted in the DSL (imported documents) */
+  /** Words of the original replaced by others in the DSL (imported documents) */
   records: WordRecord[];
 }
 

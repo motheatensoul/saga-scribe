@@ -36,12 +36,19 @@ class ImportedStore {
   /** DSL rules version the document was imported with; kept so its DSL still matches */
   dslRules = $state(0);
   /**
-   * Words edited since import that kept the original's lemma, analysis and
-   * normalized form; updated by every compile
+   * Words to check since import: edited ones that kept the original's
+   * lemma, analysis and normalized form, and replaced ones not yet answered
+   * (an answered word is checked); updated by every compile
    */
   editedWords = $state<ReadonlySet<number>>(new Set());
-  /** Words of the original replaced or deleted in the DSL, from the last compile */
+  /** Words of the original replaced by others in the DSL, from the last compile */
   records = $state<WordRecord[]>([]);
+  /** The DSL the records were compiled from (their positions are in it) */
+  recordsDsl = $state("");
+  /** The records by the new word's number, for the word panel */
+  recordByWord = $derived(
+    new Map(this.records.filter((r) => r.word !== null).map((r) => [r.word as number, r])),
+  );
   /** The editor's answers for them, by the original word's key; saved with the manifest */
   decisions = $state<Record<number, Decision>>({});
   /** Called after an answer changes, to compile with it (set by the page) */
@@ -63,6 +70,7 @@ class ImportedStore {
     this.isImportedMode = false;
     this.editedWords = new Set();
     this.records = [];
+    this.recordsDsl = "";
     this.decisions = {};
     compileSession.reset();
     this.segments = [];
@@ -81,6 +89,7 @@ class ImportedStore {
     this.isImportedMode = true;
     this.editedWords = new Set();
     this.records = [];
+    this.recordsDsl = "";
     this.decisions = { ...(data.decisions ?? {}) };
     compileSession.reset();
     if (data.segments) this.segments = data.segments;
@@ -118,15 +127,6 @@ class ImportedStore {
     this.onDecided?.();
   }
 
-  /** Answers several open records with their suggestions. */
-  acceptSuggestions(records: WordRecord[]) {
-    if (records.length === 0) return;
-    const decisions = { ...this.decisions };
-    for (const record of records) decisions[record.key] = record.suggestion;
-    this.decisions = decisions;
-    this.onDecided?.();
-  }
-
   /**
    * Compiles the edited DSL into the original document (in turn, see
    * compileSession). `options` is called when the compile is made, so that
@@ -141,10 +141,26 @@ class ImportedStore {
       await this.backendSync;
       return compileImported(editedDsl, options(), guidance, xmlBase, this.decisions);
     });
-    this.editedWords = new Set(result.editedWords);
-    this.records = result.records ?? [];
+    const records = result.records ?? [];
+    this.editedWords = wordsToCheck(result.editedWords, records);
+    this.records = records;
+    this.recordsDsl = editedDsl;
     return result.xml;
   }
+}
+
+/**
+ * The words to check: those edited that kept the original's data (`edited`),
+ * and replaced ones until answered.
+ */
+export function wordsToCheck(edited: readonly number[], records: readonly WordRecord[]): Set<number> {
+  const words = new Set(edited);
+  for (const record of records) {
+    if (record.word === null) continue;
+    if (record.decision === null) words.add(record.word);
+    else words.delete(record.word);
+  }
+  return words;
 }
 
 export const importedStore = new ImportedStore();

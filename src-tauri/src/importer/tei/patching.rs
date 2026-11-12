@@ -259,84 +259,52 @@ impl Patcher {
     }
 
     /// The words of the original that `patches` (as [`compute`](Self::compute)
-    /// made them, for the DSL tracked in `state`) replace or delete and that
-    /// have something to lose: a lemma or analysis, or (deleted) markup the
-    /// shorthand doesn't show. Each has the patcher's answer as its
-    /// suggestion, and the editor's from `decisions` if there is one.
+    /// made them, for the DSL tracked in `state`) replace with another word
+    /// and that have something to lose: a lemma or an analysis. Each has the
+    /// patcher's answer as its suggestion, and the editor's from `decisions`
+    /// if there is one. Their word numbers are filled in by
+    /// [`WordRecord::number`] once the body is written.
+    ///
+    /// Deleted words aren't asked about: they have no word in the text that
+    /// the word panel could be opened on, and deleting is undone in the
+    /// editor.
     pub fn records(
         &self,
         segments: &[Segment],
         patches: &[PatchOperation],
         state: &Tracked,
         decisions: &HashMap<usize, Decision>,
-        compiler: &mut Compiler,
     ) -> Vec<WordRecord> {
         let segment = |id: usize| segments.get(id).filter(|s| s.id() == id).or_else(|| segments.iter().find(|s| s.id() == id));
-        // The original tokens still there, in order: (original token, end in the DSL)
-        let original_count = self.original.tokens.len() as u64;
-        let kept: Vec<(usize, usize)> = state
-            .ids
-            .iter()
-            .zip(&state.spans)
-            .filter(|(&id, _)| id < original_count)
-            .map(|(&id, span)| (id as usize, span.end))
-            .collect();
         let mut records = Vec::new();
         for patch in patches {
-            let (segment_id, place, suggestion) = match patch {
-                PatchOperation::Modify { segment_id, new_dsl, token: Some(j), fresh } => {
-                    let Some(seg) = segment(*segment_id) else { continue };
-                    let Some(span) = state.spans.get(*j) else { continue };
-                    if !keeps_word_data(seg, new_dsl) {
-                        // A word replaced by something else (punctuation, a break) is deleted
-                        (*segment_id, span.start..span.start, Decision::Removed)
-                    } else {
-                        (*segment_id, span.clone(), if *fresh { Decision::Different } else { Decision::Same })
-                    }
-                }
-                PatchOperation::Delete { segment_id } => {
-                    // Where it was: after the last original token before it
-                    let Some(&token) = self.token_of_segment.get(segment_id) else { continue };
-                    let before = kept.partition_point(|&(i, _)| i < token);
-                    let at = before.checked_sub(1).map_or(0, |k| kept[k].1);
-                    (*segment_id, at..at, Decision::Removed)
-                }
-                _ => continue,
-            };
-            let Some(Segment::Word { original_xml, attributes, dsl_content, .. }) = segment(segment_id) else { continue };
-            if !is_w_element(original_xml) {
+            let PatchOperation::Modify { segment_id, new_dsl, token: Some(j), fresh } = patch else { continue };
+            let Some(span) = state.spans.get(*j) else { continue };
+            let Some(seg @ Segment::Word { original_xml, attributes, dsl_content, .. }) = segment(*segment_id) else { continue };
+            // A word replaced by something else (punctuation, a break) is deleted
+            if !is_w_element(original_xml) || !keeps_word_data(seg, new_dsl) {
                 continue;
             }
             let lemma = attributes.get("lemma").cloned();
             let msa = attributes.get("me:msa").or_else(|| attributes.get("msa")).cloned();
+            if lemma.is_none() && msa.is_none() {
+                continue;
+            }
             let was = match parse_dsl_to_tokens(dsl_content).as_deref() {
                 Ok([token]) => token.clone(),
                 _ => dsl_content.trim().to_string(),
             };
-            let hidden = if suggestion == Decision::Removed {
-                hidden_markup(original_xml, &compiler.compile_word_from_dsl(&was, attributes, None))
-            } else {
-                Vec::new()
-            };
-            if lemma.is_none() && msa.is_none() && hidden.is_empty() {
-                continue;
-            }
-            let removed = suggestion == Decision::Removed;
-            let decision = decisions
-                .get(&segment_id)
-                .copied()
-                .filter(|d| (*d == Decision::Removed) == removed);
             records.push(WordRecord {
-                key: segment_id,
-                kind: if removed { RecordKind::Removed } else { RecordKind::Replaced },
-                suggestion,
-                decision,
-                from: place.start,
-                to: place.end,
+                key: *segment_id,
+                suggestion: if *fresh { Decision::Different } else { Decision::Same },
+                decision: decisions.get(segment_id).copied(),
+                word: None,
+                token: state.ids.get(*j).copied(),
+                from: span.start,
+                to: span.end,
                 was,
                 lemma,
                 msa,
-                hidden,
             });
         }
         // Byte offsets in the DSL to UTF-16 (the editor's)
@@ -372,7 +340,7 @@ pub fn apply_decisions(segments: &[Segment], patches: &mut [PatchOperation], dec
             let same = match decisions.get(segment_id) {
                 Some(Decision::Same) => true,
                 Some(Decision::Different) => false,
-                _ => continue,
+                None => continue,
             };
             let segment = segments.get(*segment_id).filter(|s| s.id() == *segment_id);
             if segment.is_some_and(|s| keeps_word_data(s, new_dsl)) {
@@ -382,62 +350,54 @@ pub fn apply_decisions(segments: &[Segment], patches: &mut [PatchOperation], dec
     }
 }
 
-/// The names of the elements in `word_xml` that the shorthand doesn't show:
-/// those it has more of than `compiled`, its shorthand compiled.
-fn hidden_markup(word_xml: &str, compiled: &str) -> Vec<String> {
-    let counts = |xml: &str| -> Option<HashMap<String, usize>> {
-        let wrapped = format!(
-            "<saga-scribe-word xmlns=\"http://www.tei-c.org/ns/1.0\" xmlns:me=\"http://www.menota.org/ns/1.0\">{xml}</saga-scribe-word>"
-        );
-        let tree = crate::document::Tree::parse(&wrapped).ok()?;
-        let mut counts = HashMap::new();
-        for id in tree.descendants(tree.root_element()?).into_iter().skip(1) {
-            if let Some(element) = tree.element(id) {
-                *counts.entry(element.name.clone()).or_default() += 1;
-            }
-        }
-        Some(counts)
-    };
-    let (Some(original), Some(shown)) = (counts(word_xml), counts(compiled)) else { return Vec::new() };
-    let mut hidden: Vec<String> = original
-        .into_iter()
-        .filter(|(name, n)| shown.get(name).copied().unwrap_or(0) < *n)
-        .map(|(name, _)| name)
-        .collect();
-    hidden.sort();
-    hidden
-}
-
-/// What became of a replaced or deleted word.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum RecordKind {
-    Replaced,
-    Removed,
-}
-
-/// A word of the original that the edited shorthand replaces or deletes,
-/// with what it would lose (`docs/DOCUMENT_MODEL.md`, "Replacing and
-/// deleting words"). Open until the editor decides.
+/// A word of the original that the edited shorthand replaces with another
+/// word, with the lemma and analysis it would lose (`docs/DOCUMENT_MODEL.md`,
+/// "Replacing and deleting words"). Open until the editor decides, in the
+/// word panel.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WordRecord {
     /// The segment ID of the original word: what decisions are kept by
     pub key: usize,
-    pub kind: RecordKind,
     /// The patcher's answer, which the XML follows until the editor decides
     pub suggestion: Decision,
     pub decision: Option<Decision>,
-    /// Where it is in the edited DSL (UTF-16): the new word, or the point
-    /// where the deleted word was
+    /// The new word's number in the compiled body (the n-th `<w>`, as the
+    /// previews count), which the word panel is opened by
+    pub word: Option<usize>,
+    /// The new word's token ID (`Tracked::ids`)
+    #[serde(skip)]
+    pub token: Option<u64>,
+    /// Where the new word is in the edited DSL (UTF-16)
     pub from: usize,
     pub to: usize,
-    /// Its shorthand
+    /// The old word's shorthand
     pub was: String,
     pub lemma: Option<String>,
     pub msa: Option<String>,
-    /// Elements in it the shorthand doesn't show (deleted words)
-    pub hidden: Vec<String>,
+}
+
+impl WordRecord {
+    /// What the editor's answer, or else the suggestion, makes of the word.
+    pub fn outcome(&self) -> Decision {
+        self.decision.unwrap_or(self.suggestion)
+    }
+
+    /// Fills in the records' word numbers from the compiled body's `words`.
+    pub fn number(records: &mut [WordRecord], words: &[WordKey]) {
+        if records.is_empty() {
+            return;
+        }
+        let first: HashMap<u64, usize> = words
+            .iter()
+            .enumerate()
+            .filter(|(_, (_, k))| *k == 0)
+            .map(|(n, (id, _))| (*id, n))
+            .collect();
+        for record in records {
+            record.word = record.token.and_then(|id| first.get(&id).copied());
+        }
+    }
 }
 
 /// Drops identities that would reorder the original (text moved elsewhere

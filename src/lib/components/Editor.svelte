@@ -8,8 +8,8 @@
     import { editor } from '$lib/stores/editor';
     import { teiDsl, teiDslHighlighting, teiDslFolding } from '$lib/parser/highlighter';
     import { teiLinter } from '$lib/parser/linter';
-    import { forceLinting, lintGutter, lintKeymap, previousDiagnostic } from "@codemirror/lint";
-    import { withoutHints, wordRecords } from '$lib/editor/records';
+    import { lintGutter } from "@codemirror/lint";
+    import { openRecordRanges, setRecordMarks, wordRecordMarks } from '$lib/editor/records';
     import { importedStore } from '$lib/stores/imported.svelte';
     import { daisyExtensions } from '$lib/editor/theme';
     import { markEdit } from '$lib/editor/typing';
@@ -38,10 +38,6 @@
             { key: 'Mod-Shift-z', run: redoCommand, preventDefault: true },
             ...searchKeymap,
             ...foldKeymap,
-            // F8 / Shift+F8: next / previous mark; Ctrl+Shift+M: all marks,
-            // with their quick fixes
-            ...lintKeymap,
-            { key: 'Shift-F8', run: previousDiagnostic },
         ] as unknown as KeyBinding[];
 
         const startState = EditorState.create({
@@ -57,12 +53,8 @@
                 teiDslHighlighting,
                 teiDslFolding,
                 teiLinter,
-                wordRecords({
-                    records: () => importedStore.records,
-                    decide: (key, decision) => importedStore.decide(key, decision),
-                    acceptSuggestions: (records) => importedStore.acceptSuggestions(records),
-                }),
-                lintGutter({ markerFilter: withoutHints }),
+                wordRecordMarks,
+                lintGutter(),
                 daisyExtensions,
                 EditorView.updateListener.of((update) => {
                     if (update.docChanged) {
@@ -82,10 +74,14 @@
         });
     });
 
-    // Each compile brings the records anew: show them
+    // Each compile brings the replaced words anew: mark them, if the text is
+    // still what was compiled (otherwise the next compile, already on its
+    // way, brings them; the marks move with the typing meanwhile)
     $effect(() => {
-        void importedStore.records;
-        if (view) forceLinting(view);
+        const records = importedStore.records;
+        const compiled = importedStore.recordsDsl;
+        if (!view || view.state.doc.toString() !== compiled) return;
+        view.dispatch({ effects: setRecordMarks.of(openRecordRanges(records, compiled.length)) });
     });
 
     onDestroy(() => {

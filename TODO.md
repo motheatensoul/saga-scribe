@@ -25,11 +25,11 @@ when it is done (and record it in CHANGELOG.md if users notice).
   the shorthand doesn't show), and the shorthand of all 288 Menota files reads as their
   words token for token (DSL rules 3 and 4, 2026-11-12), which 3b needs. The 3b gates
   (GetPut, PutGet, Locality: `corpus_edits_are_put_back_locally`) pass, and edits are
-  applied to the file's tree instead of spliced into its text (2026-11-12). Replaced and deleted
-  words are asked about in the editor (first version, 2026-11-12). **Next in 3b:** the
-  patcher pairing tokens with tree nodes instead of segments; the rest of the records
-  (listed in the design under 3b: word panel, previews, Validate, count on saving,
-  annotations, moved words). The look of the gutter mark is to be checked with testers. It comes before the
+  applied to the file's tree instead of spliced into its text (2026-11-12). Replaced words
+  are marked in the shorthand and asked about in the word panel (2026-11-12). **Next in
+  3b:** the patcher pairing tokens with tree nodes instead of segments; the rest of the
+  records (listed in the design under 3b: Validate, count on saving, annotations, moved
+  words). It comes before the
   shorthand redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).
@@ -46,7 +46,8 @@ when it is done (and record it in CHANGELOG.md if users notice).
   documents, it may pair a run of identical tokens (e.g. `[...5]`) differently, delete
   words and insert them again as new ones, which loses their markup. The app always sends
   guidance, but the patcher falls back to comparing when guidance doesn't fit. Step 3b's
-  removed and replaced records cover this.
+  replaced records cover a word paired with another; a word deleted and inserted again
+  is not asked about.
 - **An imported session holds the file twice**: as segments (each word's XML as a
   string) and as the tree edits are applied to. For AM 28 8vo (7.5 MB, 427k nodes) the
   tree alone is well over 100 MB, and the memory slows the patcher down: an edit there
@@ -102,17 +103,22 @@ when it is done (and record it in CHANGELOG.md if users notice).
     `//n`, so the line numbers in the DSL interleave.
 
   Planned so far:
-  - **Abbreviations as mark = expansion, with a store.** `{…}` encloses only what is
-    abbreviated, so it can stand inside a word: `{:kbar:=konun}gs`, `{:etslash:=ok}`. The
-    left of `=` is the abbreviation mark (`<am>`), the right is the expanded text (`<ex>`).
-    This replaces `.abbr[kgs]{konungs}`, which covers whole words. MUFI sometimes fuses the
-    mark into a letter (`:kbar:` = k with the bar as the mark) and sometimes makes it a
-    separate character. When the expansion begins with a fused letter's base letter
-    (`static/normalizer/entity-base-letters.json`, still a draft to review), that letter
-    was written and isn't part of `<ex>`. So `{:kbar:=konun}gs` gives `<am>&kbar;</am>` on
-    the facsimile level and `k<ex>onun</ex>gs` on the diplomatic level. Check the output on
-    each level against the MENOTA handbook (abbreviations chapter) before implementing.
-    `{:kbar:}` takes the expansion from a store in the project file. The store maps a
+  - **Abbreviations as `(mark=expansion)`, with a store** (decided; not implemented yet,
+    reminded 2026-11-12). `.abbr[kgs]{konungs}` is too heavy for something this common.
+    The parentheses enclose only what is abbreviated, so they can stand inside a word:
+    `(:kbar:=konun)gs`, `(:etslash:=ok)`. The left of `=` is the abbreviation mark, wrapped
+    in `<am>`; the right is the expansion of exactly that mark, wrapped in `<ex>` (this is
+    the MENOTA encoding; documents without `<am>`/`<ex>` need a different approach). MUFI
+    sometimes fuses the mark into a letter (`:hbar:` = h + bar, where the bar is the
+    mark) and sometimes makes it a separate character. A fused letter's base letter was
+    written and isn't part of `<ex>`, so `(:kbar:=konun)gs` gives `<am>&kbar;</am>` on the
+    facsimile level and `k<ex>onun</ex>gs` on the diplomatic level. That needs a table of
+    each entity's base letter: `static/normalizer/entity-base-letters.json` is an
+    unchecked draft, to be replaced by the base characters in MUFI's specification once
+    its website is reachable again. Literal parentheses in the text then need escaping
+    (`\(`); count them in the corpus first. Check the output on each level against the
+    MENOTA handbook (abbreviations chapter) before implementing.
+    `(:kbar:)` takes the expansion from a store in the project file. The store maps a
     mark to one or more expansions, and the first is the default. An explicit expansion
     always overrides the store. A mark that isn't in the store gets a diagnostic with a
     quick fix "add to store", and an explicit form gets an action that adds it. The editor
@@ -136,7 +142,7 @@ when it is done (and record it in CHANGELOG.md if users notice).
     version goes up, and older DSL is rewritten when loaded. `DSL_RULES` goes up for
     imported documents. The importer fills the store from `<am>`/`<ex>` pairs and writes
     short forms where the expansion matches the default. Whole-word `<choice>`
-    abbreviations without `<am>`/`<ex>` still need a DSL form, perhaps `{kgs=konungs}`
+    abbreviations without `<am>`/`<ex>` still need a DSL form, perhaps `(kgs=konungs)`
     over the whole word. XML and DSL must still read as
     the same tokens.
 

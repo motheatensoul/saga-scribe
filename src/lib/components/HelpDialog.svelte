@@ -57,9 +57,6 @@
         { keys: ["Ctrl", "D"], action: "Select word / next occurrence" },
         { keys: ["Alt", "↑"], action: "Move line up" },
         { keys: ["Alt", "↓"], action: "Move line down" },
-        { keys: ["F8"], action: "Next mark (errors, replaced and deleted words)" },
-        { keys: ["Shift", "F8"], action: "Previous mark" },
-        { keys: ["Ctrl", "Shift", "M"], action: "List all marks, with their answers" },
         { keys: ["Ctrl", "Shift", "["], action: "Fold page at cursor" },
         { keys: ["Ctrl", "Shift", "]"], action: "Unfold page at cursor" },
     ];

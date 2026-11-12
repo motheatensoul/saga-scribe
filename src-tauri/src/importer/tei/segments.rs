@@ -126,16 +126,15 @@ pub struct ImportedDocument {
     /// 0 for documents imported before rules were versioned.
     #[serde(default)]
     pub dsl_rules: u32,
-    /// The editor's answers for words replaced or deleted in the shorthand,
-    /// by the segment ID of the original word (see `patching::WordRecord`).
-    /// Kept by the frontend, and saved with the manifest (`.teis` 1.8).
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    /// The editor's answers for words replaced in the shorthand, by the
+    /// segment ID of the original word (see `patching::WordRecord`). Kept by
+    /// the frontend, and saved with the manifest (`.teis` 1.8).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty", deserialize_with = "known_decisions")]
     pub decisions: HashMap<usize, Decision>,
 }
 
-/// The editor's answer for a word of the original that was replaced or
-/// deleted in the shorthand (`docs/DOCUMENT_MODEL.md`, "Replacing and
-/// deleting words").
+/// The editor's answer for a word of the original that was replaced in the
+/// shorthand (`docs/DOCUMENT_MODEL.md`, "Replacing and deleting words").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Decision {
@@ -144,8 +143,16 @@ pub enum Decision {
     /// Another word in its place: those are removed (its markup still
     /// follows the text)
     Different,
-    /// A deleted word stays deleted
-    Removed,
+}
+
+/// The decisions of a manifest, without answers this version doesn't know
+/// (early 0.8.0 builds also saved "removed" for deleted words).
+fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<HashMap<usize, Decision>, D::Error> {
+    let all = HashMap::<usize, serde_json::Value>::deserialize(deserializer)?;
+    Ok(all
+        .into_iter()
+        .filter_map(|(key, value)| Some((key, serde_json::from_value(value).ok()?)))
+        .collect())
 }
 
 /// Version of the rules for writing imported XML as DSL. Documents keep the

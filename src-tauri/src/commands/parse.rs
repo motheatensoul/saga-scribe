@@ -358,7 +358,7 @@ pub(crate) fn compile_imported_source(
 
     // Replaced and deleted words, with the patcher's answers as suggestions;
     // the editor's answers win
-    let records = patcher.records(&source.document.segments, &patches, &state, decisions, compiler);
+    let mut records = patcher.records(&source.document.segments, &patches, &state, decisions);
     apply_decisions(&source.document.segments, &mut patches, decisions);
     timer.lap("compile.records", [("records", records.len().into())]);
 
@@ -396,7 +396,7 @@ pub(crate) fn compile_imported_source(
     timer.lap("compile.word_keys", [("words", words.len().into())]);
     let previous = source.words.as_ref().filter(|_| guidance.is_some());
     let renumbered = previous.and_then(|previous| renumbering(previous, &words));
-    let lemmas = match previous {
+    let mut lemmas = match previous {
         Some(previous) => {
             let now = numbers_by_key(&words);
             lemmas
@@ -406,6 +406,19 @@ pub(crate) fn compile_imported_source(
         }
         None => lemmas,
     };
+    // A different word doesn't get the old word's lemma back: the editor
+    // still holds it for this word number (read from the file), and only
+    // another lemma is the editor's choice for the new word
+    WordRecord::number(&mut records, &words);
+    for record in records.iter().filter(|r| r.outcome() == Decision::Different) {
+        let Some(n) = record.word else { continue };
+        let old = |lemma: &LemmaMapping| {
+            lemma.lemma == record.lemma.as_deref().unwrap_or("") && lemma.msa == record.msa.as_deref().unwrap_or("")
+        };
+        if lemmas.get(&(n as u32)).is_some_and(old) {
+            lemmas.remove(&(n as u32));
+        }
+    }
     timer.lap("compile.renumber", []);
     let body_xml = write_lemmas(&body, &lemmas, source.document.is_menota);
     timer.lap("compile.write_lemmas", [("lemmas", lemmas.len().into())]);
@@ -776,7 +789,6 @@ mod word_identity_tests {
 mod imported_identity_tests {
     use super::*;
     use crate::identity::TextChange;
-    use crate::importer::tei::patching::RecordKind;
 
     const TWO_OKS: &str = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="ok" me:msa="xCC"><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w> <w><choice><me:facs>maþr</me:facs><me:dipl>maþr</me:dipl><me:norm>maðr</me:norm></choice></w></p></body></text></TEI>"#;
 
@@ -844,7 +856,7 @@ mod imported_identity_tests {
         let edited = dsl.replacen("ok", "okk", 1);
         let out = compile_decided(&mut source, &dsl, &edited, &[]);
         let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
-        assert_eq!((record.kind, record.suggestion, record.decision), (RecordKind::Replaced, Decision::Same, None));
+        assert_eq!((record.suggestion, record.decision, record.word), (Decision::Same, None, Some(0)));
         assert_eq!(&edited[record.from..record.to], "okk");
         assert_eq!((record.was.as_str(), record.lemma.as_deref(), record.msa.as_deref()), ("ok", Some("ok"), Some("xCC")));
         assert!(out.xml.contains(r#"<w lemma="ok" me:msa="xCC">"#), "{}", out.xml);
@@ -861,7 +873,7 @@ mod imported_identity_tests {
         let edited = dsl.replacen("ok", "þá", 1);
         let out = compile_decided(&mut source, &dsl, &edited, &[]);
         let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
-        assert_eq!((record.kind, record.suggestion), (RecordKind::Replaced, Decision::Different));
+        assert_eq!(record.suggestion, Decision::Different);
         assert!(!out.xml.contains("lemma=\"ok\""), "{}", out.xml);
         let out = compile_decided(&mut source, &edited, &edited, &[(record.key, Decision::Same)]);
         assert!(out.xml.contains(r#"<w lemma="ok" me:msa="xCC">"#) && out.xml.contains("þá"), "{}", out.xml);
@@ -872,33 +884,59 @@ mod imported_identity_tests {
     }
 
     #[test]
-    fn test_deleted_word_is_a_record_where_it_was() {
-        let (mut source, dsl) = open(TWO_OKS);
-        compile(&mut source, &dsl, None, &[]);
-        let edited = dsl.replacen("ok ", "", 1);
-        let out = compile_decided(&mut source, &dsl, &edited, &[]);
-        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
-        assert_eq!((record.kind, record.suggestion, record.from, record.to), (RecordKind::Removed, Decision::Removed, 2, 2));
-        let out = compile_decided(&mut source, &edited, &edited, &[(record.key, Decision::Removed)]);
-        assert_eq!(out.records[0].decision, Some(Decision::Removed));
-        // An answer of the wrong kind doesn't count
-        let out = compile_decided(&mut source, &edited, &edited, &[(record.key, Decision::Same)]);
-        assert_eq!(out.records[0].decision, None);
-    }
-
-    #[test]
-    fn test_restored_word_is_the_original_again() {
+    fn test_deleted_word_is_not_asked_about_and_comes_back_as_it_was() {
         let (mut source, dsl) = open(TWO_OKS);
         compile(&mut source, &dsl, None, &[]);
         let edited = dsl.replacen(" ok", "", 1);
         let out = compile_decided(&mut source, &dsl, &edited, &[]);
-        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
-        // As the editor's Restore does (records.ts): set apart after the word before
-        let restored = format!("{} {}{}", &edited[..record.from], record.was, &edited[record.from..]);
-        assert_eq!(restored, dsl);
-        let out = compile_decided(&mut source, &edited, &restored, &[]);
+        assert!(out.records.is_empty(), "{:?}", out.records);
+        assert!(!out.xml.contains("lemma=\"ok\""), "{}", out.xml);
+        let out = compile_decided(&mut source, &edited, &dsl, &[]);
         assert!(out.records.is_empty(), "{:?}", out.records);
         assert_eq!(out.xml, TWO_OKS);
+    }
+
+    #[test]
+    fn test_different_word_does_not_get_the_old_lemma_back_from_the_editor() {
+        // The app sends the file's own lemmas with every compile
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[(0, "ok", "xCC")]);
+        let edited = dsl.replacen("ok", "þá", 1);
+        let mut compiler = Compiler::new().with_config(compiler_config_for(&source.document));
+        let at = dsl.find("ok").unwrap();
+        let guidance = Guidance {
+            base_revision: source.patcher.as_ref().unwrap().revision(),
+            changes: vec![TextChange { from_a: at, to_a: at + 2, from_b: at, to_b: at + 2 }],
+        };
+        let old = HashMap::from([(0, LemmaMapping { lemma: "ok".into(), msa: "xCC".into(), normalized: None })]);
+        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), old).unwrap();
+        assert_eq!((out.records[0].suggestion, out.records[0].word), (Decision::Different, Some(0)));
+        assert!(!out.xml.contains("lemma=\"ok\""), "{}", out.xml);
+        // A lemma chosen for the new word is written
+        let new = HashMap::from([(0, LemmaMapping { lemma: "þá".into(), msa: "xAV".into(), normalized: None })]);
+        let guidance = Guidance { base_revision: source.patcher.as_ref().unwrap().revision(), changes: vec![] };
+        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), new).unwrap();
+        assert!(out.xml.contains(r#"<w lemma="þá" me:msa="xAV">"#), "{}", out.xml);
+    }
+
+    #[test]
+    fn test_replaced_word_record_covers_the_whole_new_word() {
+        // HolmPerg line 18: "bok" (lemma bók) retyped as "bækr", letter by letter
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/HolmPerg-34-4to-MLL.xml");
+        let Ok(xml) = std::fs::read_to_string(path) else { return };
+        let (mut source, dsl) = open(&xml);
+        compile(&mut source, &dsl, None, &[]);
+        let at = dsl.find("//18  bok").unwrap() + "//18  ".len();
+        let mut previous = dsl.clone();
+        for typed in ["bk", "b", "bæ", "bæk", "bækr"] {
+            let edited = format!("{}{typed}{}", &dsl[..at], &dsl[at + 3..]);
+            let out = compile_decided(&mut source, &previous, &edited, &[]);
+            let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
+            let units: Vec<u16> = edited.encode_utf16().collect();
+            assert_eq!(String::from_utf16_lossy(&units[record.from..record.to]), typed);
+            assert_eq!((record.was.as_str(), record.lemma.as_deref()), ("bok", Some("bók")));
+            previous = edited;
+        }
     }
 
     #[test]

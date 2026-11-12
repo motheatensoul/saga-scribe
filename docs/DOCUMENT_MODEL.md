@@ -155,9 +155,8 @@ a level. This gives:
 
 - **one undo history** for text and lemmatization (today they are separate);
 - **nothing removed unseen**: an operation that would remove something the view didn't
-  show (a word's lemma, a range whose text was deleted) keeps it in a *replaced* or
-  *removed* record with the word, to be confirmed or restored (see "Replacing and deleting
-  words"); Validate lists the open ones;
+  show (a word's lemma) keeps it in a *replaced* record with the word, to be confirmed
+  in the word panel (see "Replacing and deleting words"); Validate lists the open ones;
 - **incremental work**: only the words an operation touches are projected again, so typing
   stays fast in a 50,000-word manuscript.
 
@@ -215,20 +214,24 @@ result looks the same as replacing it with a different word. So:
   current rule) or the new form is an inflection of the old lemma in the dictionary;
   otherwise a different word. Until the editor decides, the suggestion is what goes into
   the XML.
-- **Asking must not interrupt typing.** No dialog opens while someone types. A marked
-  word offers both answers in the editor (as a quick fix on the word, also from the
-  keyboard) and in the word panel when it's clicked in a preview:
-  "Same word, corrected: keep lemma *konungr*, analysis xNC gM nS cN" or "Different word:
-  remove them". Several open questions can be accepted together.
-- **Deleted words are kept the same way.** Deleting a word with a lemma, annotations or
-  markup the shorthand doesn't show leaves a *removed* record at its place, listed for
-  review with "Restore". A word deleted in one place and the same text inserted
-  elsewhere (cut and paste) is offered as a moved word.
+- **Asking must not interrupt typing, and is answered where a word's data is edited.**
+  No dialog opens while someone types, and the shorthand pane only marks the word (a
+  wavy underline, no popup). The question is in the word panel, opened from the word in
+  a preview, where its lemma is set anyway: "Keep the old lemma" (the same word,
+  corrected) or "Set a new lemma" (a different word: lemma, analysis and normalized form
+  are removed). Choosing a lemma there answers it too. (Decided 2026-11-12 after
+  testing: a first version with quick fixes in the shorthand pane was rejected, as the
+  word panel is already the place for a word's details.)
+- **Deleted words aren't asked about.** A deleted word has no word in the text to open
+  the panel on, and deleting is undone in the editor. (The first version kept a *removed*
+  record at its place with "Restore"; dropped with the quick fixes, 2026-11-12.) A word
+  deleted in one place and the same text inserted elsewhere (cut and paste) should still
+  be recognised as a moved word.
 - **Saving doesn't lose the records.** The XML is written with the current answers
   (decided or suggested); undecided records stay in the project, so the decision can
   still be made, or undone, after saving and reopening. Saving says how many are open.
 - When several words are selected and replaced, old and new words are paired as for
-  single words; old words left over become removed records.
+  single words; old words left over are deleted.
 
 ### Keeping the shorthand as written
 
@@ -252,7 +255,7 @@ corrected without the full XML view. The panel works on the typed layer directly
   `<gap extent unit>`, unknown elements);
 - the `<w>` element's other attributes;
 - annotations;
-- open *replaced* or *removed* records for the word, with their answers;
+- an open *replaced* record for the word, with its answers (done: in the Lemmatize tab);
 - an XML tab with the word's own XML, for anything the other tabs don't cover. It's
   parsed by libxml2 and must still be a single word.
 
@@ -321,18 +324,19 @@ text).
      word goes with the elements it leaves empty, `.p` splits or merges `<p>` elements, and
      the tree's writer copies everything else. The tree's nodes are shared between copies
      (copy on write), so each compile copies only what it changes.
-     Then the records, first version: each compile reports the original words with a lemma
-     or analysis that the shorthand replaces, and the deleted ones with a lemma, analysis
-     or hidden markup (`Patcher::records`), with the patcher's answer as the suggestion.
-     The editor shows open ones as lint marks with a gutter mark and quick fixes
-     (`src/lib/editor/records.ts`); answers are kept by the original word's segment ID in
-     the manifest (`.teis` 1.8) and override the suggestion (`apply_decisions`). Left:
-     the patcher still works on segments (the tree should replace them, which also halves
-     the memory a session holds); records keep only the old word's shorthand and data, not
-     its whole XML, so a word that answered "Different" can't get its lemma back except by
-     answering again; the word panel, the previews and Validate don't show records yet;
+     Then the records: each compile reports the original words with a lemma or analysis
+     that the shorthand replaces with another word (`Patcher::records`), with the
+     patcher's answer as the suggestion and the new word's number. Open ones are marked
+     in the shorthand (`src/lib/editor/records.ts`) and in the previews (the "edited"
+     wavy line), and answered in the word panel's Lemmatize tab; answers are kept by the
+     original word's segment ID in the manifest (`.teis` 1.8) and override the suggestion
+     (`apply_decisions`). The editor holds the file's lemmas by word number and sends
+     them with every compile, so a different word's old lemma is not written back unless
+     another one is chosen. Left: the patcher still works on segments (the tree should
+     replace them, which also halves the memory a session holds); records keep only the
+     old word's shorthand and data, not its whole XML; Validate doesn't list records and
      saving doesn't say how many are open; annotations other than lemmas aren't counted as
-     data a word loses; cut and paste isn't offered as a moved word.
+     data a word loses; cut and paste isn't recognised as a moved word.
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
    and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,
    shorthand in `<…>`) brought that from 94 to all 288 files. Gate:
@@ -356,11 +360,11 @@ Steps 1 and 2 change nothing users see. From step 3 on, edits stop losing markup
 - Replacing or deleting a word asks whether it's the same word before its data is
   removed (above).
 
-- Open *replaced* and *removed* records are shown in the shorthand by a gutter mark. How
-  it looks and behaves is to be settled by testing with users.
+- Open *replaced* records are marked on the word in the shorthand and in the previews,
+  and answered in the word panel (2026-11-12, after testing).
 
-- A pinned level that can't follow an edit is kept and marked for review, with the same
-  gutter mark. Example: facs `kgr` corrected to `kgs`. The dipl is derived and becomes
+- A pinned level that can't follow an edit is kept and marked for review, like a
+  replaced word. Example: facs `kgr` corrected to `kgs`. The dipl is derived and becomes
   `k<ex>onung</ex>s`, but the pinned norm still says `konungr`. Whether it's now wrong
   (the inflection changed) or still right (only a misread letter was fixed) can't be
   told from the letters. The mark appears only when the edit touched letters the pinned

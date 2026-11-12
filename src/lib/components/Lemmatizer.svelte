@@ -164,6 +164,42 @@
     // Check if this word instance already has a session confirmation
     let sessionConfirmation = $derived($lemmaMappings.mappings[wordIndex]);
 
+    /**
+     * The word of the file this one replaced in the shorthand (imported
+     * files), if it had a lemma or analysis: whether it keeps them is asked
+     * here. Until answered, the editor still holds the old lemma for this
+     * word, which isn't shown as confirmed.
+     */
+    let record = $derived(importedStore.recordByWord.get(wordIndex));
+    let recordOpen = $derived(record !== undefined && record.decision === null);
+    let shownConfirmation = $derived(recordOpen ? undefined : sessionConfirmation);
+
+    /** Keeps the old word's lemma and analysis: the same word, corrected. */
+    function keepOldLemma() {
+        if (!record) return;
+        const { lemma, msa } = record;
+        const current = get(lemmaMappings).mappings[wordIndex];
+        if (lemma && msa && (current?.lemma !== lemma || current?.msa !== msa)) {
+            sessionLemmaStore.confirmWithHistory(wordIndex, { lemma, msa });
+        }
+        importedStore.decide(record.key, 'same');
+    }
+
+    /** Drops the old word's lemma and analysis, so a new one can be set. */
+    function setNewLemma() {
+        if (!record) return;
+        const current = get(lemmaMappings).mappings[wordIndex];
+        if (current && current.lemma === record.lemma && current.msa === record.msa) {
+            sessionLemmaStore.unconfirmWithHistory(wordIndex, true, true);
+        }
+        selectedEntry = null;
+        selectedMappingId = null;
+        wordClass = '';
+        resetMorphology();
+        importedStore.decide(record.key, 'different');
+        document.getElementById('lemma-search')?.focus();
+    }
+
     // Load existing mappings on mount
     $effect(() => {
         loadExistingMappings();
@@ -314,6 +350,12 @@
                 msa: msaString,
                 normalized: chosen,
             });
+            // A lemma chosen for a replaced word answers whether it's the same word
+            if (record) {
+                const same = selectedEntry.lemma === record.lemma && sameAnalysis(msaString, record.msa ?? '');
+                const answer = same ? 'same' : 'different';
+                if (record.decision !== answer) importedStore.decide(record.key, answer);
+            }
 
             onsave?.(wordIndex, selectedEntry.lemma, msaString);
             onclose?.();
@@ -524,7 +566,7 @@
             {#if facsimile !== diplomatic}
                 <span class="text-xs opacity-80 ml-2">(dipl: {diplomatic})</span>
             {/if}
-            {#if sessionConfirmation}
+            {#if shownConfirmation}
                 <span class="badge badge-success badge-xs ml-2">confirmed</span>
             {/if}
             {#if importedStore.editedWords.has(wordIndex)}
@@ -536,19 +578,64 @@
         </button>
     </div>
 
-    {#if importedStore.editedWords.has(wordIndex)}
+    {#if record}
+        <div
+            role="group"
+            aria-labelledby="replaced-word-text"
+            class="flex flex-col gap-2 rounded-lg border p-3 {recordOpen ? 'border-warning/60' : 'border-base-300'}"
+        >
+            <p id="replaced-word-text" class="text-sm">
+                In the shorthand, this word replaced “<span class="font-medium">{record.was}</span>”,
+                {#if record.lemma}
+                    whose lemma is <span class="font-medium">{record.lemma}</span>
+                    {#if record.msa}<code class="text-xs px-1 rounded bg-base-300">{record.msa}</code>{/if}.
+                {:else}
+                    whose analysis is <code class="text-xs px-1 rounded bg-base-300">{record.msa}</code>.
+                {/if}
+                {#if record.decision === 'same'}
+                    It is kept: the same word, corrected.
+                {:else if record.decision === 'different'}
+                    It was removed with the analysis and normalized form: a different word.
+                {:else if record.suggestion === 'same'}
+                    The forms are alike, so the word keeps it until you choose.
+                {:else}
+                    The forms differ, so the word is without it until you choose.
+                {/if}
+            </p>
+            <div class="flex flex-wrap gap-2">
+                {#if record.decision !== 'same'}
+                    <button
+                        type="button"
+                        class="btn btn-sm {recordOpen && record.suggestion === 'same' ? 'btn-primary' : 'btn-ghost border-base-300'}"
+                        onclick={keepOldLemma}
+                    >
+                        {record.decision === 'different' ? 'Keep the old lemma after all' : 'Keep the old lemma'}
+                    </button>
+                {/if}
+                {#if record.decision !== 'different'}
+                    <button
+                        type="button"
+                        class="btn btn-sm {recordOpen && record.suggestion === 'different' ? 'btn-primary' : 'btn-ghost border-base-300'}"
+                        onclick={setNewLemma}
+                    >
+                        {record.decision === 'same' ? 'Set a new lemma instead' : 'Set a new lemma'}
+                    </button>
+                {/if}
+            </div>
+        </div>
+    {:else if importedStore.editedWords.has(wordIndex)}
         <div role="status" class="alert alert-warning alert-soft text-base-content text-sm py-2">
             This word was edited after import. Its lemma, analysis and normalized
             form are still the original word's: check that they fit.
         </div>
     {/if}
 
-    {#if sessionConfirmation}
+    {#if shownConfirmation}
         <div class="flex items-center justify-between gap-2 rounded-lg border border-success/40 p-3">
             <div class="text-sm">
                 <span class="opacity-80">Lemma:</span>
-                <span class="font-medium">{sessionConfirmation.lemma}</span>
-                <code class="ml-1 text-xs px-1 rounded bg-base-300">{sessionConfirmation.msa}</code>
+                <span class="font-medium">{shownConfirmation.lemma}</span>
+                <code class="ml-1 text-xs px-1 rounded bg-base-300">{shownConfirmation.msa}</code>
             </div>
             <button type="button" class="btn btn-sm btn-ghost border-base-300 hover:bg-error/15 focus-visible:bg-error/15" onclick={handleRemoveLemma}>
                 Remove lemma
