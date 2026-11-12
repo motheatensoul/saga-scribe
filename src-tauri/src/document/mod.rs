@@ -22,7 +22,8 @@ mod write;
 
 pub use merge::merge_word_edit;
 pub use project::{find_body, project_body};
-pub use tree::Tree;
+pub use tree::{Element, NodeId, NodeKind, Tree};
+pub use write::Piece;
 
 #[cfg(test)]
 mod tests;

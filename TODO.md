@@ -24,9 +24,10 @@ when it is done (and record it in CHANGELOG.md if users notice).
   (design agreed 2026-11-11). Done: steps 1, 2 and 3a (an edited word keeps the markup
   the shorthand doesn't show), and the shorthand of all 288 Menota files reads as their
   words token for token (DSL rules 3 and 4, 2026-11-12), which 3b needs. The 3b gates
-  (GetPut, PutGet, Locality: `corpus_edits_are_put_back_locally`) pass with today's patcher
-  (2026-11-12). **Next in 3b:** operations on the tree instead of segments, and
-  replaced/removed word records (see the steps in the design). It comes before the
+  (GetPut, PutGet, Locality: `corpus_edits_are_put_back_locally`) pass, and edits are
+  applied to the file's tree instead of spliced into its text (2026-11-12). **Next in 3b:**
+  the patcher pairing tokens with tree nodes instead of segments, and replaced/removed word
+  records (see the steps in the design). It comes before the
   shorthand redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).
@@ -44,6 +45,14 @@ when it is done (and record it in CHANGELOG.md if users notice).
   words and insert them again as new ones, which loses their markup. The app always sends
   guidance, but the patcher falls back to comparing when guidance doesn't fit. Step 3b's
   removed and replaced records cover this.
+- **An imported session holds the file twice**: as segments (each word's XML as a
+  string) and as the tree edits are applied to. For AM 28 8vo (7.5 MB, 427k nodes) the
+  tree alone is well over 100 MB, and the memory slows the patcher down: an edit there
+  compiles in about 29 ms instead of 20 before the tree. Goes away when the patcher works
+  on the tree (3b); the nodes (200 bytes each) could also be made smaller.
+- **Output isn't checked by libxml2 before saving**: `Tree::write_checked` exists, but a
+  compile writes with `write`, since parsing the whole file again on every edit is too slow.
+  The check should run when saving or exporting, or only on the nodes an edit wrote anew.
 - **The compiler writes entities inside `?{…}?` within `.abbr[…]` literally**:
   `.abbr[?{þ:er:}?]{…}` gives `<unclear>þ:er:</unclear>`, not `&er;`.
 - **After the document model works:** a button that opens the word panel on the next word

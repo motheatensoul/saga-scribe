@@ -316,6 +316,13 @@ text).
      or removed, a word deleted, inserted or replaced by another, a line number changed),
      reads the written file back as the edited shorthand (PutGet) and checks that only the
      edited words' bytes changed, with any element they leave empty (Locality).
+     Done next: the patcher's operations are applied to the tree (`importer/tei/apply.rs`)
+     instead of spliced into the text: a word is replaced by its merged version, a deleted
+     word goes with the elements it leaves empty, `.p` splits or merges `<p>` elements, and
+     the tree's writer copies everything else. The tree's nodes are shared between copies
+     (copy on write), so each compile copies only what it changes. Left: the patcher still
+     works on segments (the tree should replace them, which also halves the memory a
+     session holds), and replaced and removed words aren't kept as records yet.
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
    and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,
    shorthand in `<…>`) brought that from 94 to all 288 files. Gate:

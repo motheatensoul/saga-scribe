@@ -5,7 +5,9 @@ use crate::importer::tei::helpers::qualified_name;
 use crate::importer::tei::source_map::SourceCursor;
 use libxml::tree::{Node as XmlNode, NodeType};
 use std::ffi::CStr;
+use std::collections::HashMap;
 use std::ops::Range;
+use std::sync::Arc;
 
 /// A byte range in the original text.
 pub type Span = Range<usize>;
@@ -97,11 +99,77 @@ impl NodeData {
     }
 }
 
-/// A document: the tree, and the original text its spans refer to.
+/// The nodes of a tree, shared between its copies: a copy holds only the
+/// nodes it changed and the nodes it added, so copying a large document to
+/// edit it costs only the edit.
+#[derive(Debug, Clone, Default)]
+struct Nodes {
+    base: Arc<Vec<NodeData>>,
+    /// This copy's version of nodes of `base` it changed
+    changed: HashMap<u32, NodeData>,
+    /// Nodes added since `base` was shared; their IDs follow `base`'s
+    added: Vec<NodeData>,
+}
+
+impl Nodes {
+    fn len(&self) -> usize {
+        self.base.len() + self.added.len()
+    }
+
+    fn push(&mut self, data: NodeData) {
+        match Arc::get_mut(&mut self.base) {
+            Some(base) if self.added.is_empty() => base.push(data),
+            _ => self.added.push(data),
+        }
+    }
+
+    /// Every node, to change all of them (the copy no longer shares any).
+    fn iter_mut(&mut self) -> impl Iterator<Item = &mut NodeData> {
+        let base = Arc::make_mut(&mut self.base);
+        for (i, data) in self.changed.drain() {
+            base[i as usize] = data;
+        }
+        base.append(&mut self.added);
+        base.iter_mut()
+    }
+}
+
+impl std::ops::Index<usize> for Nodes {
+    type Output = NodeData;
+
+    fn index(&self, i: usize) -> &NodeData {
+        match self.base.get(i) {
+            Some(data) if self.changed.is_empty() => data,
+            Some(data) => self.changed.get(&(i as u32)).unwrap_or(data),
+            None => &self.added[i - self.base.len()],
+        }
+    }
+}
+
+impl std::ops::IndexMut<usize> for Nodes {
+    fn index_mut(&mut self, i: usize) -> &mut NodeData {
+        let shared = self.base.len();
+        if i >= shared {
+            return &mut self.added[i - shared];
+        }
+        if !self.changed.contains_key(&(i as u32)) {
+            // Not shared: changed in place (`make_mut` doesn't copy then)
+            if Arc::strong_count(&self.base) == 1 {
+                return &mut Arc::make_mut(&mut self.base)[i];
+            }
+            let data = self.base[i].clone();
+            self.changed.insert(i as u32, data);
+        }
+        self.changed.get_mut(&(i as u32)).expect("just inserted")
+    }
+}
+
+/// A document: the tree, and the original text its spans refer to. Copies
+/// share what they don't change.
 #[derive(Debug, Clone)]
 pub struct Tree {
-    nodes: Vec<NodeData>,
-    source: String,
+    nodes: Nodes,
+    source: Arc<str>,
     /// Whether every node read from the source has its span. If the text and
     /// libxml2's tree ever disagree, no node has one (a partial map would be
     /// worse than none) and the document is written from the tree.
@@ -122,10 +190,11 @@ impl Tree {
     /// Copies `doc`, which libxml2 parsed from `xml` ([`crate::xml::parse`]).
     pub fn from_document(doc: &libxml::tree::Document, xml: &str) -> Self {
         let mut tree = Tree {
-            nodes: vec![NodeData::new(NodeKind::Document, None)],
-            source: xml.to_string(),
+            nodes: Nodes::default(),
+            source: Arc::from(xml),
             spans: false,
         };
+        tree.nodes.push(NodeData::new(NodeKind::Document, None));
         let doctype = crate::xml::doctype_span(xml).map(|span| xml[span].to_string());
         let mut child = doc.as_node().get_first_child();
         while let Some(node) = child {
@@ -134,7 +203,7 @@ impl Tree {
         }
         tree.spans = tree.locate_spans().is_some();
         if !tree.spans {
-            for node in &mut tree.nodes {
+            for node in tree.nodes.iter_mut() {
                 node.span = None;
                 node.tags = None;
             }
@@ -228,7 +297,7 @@ impl Tree {
     #[cfg(test)]
     pub(super) fn forget_spans(&mut self) {
         self.spans = false;
-        for node in &mut self.nodes {
+        for node in self.nodes.iter_mut() {
             node.span = None;
             node.tags = None;
         }
@@ -306,6 +375,34 @@ impl Tree {
         self.mark_children_changed(parent);
     }
 
+    /// The node's position among its parent's children.
+    pub fn index_in_parent(&self, id: NodeId) -> Option<usize> {
+        let parent = self.parent(id)?;
+        self.children(parent).iter().position(|&c| c == id)
+    }
+
+    /// Moves a node (with everything below it) to be the `index`-th child of
+    /// `parent`. It stays as it was, so an unchanged node is still written
+    /// as its original text.
+    pub fn move_to(&mut self, id: NodeId, parent: NodeId, index: usize) {
+        self.remove(id);
+        self.nodes[id.index()].parent = Some(parent);
+        let children = &mut self.nodes[parent.index()].children;
+        children.insert(index.min(children.len()), id);
+        self.mark_children_changed(parent);
+    }
+
+    /// Copies node `id` of `from`, with everything below it, to be the
+    /// `index`-th child of `parent`; the copies are new nodes. Returns the
+    /// copy of `id`.
+    pub fn graft(&mut self, from: &Tree, id: NodeId, parent: NodeId, index: usize) -> NodeId {
+        let copy = self.insert(parent, index, from.kind(id).clone());
+        for (i, &child) in from.children(id).iter().enumerate() {
+            self.graft(from, child, copy, i);
+        }
+        copy
+    }
+
     fn mark_changed(&mut self, id: NodeId) {
         self.nodes[id.index()].changed = true;
         self.mark_ancestors(id);
@@ -334,7 +431,7 @@ impl Tree {
         !(node.changed || node.children_changed || node.descendant_changed)
     }
 
-    pub(super) fn tags(&self, id: NodeId) -> Option<(Span, Span)> {
+    pub fn tags(&self, id: NodeId) -> Option<(Span, Span)> {
         self.nodes[id.index()].tags.clone()
     }
 

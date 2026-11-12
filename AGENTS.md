@@ -153,7 +153,7 @@ Uses **Junicode** (in `static/fonts/`) for MUFI characters.
 
 ## Imported Mode (Round-Trip) Guarantees
 The user's file is privileged. Reading it must never change it:
-- Unedited content is emitted byte-for-byte: the importer records source spans (`src-tauri/src/importer/tei/source_map.rs`) and the patcher splices edits into the original bytes (`patching.rs`).
+- Unedited content is emitted byte-for-byte: the patcher (`patching.rs`) turns the edited DSL into operations on segments, which are applied to the file's tree (`importer/tei/apply.rs`, step 3b of `docs/DOCUMENT_MODEL.md`); the tree's writer copies every node an edit didn't touch from the original text (`document/write.rs`). Copies of the tree share the nodes they don't change, so an edit costs what it touches. Gate: `corpus_edits_are_put_back_locally` (PutGet and Locality).
 - Whitespace-only or otherwise non-semantic DSL changes must produce no XML change.
 - An edited word is merged into its XML, not written anew (`src-tauri/src/document/merge.rs`): markup the DSL doesn't show moves with the text, a level the edit can't be placed in is kept, and a level the word doesn't have is never added. Gate: `corpus_edited_words_keep_their_markup`.
 - Invalid DSL is an error, never an empty document; save/export refuse to write a failed compile.

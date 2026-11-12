@@ -7,6 +7,7 @@
 //! attributes keep their order, quotes and spelling.
 
 use super::tree::{Attribute, Element, NodeId, NodeKind, Tree};
+use std::ops::Range;
 use crate::importer::tei::source_map::{set_tag_attribute, set_tag_attribute_escaped};
 
 impl Tree {
@@ -18,12 +19,31 @@ impl Tree {
     /// `--`, a name that isn't one, a control character).
     pub fn write(&self) -> Result<String, String> {
         let mut out = String::with_capacity(self.source().len() + 64);
+        let mut recorder = Recorder::none();
         if self.has_spans() {
-            self.write_document_with_spans(&mut out)?;
+            self.write_document_with_spans(&mut out, &mut recorder)?;
         } else {
-            self.write_document_without_spans(&mut out)?;
+            self.write_document_without_spans(&mut out, &mut recorder)?;
         }
         Ok(out)
+    }
+
+    /// [`write`](Self::write), and where things went: each node that is
+    /// `wanted` and written anew, and each stretch of the original text
+    /// copied (with everything in it), in the order written.
+    ///
+    /// # Errors
+    ///
+    /// As [`write`](Self::write).
+    pub fn write_recording(&self, wanted: Wanted) -> Result<Written, String> {
+        let mut out = String::with_capacity(self.source().len() + 64);
+        let mut recorder = Recorder { wanted: Some(wanted), pieces: Vec::new() };
+        if self.has_spans() {
+            self.write_document_with_spans(&mut out, &mut recorder)?;
+        } else {
+            self.write_document_without_spans(&mut out, &mut recorder)?;
+        }
+        Ok(Written { text: out, pieces: recorder.pieces })
     }
 
     /// [`write`](Self::write), checked: the output is parsed by libxml2 again
@@ -41,8 +61,9 @@ impl Tree {
         }
     }
 
-    fn write_document_with_spans(&self, out: &mut String) -> Result<(), String> {
+    fn write_document_with_spans(&self, out: &mut String, recorder: &mut Recorder) -> Result<(), String> {
         if self.is_unchanged(Tree::DOCUMENT) {
+            recorder.copied(0..self.source().len(), 0);
             out.push_str(self.source());
             return Ok(());
         }
@@ -61,7 +82,7 @@ impl Tree {
                     }
                 }
             }
-            self.write_node(child, out)?;
+            self.write_node_recording(child, out, recorder)?;
         }
         out.push_str(&self.source()[copied_to..]);
         Ok(())
@@ -70,7 +91,7 @@ impl Tree {
     /// Without spans the prolog (XML declaration, DOCTYPE, comments before the
     /// root) is copied as written up to the root element, which is written
     /// from the tree with what follows it.
-    fn write_document_without_spans(&self, out: &mut String) -> Result<(), String> {
+    fn write_document_without_spans(&self, out: &mut String, recorder: &mut Recorder) -> Result<(), String> {
         let root = self.root_element();
         let prolog_end = root.and(root_element_offset(self.source()));
         let mut after_root = prolog_end.is_none();
@@ -86,7 +107,7 @@ impl Tree {
             } else if !out.is_empty() && !out.ends_with('\n') {
                 out.push('\n');
             }
-            self.write_node(child, out)?;
+            self.write_node_recording(child, out, recorder)?;
         }
         if self.source().ends_with('\n') && !out.ends_with('\n') {
             out.push('\n');
@@ -95,14 +116,20 @@ impl Tree {
     }
 
     pub(super) fn write_node(&self, id: NodeId, out: &mut String) -> Result<(), String> {
+        self.write_node_recording(id, out, &mut Recorder::none())
+    }
+
+    fn write_node_recording(&self, id: NodeId, out: &mut String, recorder: &mut Recorder) -> Result<(), String> {
         if let Some(span) = self.span(id) {
             if self.is_unchanged(id) {
+                recorder.copied(span.clone(), out.len());
                 out.push_str(&self.source()[span]);
                 return Ok(());
             }
         }
+        recorder.at(self, id, out.len());
         match self.kind(id) {
-            NodeKind::Element(element) => self.write_element(id, element, out),
+            NodeKind::Element(element) => self.write_element(id, element, out, recorder),
             NodeKind::Text(text) => write_text(text, out),
             NodeKind::EntityRef(name) => {
                 check_name(name)?;
@@ -154,7 +181,7 @@ impl Tree {
         }
     }
 
-    fn write_element(&self, id: NodeId, element: &Element, out: &mut String) -> Result<(), String> {
+    fn write_element(&self, id: NodeId, element: &Element, out: &mut String, recorder: &mut Recorder) -> Result<(), String> {
         let children = self.children(id);
         let tags = self.tags(id);
         let source = self.source();
@@ -177,7 +204,7 @@ impl Tree {
         out.push_str(&start_tag);
 
         for &child in children {
-            self.write_node(child, out)?;
+            self.write_node_recording(child, out, recorder)?;
         }
 
         // End tag: as written, or new where the element had none
@@ -191,6 +218,52 @@ impl Tree {
             _ => {}
         }
         Ok(())
+    }
+}
+
+/// A document written by [`Tree::write_recording`].
+#[derive(Debug)]
+pub struct Written {
+    pub text: String,
+    /// What went where in `text`, in order
+    pub pieces: Vec<Piece>,
+}
+
+/// A part of a [`Written`] document, starting at an offset of its text.
+#[derive(Debug)]
+pub enum Piece {
+    /// A wanted node, written anew
+    Node(NodeId, usize),
+    /// This range of the original text, copied
+    Copied(Range<usize>, usize),
+}
+
+/// Which nodes a [`Recorder`] notes when they are written anew.
+type Wanted<'a> = &'a dyn Fn(&Tree, NodeId) -> bool;
+
+/// Where things go in the output being written.
+struct Recorder<'a> {
+    wanted: Option<Wanted<'a>>,
+    pieces: Vec<Piece>,
+}
+
+impl Recorder<'_> {
+    fn none() -> Self {
+        Recorder { wanted: None, pieces: Vec::new() }
+    }
+
+    fn at(&mut self, tree: &Tree, id: NodeId, offset: usize) {
+        if let Some(wanted) = self.wanted {
+            if wanted(tree, id) {
+                self.pieces.push(Piece::Node(id, offset));
+            }
+        }
+    }
+
+    fn copied(&mut self, source: Range<usize>, offset: usize) {
+        if self.wanted.is_some() {
+            self.pieces.push(Piece::Copied(source, offset));
+        }
     }
 }
 

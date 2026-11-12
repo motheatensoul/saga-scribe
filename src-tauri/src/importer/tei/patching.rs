@@ -9,10 +9,11 @@
 //! - **Unchanged input is emitted byte-for-byte.** If the edited DSL has the same
 //!   tokens as the import (whitespace-only edits included), the original body is
 //!   returned verbatim.
-//! - **Edits are spliced into the original source.** When source spans are
-//!   available (see [`source_map`](super::source_map)), only the bytes of changed
-//!   segments are replaced. Everything else, including attribute order, entity
-//!   references and formatting, is left untouched.
+//! - **Edits change only what they touch.** The patches are applied to the
+//!   file's tree (see [`apply`](super::apply)), whose writer copies every
+//!   node they don't touch from the original text: attribute order, entity
+//!   references and formatting stay as written. Without the tree (a file
+//!   whose text and tree don't line up), the body is rebuilt from segments.
 //! - **Invalid DSL never reaches the output.** A DSL parse error is returned as an
 //!   error instead of being treated as an empty document.
 //!
@@ -36,6 +37,7 @@
 
 use crate::parser::syntax::break_number_dsl;
 use crate::importer::tei::extraction::segments_to_dsl;
+use crate::importer::tei::apply::{apply_to_tree, TreeSource};
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::{ImportedDocument, Segment};
 use crate::importer::tei::source_map::{set_tag_attribute, tag_attribute, tag_length};
@@ -45,7 +47,6 @@ use crate::identity::{
     PARAGRAPH,
 };
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping, Lexer, Node, WordKey, WordTokenizer};
-use std::ops::Range;
 use std::collections::HashMap;
 
 /// A patch operation describing how to transform a segment.
@@ -594,7 +595,8 @@ pub fn compiler_config_for(doc: &ImportedDocument) -> CompilerConfig {
 /// Renders the body XML for an imported document after applying `patches`.
 ///
 /// - No effective changes: returns `original_body` verbatim.
-/// - Source spans available: splices changes into `original_body`.
+/// - With the document's `tree`: applies the edits to it (see
+///   [`apply`](super::apply)), so only edited nodes are written anew.
 /// - Otherwise: falls back to rebuilding the body from segments, which preserves
 ///   structure but not the exact original formatting.
 ///
@@ -605,6 +607,7 @@ pub fn compiler_config_for(doc: &ImportedDocument) -> CompilerConfig {
 pub fn render_body(
     doc: &ImportedDocument,
     original_body: Option<&str>,
+    tree: Option<&TreeSource>,
     patches: &[PatchOperation],
     compiler: &mut Compiler,
 ) -> Result<RenderedBody, String> {
@@ -623,11 +626,15 @@ pub fn render_body(
     let patches = separate_paragraph_edits(&doc.segments, patches);
     check_paragraph_edits(&doc.segments, &patches)?;
 
-    if let (Some(body), Some(spans)) = (original_body, &doc.spans) {
-        if let Some(rendered) = splice_into_source(body, &doc.segments, spans, &patches, compiler) {
+    if let Some(tree) = tree {
+        if let Some(rendered) = apply_to_tree(tree, &doc.segments, &patches, compiler) {
             return Ok(rendered);
         }
-        log::warn!("Source spans inconsistent with patches; falling back to reconstruction");
+        log::warn!("The edits don't fit the document's tree; falling back to reconstruction");
+        // Tests that give a tree expect it to take the edits
+        if cfg!(test) {
+            panic!("the edits didn't fit the document's tree");
+        }
     }
 
     // Rebuilding inserts at segment boundaries only, which may not be where
@@ -728,7 +735,7 @@ fn separate_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) ->
 
 /// Where paragraph breaks can be inserted or removed, from the document's
 /// element nesting.
-struct ParagraphStructure<'a> {
+pub(super) struct ParagraphStructure<'a> {
     /// Position of each segment in document order, by ID
     position: HashMap<usize, usize>,
     /// The innermost open element after each segment (by position)
@@ -736,7 +743,7 @@ struct ParagraphStructure<'a> {
 }
 
 impl<'a> ParagraphStructure<'a> {
-    fn new(segments: &'a [Segment]) -> Self {
+    pub(super) fn new(segments: &'a [Segment]) -> Self {
         let mut stack: Vec<&str> = Vec::new();
         let mut innermost_after = Vec::with_capacity(segments.len());
         for segment in segments {
@@ -765,7 +772,7 @@ impl<'a> ParagraphStructure<'a> {
     /// is directly inside a paragraph, else after the end tags that follow it
     /// (`maþr</s>` splits after `</s>`). Returns the segment whose end is the
     /// split point, or the innermost element if there is none.
-    fn split_point_after(&self, segments: &[Segment], id: usize) -> Result<usize, Option<&'a str>> {
+    pub(super) fn split_point_after(&self, segments: &[Segment], id: usize) -> Result<usize, Option<&'a str>> {
         let Some(&at) = self.position.get(&id) else { return Err(None) };
         if self.innermost_after[at] == Some("p") {
             return Ok(id);
@@ -786,53 +793,13 @@ impl<'a> ParagraphStructure<'a> {
 
     /// The `</p>` segment that closes the paragraph before paragraph `id`, if
     /// only whitespace lies between them.
-    fn preceding_close<'s>(&self, segments: &'s [Segment], id: usize) -> Option<&'s Segment> {
+    pub(super) fn preceding_close<'s>(&self, segments: &'s [Segment], id: usize) -> Option<&'s Segment> {
         let at = *self.position.get(&id)?;
         segments[..at]
             .iter()
             .rev()
             .find(|s| !matches!(s, Segment::Whitespace { .. }))
             .filter(|s| matches!(s, Segment::Structural { xml, .. } if xml == "</p>" || xml.ends_with(":p>")))
-    }
-
-    /// The bytes deleting segment `id` removes: its own, and those of the
-    /// elements around it that have nothing else left (`<num><w>…</w></num>`
-    /// would read as an empty numeral), up to a block such as `<p>`. Other
-    /// segments in `deleted` count as gone.
-    fn emptied_wrappers(
-        &self,
-        segments: &[Segment],
-        spans: &[Option<(usize, usize)>],
-        id: usize,
-        deleted: &std::collections::HashSet<usize>,
-    ) -> Option<(usize, usize)> {
-        let at = *self.position.get(&id)?;
-        let gone = |s: &Segment| matches!(s, Segment::Whitespace { .. }) || deleted.contains(&s.id());
-        let (mut first, mut last) = (at, at);
-        while let Some(open) = (0..first).rev().find(|&i| !gone(&segments[i])) {
-            let Some(close) = (last + 1..segments.len()).find(|&i| !gone(&segments[i])) else { break };
-            let (Segment::Structural { xml: open_xml, .. }, Segment::Structural { xml: close_xml, .. }) =
-                (&segments[open], &segments[close])
-            else {
-                break;
-            };
-            let Some(name) = close_xml.strip_prefix("</").and_then(|rest| rest.strip_suffix('>')) else { break };
-            let opens = open_xml
-                .strip_prefix('<')
-                .and_then(|rest| rest.strip_prefix(name))
-                .is_some_and(|rest| rest.starts_with(['>', ' ', '\t', '\n', '\r']) && !rest.ends_with("/>"));
-            let local = name.rsplit(':').next().unwrap_or(name);
-            const BLOCKS: &[&str] =
-                &["p", "div", "body", "front", "back", "text", "head", "lg", "l", "ab", "list", "item", "table", "row", "cell"];
-            if !opens || BLOCKS.contains(&local) {
-                break;
-            }
-            (first, last) = (open, close);
-        }
-        if first != at {
-            log::info!("Deleting segment {id} removes the elements left empty around it");
-        }
-        Some(((*spans.get(segments[first].id())?)?.0, (*spans.get(segments[last].id())?)?.1))
     }
 }
 
@@ -931,13 +898,6 @@ struct Output {
 impl Output {
     fn with_capacity(capacity: usize) -> Self {
         Self { xml: String::with_capacity(capacity), origins: Vec::new() }
-    }
-
-    /// Copies `body[range]`; `None` if it isn't a valid range of `body`.
-    fn copy(&mut self, body: &str, range: Range<usize>) -> Option<()> {
-        let text = body.get(range.clone())?;
-        self.push(text, Origin::Source(range.start));
-        Some(())
     }
 
     fn generate(&mut self, text: &str, token: Option<usize>) {
@@ -1085,151 +1045,8 @@ fn word_starts(xml: &str) -> Vec<usize> {
         .collect()
 }
 
-/// Applies patches by replacing only the source bytes of affected segments.
-///
-/// Returns `None` if a referenced segment has no span or spans are not in
-/// document order; the caller then falls back to reconstruction.
-fn splice_into_source(
-    body: &str,
-    segments: &[Segment],
-    spans: &[Option<(usize, usize)>],
-    patches: &[PatchOperation],
-    compiler: &mut Compiler,
-) -> Option<RenderedBody> {
-    let by_id: HashMap<usize, &Segment> = segments.iter().map(|s| (s.id(), s)).collect();
-    let mut edited_words = Vec::new();
-    let structure = ParagraphStructure::new(segments);
-    let deleted: std::collections::HashSet<usize> = patches
-        .iter()
-        .filter_map(|p| match p {
-            PatchOperation::Delete { segment_id } => Some(*segment_id),
-            _ => None,
-        })
-        .collect();
-
-    let mut out = Output::with_capacity(body.len() + 1024);
-    let mut copied_to = 0;
-    // End of the most recent segment touched by a patch; insertions go here.
-    let mut anchor: Option<usize> = None;
-    let mut anchor_segment: Option<usize> = None;
-    // Insertions before the first segment, waiting for a position.
-    let mut pending: Vec<(String, Option<usize>)> = Vec::new();
-
-    for patch in patches {
-        match patch {
-            PatchOperation::Insert { dsl, token } => {
-                // Splits the paragraph (checked by `check_paragraph_edits`)
-                let split = dsl == PARAGRAPH;
-                let fragment = if split {
-                    "</p>\n<p>".to_string()
-                } else {
-                    render_insert(dsl, compiler)
-                };
-                if split {
-                    let after = anchor_segment
-                        .and_then(|id| structure.split_point_after(segments, id).ok())?;
-                    // Later insertions follow the split, inside the new paragraph
-                    anchor = Some((*spans.get(after)?)?.1);
-                }
-                match anchor {
-                    Some(at) => {
-                        out.copy(body, copied_to..at)?;
-                        copied_to = at;
-                        if !split {
-                            out.generate("\n", None);
-                        }
-                        out.generate(fragment.trim_end(), *token);
-                    }
-                    None => pending.push((fragment, *token)),
-                }
-            }
-            PatchOperation::Keep { segment_id }
-            | PatchOperation::Modify { segment_id, .. }
-            | PatchOperation::Delete { segment_id } => {
-                let (start, end) = (*spans.get(*segment_id)?)?;
-                // Deleted already, with a wrapper emptied by deleting another
-                if matches!(patch, PatchOperation::Delete { .. }) && end <= copied_to && deleted.contains(segment_id) {
-                    continue;
-                }
-                if start < copied_to || end > body.len() {
-                    return None;
-                }
-
-                if !pending.is_empty() {
-                    out.copy(body, copied_to..start)?;
-                    copied_to = start;
-                    for (fragment, token) in pending.drain(..) {
-                        out.generate(fragment.trim_end(), token);
-                        out.generate("\n", None);
-                    }
-                }
-
-                match patch {
-                    PatchOperation::Modify { new_dsl, token, fresh, .. } => {
-                        let segment = by_id.get(segment_id)?;
-                        let source = body.get(start..end)?;
-                        let replacement = if *fresh {
-                            render_insert(new_dsl, compiler)
-                        } else {
-                            render_modify(segment, Some(source), new_dsl, compiler)
-                        };
-                        out.copy(body, copied_to..start)?;
-                        if !fresh && keeps_word_data(segment, new_dsl) {
-                            edited_words.push(out.xml.len());
-                        }
-                        out.generate(replacement.trim_end(), *token);
-                        copied_to = end;
-                    }
-                    PatchOperation::Delete { .. } => {
-                        if let Some(Segment::Paragraph { .. }) = by_id.get(segment_id) {
-                            // Merge with the previous paragraph: drop its `</p>`
-                            // and this start tag, keeping what separates them
-                            let close = structure.preceding_close(segments, *segment_id)?;
-                            let (close_start, close_end) = (*spans.get(close.id())?)?;
-                            if close_start < copied_to || close_end > start {
-                                return None;
-                            }
-                            out.copy(body, copied_to..close_start)?;
-                            // What separated them (words must stay apart)
-                            if close_end < start {
-                                out.copy(body, close_end..start)?;
-                            } else {
-                                out.generate("\n", None);
-                            }
-                            copied_to = end;
-                        } else {
-                            // With the wrappers it leaves empty (`<num><w>…</w></num>`)
-                            let (start, end) = structure.emptied_wrappers(segments, spans, *segment_id, &deleted)?;
-                            out.copy(body, copied_to..start)?;
-                            copied_to = end;
-                        }
-                    }
-                    _ => {}
-                }
-                anchor = Some(end);
-                anchor_segment = Some(*segment_id);
-            }
-        }
-    }
-
-    if !pending.is_empty() {
-        // Nothing to anchor to (empty body): insert before the closing body tag.
-        let close = body.rfind("</").filter(|&i| i >= copied_to)?;
-        out.copy(body, copied_to..close)?;
-        copied_to = close;
-        for (fragment, token) in pending.drain(..) {
-            out.generate("\n", None);
-            out.generate(fragment.trim_end(), token);
-        }
-        out.generate("\n", None);
-    }
-
-    out.copy(body, copied_to..body.len())?;
-    Some(out.finish(edited_words))
-}
-
 /// The kind of the first token in a DSL fragment.
-enum TokenKind {
+pub(super) enum TokenKind {
     Word,
     Punctuation,
     LineBreak(Option<String>),
@@ -1237,7 +1054,7 @@ enum TokenKind {
     Other,
 }
 
-fn token_kind(dsl: &str) -> TokenKind {
+pub(super) fn token_kind(dsl: &str) -> TokenKind {
     let nodes = match parse_dsl_nodes(dsl) {
         Ok(nodes) => nodes,
         Err(_) => return TokenKind::Other,
@@ -1253,7 +1070,7 @@ fn token_kind(dsl: &str) -> TokenKind {
 
 /// Whether a modification keeps an imported word's lemma, msa and norm (an
 /// edited `<w>` that is still a word); such words are reported for review.
-fn keeps_word_data(segment: &Segment, new_dsl: &str) -> bool {
+pub(super) fn keeps_word_data(segment: &Segment, new_dsl: &str) -> bool {
     matches!(segment, Segment::Word { original_xml, .. } if is_w_element(original_xml))
         && matches!(token_kind(new_dsl), TokenKind::Word)
 }
@@ -1316,7 +1133,7 @@ fn is_w_element(original_xml: &str) -> bool {
 }
 
 /// Compiles newly inserted DSL in the style of the document (word-wrapped or not).
-fn render_insert(dsl: &str, compiler: &mut Compiler) -> String {
+pub(super) fn render_insert(dsl: &str, compiler: &mut Compiler) -> String {
     if compiler.config().word_wrap {
         compiler.compile_fragment_from_dsl(dsl)
     } else {
@@ -1329,7 +1146,7 @@ fn render_insert(dsl: &str, compiler: &mut Compiler) -> String {
 ///
 /// `source` is the segment's original XML text when known, letting break edits
 /// rewrite only the `n` attribute in place.
-fn render_modify(
+pub(super) fn render_modify(
     segment: &Segment,
     source: Option<&str>,
     new_dsl: &str,

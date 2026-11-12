@@ -994,6 +994,23 @@ fn imported_roundtrip(xml: &str, edit: impl Fn(&str) -> String) -> Result<(Strin
     imported_render(xml, edit).map(|(original, rendered)| (original, rendered.xml))
 }
 
+/// The file of an import as a tree, with its segments' places.
+fn tree_source(
+    preamble: &Option<String>,
+    body: &str,
+    postamble: &Option<String>,
+    doc: &crate::importer::tei::segments::ImportedDocument,
+) -> Option<crate::importer::tei::apply::TreeSource> {
+    crate::importer::tei::apply::TreeSource::new(
+        preamble.as_deref().unwrap_or_default(),
+        body,
+        postamble.as_deref().unwrap_or_default(),
+        &doc.segments,
+        doc.spans.as_deref()?,
+    )
+    .ok()
+}
+
 /// Like [`imported_roundtrip`], with the full render result.
 fn imported_render(
     xml: &str,
@@ -1004,7 +1021,8 @@ fn imported_render(
     let original_body = import.original_body_xml.expect("body");
     let patches = compute_patches(&doc.segments, doc.dsl_rules, &edit(&import.dsl))?;
     let mut compiler = Compiler::new().with_config(compiler_config_for(&doc));
-    let body = render_body(&doc, Some(&original_body), &patches, &mut compiler)?;
+    let tree = tree_source(&import.original_preamble, &original_body, &import.original_postamble, &doc);
+    let body = render_body(&doc, Some(&original_body), tree.as_ref(), &patches, &mut compiler)?;
     Ok((original_body, body))
 }
 
@@ -1479,6 +1497,7 @@ fn change_between(old: &str, new: &str) -> TextChange {
 struct Session {
     doc: crate::importer::tei::segments::ImportedDocument,
     body: String,
+    tree: Option<crate::importer::tei::apply::TreeSource>,
     patcher: Patcher,
     dsl: String,
 }
@@ -1488,7 +1507,10 @@ impl Session {
         let import = parse(xml).unwrap();
         let doc = import.imported_document.unwrap();
         let patcher = Patcher::new(&doc.segments, doc.dsl_rules);
-        let mut session = Session { doc, body: import.original_body_xml.unwrap(), patcher, dsl: import.dsl.clone() };
+        let body = import.original_body_xml.unwrap();
+        let tree = tree_source(&import.original_preamble, &body, &import.original_postamble, &doc);
+        assert!(tree.is_some(), "the file maps onto its segments");
+        let mut session = Session { doc, body, tree, patcher, dsl: import.dsl.clone() };
         session.compile(&import.dsl, false).unwrap();
         session
     }
@@ -1504,7 +1526,7 @@ impl Session {
         let guidance = Guidance { base_revision: self.patcher.revision(), changes: vec![change] };
         let (patches, state) = self.patcher.compute(dsl, (!blind).then_some(&guidance))?;
         let mut compiler = Compiler::new().with_config(compiler_config_for(&self.doc));
-        let body = render_body(&self.doc, Some(&self.body), &patches, &mut compiler)?;
+        let body = render_body(&self.doc, Some(&self.body), self.tree.as_ref(), &patches, &mut compiler)?;
         self.patcher.commit(state);
         self.dsl = dsl.to_string();
         Ok(body.xml)

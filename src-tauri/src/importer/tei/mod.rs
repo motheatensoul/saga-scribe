@@ -48,6 +48,7 @@ pub mod helpers;
 pub mod segments;
 pub mod extraction;
 pub mod patching;
+pub mod apply;
 pub mod source_map;
 mod importer;
 

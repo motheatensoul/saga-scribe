@@ -2,6 +2,7 @@ use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
 use crate::identity::{numbers_by_key, renumbering, Guidance, Renumbering, Tracked};
 use crate::importer::tei::patching::{compiler_config_for, render_body, write_lemmas, Patcher};
+use crate::importer::tei::apply::TreeSource;
 use crate::importer::tei::segments::ImportedDocument;
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping, WordKey};
@@ -187,13 +188,16 @@ pub struct ImportedSource {
     postamble: String,
     /// Which word is which across edits; built on the first compile
     patcher: Option<Patcher>,
+    /// The file as a tree, edits are applied to; built on the first compile
+    /// (`Some(None)` if the file couldn't be mapped onto its segments)
+    tree: Option<Option<TreeSource>>,
     /// The key of every word of the last compile, in document order
     words: Option<Vec<WordKey>>,
 }
 
 impl ImportedSource {
     pub fn new(document: ImportedDocument, original_body_xml: String, preamble: String, postamble: String) -> Self {
-        Self { document, original_body_xml, preamble, postamble, patcher: None, words: None }
+        Self { document, original_body_xml, preamble, postamble, patcher: None, tree: None, words: None }
     }
 }
 
@@ -349,10 +353,26 @@ pub(crate) fn compile_imported_source(
     let (patches, state) = patcher.compute(edited_dsl, guidance)?;
     timer.lap("compile.compute_patches", [("patches", patches.len().into())]);
 
-    // Apply patches to the original body XML
+    // Apply patches to the document's tree (made on the first edit: the
+    // unedited document is the original body)
+    let edits = patches.iter().any(|p| !matches!(p, crate::importer::tei::patching::PatchOperation::Keep { .. }));
+    let tree = if !edits { &None } else { source.tree.get_or_insert_with(|| {
+        let spans = source.document.spans.as_deref()?;
+        TreeSource::new(
+            &source.preamble,
+            &source.original_body_xml,
+            &source.postamble,
+            &source.document.segments,
+            spans,
+        )
+        .inspect_err(|e| log::warn!("The imported file couldn't be mapped onto its segments ({e}); edits rebuild its body"))
+        .ok()
+    }) };
+    timer.lap("compile.tree", []);
     let body = render_body(
         &source.document,
         Some(&source.original_body_xml),
+        tree.as_ref(),
         &patches,
         compiler,
     )?;

@@ -335,7 +335,7 @@ fn corpus_unchanged_import_round_trips() {
             }
             let patches = compute_patches(&doc.segments, doc.dsl_rules, &import.dsl)?;
             let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc));
-            let body = render_body(&doc, Some(&original), &patches, &mut compiler)?;
+            let body = render_body(&doc, Some(&original), Some(&gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?), &patches, &mut compiler)?;
             if body.xml != original {
                 return Err("the unedited body changed".into());
             }
@@ -429,7 +429,7 @@ fn corpus_edited_words_keep_their_markup() {
             let guidance = Guidance { base_revision: patcher.revision(), changes };
             let (patches, _) = patcher.compute(&dsl, Some(&guidance))?;
             let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc));
-            let body = render_body(&doc, Some(&original), &patches, &mut compiler)?;
+            let body = render_body(&doc, Some(&original), Some(&gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?), &patches, &mut compiler)?;
             let written = format!(
                 "{}{}{}",
                 import.original_preamble.unwrap_or_default(),
@@ -462,6 +462,23 @@ fn corpus_edited_words_keep_their_markup() {
         }
     }
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
+}
+
+/// The imported file as a tree, as the app edits it.
+fn gate_tree(
+    preamble: &Option<String>,
+    body: &str,
+    postamble: &Option<String>,
+    doc: &crate::importer::tei::segments::ImportedDocument,
+) -> Result<crate::importer::tei::apply::TreeSource, String> {
+    crate::importer::tei::apply::TreeSource::new(
+        preamble.as_deref().unwrap_or_default(),
+        body,
+        postamble.as_deref().unwrap_or_default(),
+        &doc.segments,
+        doc.spans.as_deref().ok_or("no spans")?,
+    )
+    .map_err(|e| format!("the file doesn't map onto its segments: {e}"))
 }
 
 /// One edit of the corpus gate below: `range` of the shorthand becomes
@@ -503,7 +520,7 @@ fn put_edits(source: &str, edits: &[GateEdit]) -> Result<(String, String, String
     let guidance = Guidance { base_revision: patcher.revision(), changes };
     let (patches, _) = patcher.compute(&dsl, Some(&guidance))?;
     let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc));
-    let body = render_body(&doc, Some(&original), &patches, &mut compiler)?;
+    let body = render_body(&doc, Some(&original), Some(&gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?), &patches, &mut compiler)?;
     Ok((dsl, original, body.xml))
 }
 
