@@ -1712,3 +1712,32 @@ fn test_break_numbers_and_supplied_markup_read_as_tokens() {
     let (_, body) = imported_roundtrip(&xml, |d| d.replace("yct", "ycth")).unwrap();
     assert!(body.contains(r#"<me:dipl>sa<supplied resp="ed">m<lb n="14"/>þ</supplied>ycth</me:dipl>"#), "{body}");
 }
+
+#[test]
+fn test_letter_typed_at_the_end_goes_inside_layout_whitespace() {
+    // AM 619 4to, Holm A 80: levels laid out on lines of their own
+    let xml = menota_body("<w>\n<me:dipl> <ex>ok</ex> </me:dipl>\n</w> <w><me:dipl>mælom</me:dipl></w>");
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("ok", "okk", 1)).unwrap();
+    assert!(body.contains("<me:dipl> <ex>ok</ex>k </me:dipl>"), "{body}");
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("ok", "kok", 1)).unwrap();
+    assert!(body.contains("<me:dipl> k<ex>ok</ex> </me:dipl>"), "{body}");
+}
+
+#[test]
+fn test_deleting_the_only_word_of_a_wrapper_removes_the_wrapper() {
+    // DN bind 4 nr 19: a numeral written as a word, `<num><w>…</w></num>`
+    let xml = menota_body(
+        r#"<w><me:dipl>alen</me:dipl></w> <num n="50"><w><me:dipl>fímtígí</me:dipl></w></num> <w><me:dipl>en</me:dipl></w>"#,
+    );
+    assert_eq!(parse(&xml).unwrap().dsl, ".p alen fímtígí en");
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace(" fímtígí", "")).unwrap();
+    assert_eq!(body, original.replace(r#"<num n="50"><w><me:dipl>fímtígí</me:dipl></w></num>"#, ""));
+    // A wrapper with something else left in it stays
+    let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w> <s><w><me:dipl>b</me:dipl></w> <w><me:dipl>c</me:dipl></w></s>"#);
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace(" b", "")).unwrap();
+    assert_eq!(body, original.replace(r#"<w><me:dipl>b</me:dipl></w>"#, ""));
+    // So does a paragraph or division, even if empty
+    let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w></p><p><w><me:dipl>b</me:dipl></w>"#);
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace(" b", "")).unwrap();
+    assert_eq!(body, original.replace(r#"<w><me:dipl>b</me:dipl></w>"#, ""));
+}

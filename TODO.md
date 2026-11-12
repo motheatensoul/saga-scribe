@@ -5,7 +5,7 @@ when it is done (and record it in CHANGELOG.md if users notice).
 
 ## Interface
 
-- **Accessibility review, remaining parts.** Done so far (dialog focus, tab keys, names,
+- (PENDING USER TESTING)**Accessibility review, remaining parts.** Done so far (dialog focus, tab keys, names,
   contrast) and the rules that follow are in "Accessibility" in
   `docs/UI_STANDARDS.md`; record new findings there too. Still to do:
   - keyboard: work through the main workflow in the running app with the keyboard alone,
@@ -23,9 +23,10 @@ when it is done (and record it in CHANGELOG.md if users notice).
   as lenses, and a project profile for transcription levels: `docs/DOCUMENT_MODEL.md`
   (design agreed 2026-11-11). Done: steps 1, 2 and 3a (an edited word keeps the markup
   the shorthand doesn't show), and the shorthand of all 288 Menota files reads as their
-  words token for token (DSL rules 3 and 4, 2026-11-12), which 3b needs. **Next: 3b**,
-  operations on the tree instead of segments, with replaced/removed word records and the
-  GetPut, PutGet and Locality gates (see the steps in the design). It comes before the
+  words token for token (DSL rules 3 and 4, 2026-11-12), which 3b needs. The 3b gates
+  (GetPut, PutGet, Locality: `corpus_edits_are_put_back_locally`) pass with today's patcher
+  (2026-11-12). **Next in 3b:** operations on the tree instead of segments, and
+  replaced/removed word records (see the steps in the design). It comes before the
   shorthand redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).
@@ -130,7 +131,4 @@ when it is done (and record it in CHANGELOG.md if users notice).
 
 ## Distribution
 
-- **Flatpak remote**: Flathub's policy on AI-assisted submissions probably rules it out
-  for now, so publishing would need our own repository. Until then the `.flatpak` bundle
-  on the releases page is the way to install. Screenshots for the metadata are in
-  `docs/screenshots/`; retake them when the interface changes noticeably.
+- **Flatpak remote**: As mentioned in the documentation, flathub distribution, if desired, would require the flatpak manifest and all related files to be untouched by agents. Given the rather specialized use-case for the app (almost 0 usage to someone not working with manuscripts, so basically worthless to genpop), setting up a flatpak remote on the server would probably be best for ensuring updates.

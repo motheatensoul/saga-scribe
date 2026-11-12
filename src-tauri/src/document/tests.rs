@@ -463,3 +463,199 @@ fn corpus_edited_words_keep_their_markup() {
     }
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
 }
+
+/// One edit of the corpus gate below: `range` of the shorthand becomes
+/// `text`, and `region` of the original body is all the XML it may change.
+struct GateEdit {
+    range: std::ops::Range<usize>,
+    text: String,
+    region: std::ops::Range<usize>,
+}
+
+/// Applies `edits` (sorted, apart) to the imported shorthand as the editor
+/// would, with guidance, and returns the edited shorthand, the original body
+/// and the written one.
+fn put_edits(source: &str, edits: &[GateEdit]) -> Result<(String, String, String), String> {
+    use crate::identity::{Guidance, TextChange};
+    use crate::importer::tei::patching::{compiler_config_for, render_body, Patcher};
+    let import = crate::importer::tei::parse(source)?;
+    let doc = import.imported_document.ok_or("no manifest")?;
+    let original = import.original_body_xml.clone().ok_or("no body")?;
+
+    let utf16 = |text: &str| text.encode_utf16().count();
+    let mut dsl = String::with_capacity(import.dsl.len());
+    let mut changes = Vec::new();
+    let mut copied = 0;
+    for edit in edits {
+        dsl.push_str(&import.dsl[copied..edit.range.start]);
+        let from_b = utf16(&dsl);
+        let from_a = utf16(&import.dsl[..edit.range.start]);
+        let to_a = from_a + utf16(&import.dsl[edit.range.clone()]);
+        dsl.push_str(&edit.text);
+        changes.push(TextChange { from_a, to_a, from_b, to_b: utf16(&dsl) });
+        copied = edit.range.end;
+    }
+    dsl.push_str(&import.dsl[copied..]);
+
+    let mut patcher = Patcher::new(&doc.segments, doc.dsl_rules);
+    let (_, state) = patcher.compute(&import.dsl, None)?;
+    patcher.commit(state);
+    let guidance = Guidance { base_revision: patcher.revision(), changes };
+    let (patches, _) = patcher.compute(&dsl, Some(&guidance))?;
+    let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc));
+    let body = render_body(&doc, Some(&original), &patches, &mut compiler)?;
+    Ok((dsl, original, body.xml))
+}
+
+/// Whether `out` is `original` with only `regions` (sorted, apart) replaced:
+/// the text between them comes through, in order.
+fn changed_only(original: &str, out: &str, regions: &[std::ops::Range<usize>]) -> Result<(), String> {
+    let mut gaps = Vec::new();
+    let mut from = 0;
+    for region in regions {
+        gaps.push(&original[from..region.start]);
+        from = region.end;
+    }
+    let last = &original[from..];
+    let mut at = 0;
+    for (i, gap) in gaps.iter().enumerate() {
+        let found = if i == 0 { out.starts_with(gap).then_some(0) } else { out[at..].find(gap).map(|k| at + k) };
+        let Some(found) = found else {
+            let shown: String = gap.chars().take(80).collect();
+            return Err(format!("the XML between edits {} and {} changed: {shown:?}", i.max(1) - 1, i));
+        };
+        at = found + gap.len();
+    }
+    if !out.ends_with(last) || out.len() - last.len() < at {
+        return Err("the XML after the last edit changed".into());
+    }
+    Ok(())
+}
+
+/// `region` of `body` with the elements around it that hold nothing else,
+/// short of a paragraph.
+fn with_emptied_wrappers(body: &str, mut region: std::ops::Range<usize>) -> std::ops::Range<usize> {
+    loop {
+        let before = body[..region.start].trim_end();
+        let after = body[region.end..].trim_start();
+        let Some(open) = before.rfind('<').filter(|_| before.ends_with('>')) else { return region };
+        let tag = &before[open + 1..before.len() - 1];
+        let name = tag.split(|c: char| c.is_whitespace()).next().unwrap_or_default();
+        let close = format!("</{name}>");
+        if name.is_empty() || tag.ends_with('/') || "/!?".contains(&name[..1]) || name == "p" || !after.starts_with(&close) {
+            return region;
+        }
+        region = open..body.len() - after.len() + close.len();
+    }
+}
+
+/// Gates of step 3b, PutGet and Locality, on every file: words are edited in
+/// the shorthand in each way an editor does (a letter added or removed, a
+/// word deleted, inserted or replaced by another, a line number changed).
+/// The written file reads back as the edited shorthand, token for token, and
+/// its XML differs from the original only where the edited words were.
+#[test]
+fn corpus_edits_are_put_back_locally() {
+    use crate::importer::tei::patching::{dsl_tokens, segment_dsl_token};
+    use crate::importer::tei::segments::Segment;
+    let files = corpus_files();
+    let mut failures = Vec::new();
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let result = (|| -> Result<usize, String> {
+            let import = crate::importer::tei::parse(&source)?;
+            let doc = import.imported_document.ok_or("no manifest")?;
+            let segment_spans = doc.spans.clone().ok_or("no spans")?;
+            let (_, token_spans) = crate::identity::spanned_dsl_tokens(&import.dsl)?;
+            let tokens: Vec<&Segment> = doc.segments.iter().filter(|s| segment_dsl_token(s).is_some()).collect();
+            if tokens.len() != token_spans.len() {
+                return Err(format!("{} segments read as {} tokens", tokens.len(), token_spans.len()));
+            }
+            let dsl = &import.dsl;
+            let body = import.original_body_xml.clone().ok_or("no body")?;
+            let apart = |span: &std::ops::Range<usize>| {
+                (span.start == 0 || dsl[..span.start].ends_with([' ', '\n']))
+                    && (span.end == dsl.len() || dsl[span.end..].starts_with([' ', '\n']))
+            };
+            let xml_span = |segment: &Segment| -> Option<std::ops::Range<usize>> {
+                let (start, end) = (*segment_spans.get(segment.id())?)?;
+                Some(start..end)
+            };
+
+            // Candidates: plain words and numbered line breaks standing apart
+            let mut edits = Vec::new();
+            let mut kind = 0;
+            let mut last_edited = None;
+            for (i, (segment, span)) in tokens.iter().zip(&token_spans).enumerate() {
+                if i % 40 != 39 || !apart(span) || last_edited.is_some_and(|l| i - l < 3) {
+                    continue;
+                }
+                let text = &dsl[span.clone()];
+                let Some(region) = xml_span(segment) else { continue };
+                let edit = match segment {
+                    Segment::Word { original_xml, .. }
+                        if original_xml.starts_with("<w") && text.chars().all(char::is_alphabetic) =>
+                    {
+                        kind += 1;
+                        match kind % 5 {
+                            0 => GateEdit { range: span.end..span.end, text: "ꝸ".into(), region },
+                            1 => {
+                                let last = text.char_indices().last().map_or(0, |(k, _)| k);
+                                if text.len() < 2 {
+                                    continue;
+                                }
+                                GateEdit { range: span.start + last..span.end, text: String::new(), region }
+                            }
+                            // Deleted with the space before it, and with the
+                            // elements it leaves empty
+                            2 if span.start > 0 => GateEdit {
+                                range: span.start - 1..span.end,
+                                text: String::new(),
+                                region: with_emptied_wrappers(&body, region),
+                            },
+                            3 => GateEdit { range: span.end..span.end, text: " ꝸꝸ".into(), region: region.end..region.end },
+                            _ => GateEdit { range: span.clone(), text: "ꝸꝸꝸ".into(), region },
+                        }
+                    }
+                    Segment::LineBreak { .. } if text.len() > 2 && text[2..].chars().all(|c| c.is_ascii_digit()) => {
+                        GateEdit { range: span.clone(), text: "//{ꝸ1}".into(), region }
+                    }
+                    _ => continue,
+                };
+                last_edited = Some(i);
+                edits.push(edit);
+            }
+            if edits.is_empty() {
+                return Ok(0);
+            }
+
+            let (edited, original, written) = put_edits(&source, &edits)?;
+            let regions: Vec<_> = edits.iter().map(|e| e.region.clone()).collect();
+            changed_only(&original, &written, &regions)?;
+
+            let file = format!(
+                "{}{}{}",
+                import.original_preamble.unwrap_or_default(),
+                written,
+                import.original_postamble.unwrap_or_default()
+            );
+            let reread = crate::importer::tei::parse(&file).map_err(|e| format!("doesn't read: {e}"))?;
+            let (got, want) = (dsl_tokens(&reread.dsl)?, dsl_tokens(&edited)?);
+            if got != want {
+                let i = got.iter().zip(&want).position(|(a, b)| a != b).unwrap_or(got.len().min(want.len()));
+                let around = |t: &[String]| t[i.saturating_sub(2)..(i + 3).min(t.len())].join(" ");
+                return Err(format!("reads back differently at token {i}: {:?}, typed {:?}", around(&got), around(&want)));
+            }
+            Ok(edits.len())
+        })();
+        match result {
+            Ok(n) => eprintln!("ok      {name} ({n} edits)"),
+            Err(e) => {
+                eprintln!("FAILED  {name}: {e}");
+                failures.push(name);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
+}

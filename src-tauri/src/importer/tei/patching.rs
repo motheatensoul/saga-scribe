@@ -794,6 +794,46 @@ impl<'a> ParagraphStructure<'a> {
             .find(|s| !matches!(s, Segment::Whitespace { .. }))
             .filter(|s| matches!(s, Segment::Structural { xml, .. } if xml == "</p>" || xml.ends_with(":p>")))
     }
+
+    /// The bytes deleting segment `id` removes: its own, and those of the
+    /// elements around it that have nothing else left (`<num><w>…</w></num>`
+    /// would read as an empty numeral), up to a block such as `<p>`. Other
+    /// segments in `deleted` count as gone.
+    fn emptied_wrappers(
+        &self,
+        segments: &[Segment],
+        spans: &[Option<(usize, usize)>],
+        id: usize,
+        deleted: &std::collections::HashSet<usize>,
+    ) -> Option<(usize, usize)> {
+        let at = *self.position.get(&id)?;
+        let gone = |s: &Segment| matches!(s, Segment::Whitespace { .. }) || deleted.contains(&s.id());
+        let (mut first, mut last) = (at, at);
+        while let Some(open) = (0..first).rev().find(|&i| !gone(&segments[i])) {
+            let Some(close) = (last + 1..segments.len()).find(|&i| !gone(&segments[i])) else { break };
+            let (Segment::Structural { xml: open_xml, .. }, Segment::Structural { xml: close_xml, .. }) =
+                (&segments[open], &segments[close])
+            else {
+                break;
+            };
+            let Some(name) = close_xml.strip_prefix("</").and_then(|rest| rest.strip_suffix('>')) else { break };
+            let opens = open_xml
+                .strip_prefix('<')
+                .and_then(|rest| rest.strip_prefix(name))
+                .is_some_and(|rest| rest.starts_with(['>', ' ', '\t', '\n', '\r']) && !rest.ends_with("/>"));
+            let local = name.rsplit(':').next().unwrap_or(name);
+            const BLOCKS: &[&str] =
+                &["p", "div", "body", "front", "back", "text", "head", "lg", "l", "ab", "list", "item", "table", "row", "cell"];
+            if !opens || BLOCKS.contains(&local) {
+                break;
+            }
+            (first, last) = (open, close);
+        }
+        if first != at {
+            log::info!("Deleting segment {id} removes the elements left empty around it");
+        }
+        Some(((*spans.get(segments[first].id())?)?.0, (*spans.get(segments[last].id())?)?.1))
+    }
 }
 
 /// What stays between two merged paragraphs: the whitespace that separated
@@ -1059,6 +1099,13 @@ fn splice_into_source(
     let by_id: HashMap<usize, &Segment> = segments.iter().map(|s| (s.id(), s)).collect();
     let mut edited_words = Vec::new();
     let structure = ParagraphStructure::new(segments);
+    let deleted: std::collections::HashSet<usize> = patches
+        .iter()
+        .filter_map(|p| match p {
+            PatchOperation::Delete { segment_id } => Some(*segment_id),
+            _ => None,
+        })
+        .collect();
 
     let mut out = Output::with_capacity(body.len() + 1024);
     let mut copied_to = 0;
@@ -1100,6 +1147,10 @@ fn splice_into_source(
             | PatchOperation::Modify { segment_id, .. }
             | PatchOperation::Delete { segment_id } => {
                 let (start, end) = (*spans.get(*segment_id)?)?;
+                // Deleted already, with a wrapper emptied by deleting another
+                if matches!(patch, PatchOperation::Delete { .. }) && end <= copied_to && deleted.contains(segment_id) {
+                    continue;
+                }
                 if start < copied_to || end > body.len() {
                     return None;
                 }
@@ -1145,10 +1196,13 @@ fn splice_into_source(
                             } else {
                                 out.generate("\n", None);
                             }
+                            copied_to = end;
                         } else {
+                            // With the wrappers it leaves empty (`<num><w>…</w></num>`)
+                            let (start, end) = structure.emptied_wrappers(segments, spans, *segment_id, &deleted)?;
                             out.copy(body, copied_to..start)?;
+                            copied_to = end;
                         }
-                        copied_to = end;
                     }
                     _ => {}
                 }

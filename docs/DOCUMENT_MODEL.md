@@ -309,7 +309,13 @@ text).
      Gate: in every file, every 25th word edited keeps all elements.
    - **3b, operations:** the tree replaces segments; replaced and removed words are kept
      as records; GetPut and PutGet on every file; a fuzzed edit in every word keeps all
-     markup outside the edited range (Locality); the existing round-trip tests.
+     markup outside the edited range (Locality); the existing round-trip tests. The
+     gates came first and pass with the patcher of 3a (2026-11-12):
+     `corpus_unchanged_import_round_trips` (GetPut) and `corpus_edits_are_put_back_locally`,
+     which in every file edits every 40th token in each way an editor does (a letter added
+     or removed, a word deleted, inserted or replaced by another, a line number changed),
+     reads the written file back as the edited shorthand (PutGet) and checks that only the
+     edited words' bytes changed, with any element they leave empty (Locality).
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
    and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,
    shorthand in `<…>`) brought that from 94 to all 288 files. Gate:

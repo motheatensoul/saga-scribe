@@ -328,24 +328,20 @@ fn merge_level(ours: &Flat, theirs_old: &Flat, theirs_new: &Flat) -> Option<(Fla
     for (i, j) in common(&old_keys, &our_keys)? {
         to_ours[i] = Some(j);
     }
-    // A position between atoms of the old version, in ours
-    // (from the atoms on either side; where ours has other atoms between
-    // them, the position is ambiguous)
-    // (the start and the end of the old version are those of ours)
+    // A position between atoms of the old version, in ours, from the atoms
+    // on either side; where ours has other atoms between them, the position
+    // is ambiguous. At the ends, text goes next to the atom the shorthand
+    // shows, inside layout around it (`<me:dipl> <ex>ok</ex> </me:dipl>`)
     let position_in_ours = |p: usize| -> Option<usize> {
-        // (an empty old version: what is typed goes after what ours has)
-        if p == old_keys.len() {
-            return Some(our_keys.len());
-        }
-        if p == 0 {
-            return Some(0);
-        }
-        let left = to_ours[p - 1].map(|w| w + 1);
-        let right = to_ours[p];
+        let left = p.checked_sub(1).and_then(|q| to_ours[q]).map(|w| w + 1);
+        let right = to_ours.get(p).copied().flatten();
         match (left, right) {
             (Some(a), Some(b)) => (a == b).then_some(a),
             (Some(a), None) => Some(a),
             (None, Some(b)) => Some(b),
+            // An empty old version: what is typed goes after what ours has
+            (None, None) if p == old_keys.len() => Some(our_keys.len()),
+            (None, None) if p == 0 => Some(0),
             (None, None) => None,
         }
     };
