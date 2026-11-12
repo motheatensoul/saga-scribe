@@ -68,6 +68,10 @@ pub enum SyntaxKind {
     Unclear { content: Span },
     /// `:name:`
     Entity { name: Span },
+    /// `\c`: the character `c` as text (`char` is its span)
+    Literal { char: Span },
+    /// `#dsl#`: a numeral
+    Numeral { content: Span, children: Vec<SyntaxNode> },
     /// `~` before a line or page break
     WordContinuation,
     /// `~` between word parts
@@ -151,12 +155,30 @@ pub fn lower(nodes: &[SyntaxNode], source: &str) -> Vec<Node> {
             SyntaxKind::Norm { content, .. } => Node::Norm(text(content)),
             SyntaxKind::Unclear { content } => Node::Unclear(text(content)),
             SyntaxKind::Entity { name } => Node::Entity(text(name)),
+            SyntaxKind::Literal { char } => Node::Literal(text(char)),
+            SyntaxKind::Numeral { content, .. } => Node::Numeral(text(content)),
             SyntaxKind::WordContinuation => Node::WordContinuation,
             SyntaxKind::CompoundJoin => Node::CompoundJoin,
             SyntaxKind::WordBoundary => Node::WordBoundary,
             SyntaxKind::ParagraphBreak => Node::ParagraphBreak,
         })
         .collect()
+}
+
+/// Construct content as text: each `\\c` is `c`.
+pub fn unescape(content: &str) -> std::borrow::Cow<'_, str> {
+    if !content.contains('\\') {
+        return std::borrow::Cow::Borrowed(content);
+    }
+    let mut out = String::with_capacity(content.len());
+    let mut chars = content.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => out.push(chars.next().unwrap_or('\\')),
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 /// Why a construct could not be parsed.
@@ -216,7 +238,26 @@ impl<'a> Parser<'a> {
             // A construct parser returns the node, or why it failed after
             // consuming `opener` bytes. On failure the opener becomes text.
             let attempt: Option<(usize, Result<Vec<SyntaxNode>, Failure>)> =
-                if rest.starts_with("///") {
+                if rest.starts_with('\\') && rest.len() > 1 {
+                    // Any character after a backslash is text (a backslash
+                    // at the very end is itself text)
+                    flush_text!(start);
+                    self.pos += 1;
+                    let char_start = self.pos;
+                    self.advance();
+                    let char = char_start..self.pos;
+                    Some((1, Ok(vec![self.node(SyntaxKind::Literal { char }, start)])))
+                } else if rest.starts_with('#') {
+                    flush_text!(start);
+                    self.pos += 1;
+                    let result = self.consume_until('#').map(|content| {
+                        let mut inner = Parser::new(self.src, content.clone(), true);
+                        let children = inner.parse_sequence();
+                        self.diagnostics.extend(inner.diagnostics);
+                        vec![self.node(SyntaxKind::Numeral { content, children }, start)]
+                    });
+                    Some((1, result))
+                } else if rest.starts_with("///") {
                     flush_text!(start);
                     self.pos += 3;
                     let number = self.consume_until_whitespace();
@@ -425,6 +466,8 @@ impl<'a> Parser<'a> {
                 depth += 1;
             } else if (c == '}' || c == ']' || c == '>') && depth > 1 {
                 depth -= 1;
+            } else if c == '\\' {
+                self.advance();
             }
             self.advance();
         }
@@ -445,6 +488,8 @@ impl<'a> Parser<'a> {
                 }
             } else if c == '{' {
                 depth += 1;
+            } else if c == '\\' {
+                self.advance();
             }
             self.advance();
         }
@@ -459,6 +504,9 @@ impl<'a> Parser<'a> {
                 let content = start..self.pos;
                 self.advance();
                 return Ok(content);
+            }
+            if c == '\\' {
+                self.advance();
             }
             self.advance();
         }

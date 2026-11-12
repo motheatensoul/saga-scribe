@@ -1,14 +1,14 @@
 //! The shorthand view of a tree (step 2 of `docs/DOCUMENT_MODEL.md`).
 //!
 //! [`project_body`] turns the `<body>` of a [`Tree`] into the segments the
-//! patcher works with, rule for rule as the importer's extractor
-//! (`importer/tei/extraction.rs`) did on libxml2's tree, and records which
-//! tree node each segment comes from. `segments_to_dsl` writes the shorthand
-//! from the segments.
+//! patcher works with, and records which tree node each segment comes from.
+//! `segments_to_dsl` writes the shorthand from the segments. Its rules began
+//! as the old extractor's on libxml2's tree; since DSL rules 3 every word,
+//! numeral and punctuation is one token of the shorthand (escaped
+//! characters, `#…#`, separated neighbours).
 //!
-//! Two differences from the extractor: a segment's `original_xml` is the
-//! node's text as written in the file (the extractor wrote it again, losing
-//! the attribute order), and the spans come from the tree.
+//! A segment's `original_xml` is the node's text as written in the file,
+//! and the spans come from the tree.
 
 use super::tree::{NodeId, NodeKind, Tree};
 use crate::importer::tei::extraction::join_written_words;
@@ -16,6 +16,86 @@ use crate::importer::tei::helpers::{escape_xml_attr, escape_xml_text};
 use crate::importer::tei::segments::{Segment, SourceSpans};
 use crate::importer::tei::source_map::SourceCursor;
 use std::collections::HashMap;
+
+/// What a text's characters are part of in the shorthand, which decides the
+/// ones written with `\` before them (DSL rules 3). Writing more of them than
+/// needed is harmless (an escaped character is the character), fewer would
+/// make the shorthand read differently from the XML.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TextContext {
+    /// A word, punctuation or block content: syntax, and the punctuation the
+    /// tokenizer splits words at
+    Token,
+    /// `#…#`: syntax
+    Numeral,
+    /// `-{…}-`, `+{…}+`, `?{…}?`: what could close the construct
+    Inline,
+    /// `<…>`
+    Angle,
+    /// `^{…}`: only braces nest in a note
+    Note,
+}
+
+/// `text` with a backslash before each character that would otherwise be
+/// read as something else in `context`.
+fn escape_dsl(text: &str, context: TextContext) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    for (i, &c) in chars.iter().enumerate() {
+        let next = chars.get(i + 1).copied();
+        let double_slash = c == '/' && next == Some('/');
+        let escape = match context {
+            TextContext::Token => {
+                double_slash
+                    || matches!(
+                        c,
+                        '\\' | '#' | '|' | '~' | '<' | '>' | '[' | ']' | '{' | '}' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?'
+                    )
+            }
+            TextContext::Numeral => {
+                // `.p` standalone is a paragraph; `.abbr[` and the like have
+                // their bracket escaped
+                let paragraph = c == '.' && next == Some('p') && chars.get(i + 2).is_none_or(|c| c.is_whitespace());
+                double_slash
+                    || paragraph
+                    || matches!(c, '\\' | '#' | '|' | '~' | '<' | '>' | '[' | ']' | '{' | '}' | ':')
+            }
+            TextContext::Inline => matches!(c, '\\' | '#' | '{' | '}' | '[' | ']' | '<' | '>'),
+            TextContext::Angle => matches!(c, '\\' | '#' | '>'),
+            TextContext::Note => matches!(c, '\\' | '#' | '{' | '}'),
+        };
+        if escape {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Punctuation's shorthand with its first character unescaped where that
+/// reads the same (`\,\,` → `,\,`: escaped characters after punctuation
+/// continue it).
+fn punctuation_dsl(dsl: String) -> String {
+    // Also inside a normalized-only form, `.norm{\,}`
+    let at = if dsl.starts_with(".norm{") { 6 } else { 0 };
+    let mut chars = dsl[at..].chars();
+    if chars.next() != Some('\\') || !chars.next().is_some_and(|c| ".,;:!?()[]".contains(c)) {
+        return dsl;
+    }
+    let plain = format!("{}{}", &dsl[..at], &dsl[at + 1..]);
+    let plain = plain.as_str();
+    let tokens = |dsl: &str| {
+        crate::parser::Lexer::new(dsl)
+            .parse()
+            .map(|doc| crate::parser::WordTokenizer::new().tokenize(doc.nodes))
+            .ok()
+    };
+    match (tokens(plain).as_deref(), tokens(&dsl).as_deref()) {
+        (Some([crate::parser::Node::Punctuation(_)]), _) => plain.to_string(),
+        (Some([crate::parser::Node::Norm(_)]), Some([crate::parser::Node::Norm(_)])) => plain.to_string(),
+        _ => dsl,
+    }
+}
 
 /// The segments of a body, the tree node of each (`None` for a word that is
 /// part of a text node, and for whitespace), and where each editable segment
@@ -46,11 +126,15 @@ pub fn project_body(tree: &Tree, body: NodeId) -> Projection {
         }
     }
     let body_start = tree.has_spans().then(|| tree.span(body).map(|s| s.start)).flatten();
+    let has_words = tree.descendants(body).into_iter().any(|id| {
+        tree.element(id).is_some_and(|e| e.name.split_once(':').map_or(e.name.as_str(), |(_, l)| l) == "w")
+    });
     let mut projector = Projector {
         tree,
         next,
         prev,
         body_start,
+        has_words,
         segments: Vec::new(),
         nodes: Vec::new(),
         spans: Vec::new(),
@@ -66,6 +150,8 @@ struct Projector<'a> {
     prev: Vec<Option<NodeId>>,
     /// Where the body starts in the file, if spans are known
     body_start: Option<usize>,
+    /// Whether the body's text is in `<w>` elements
+    has_words: bool,
     segments: Vec<Segment>,
     nodes: Vec<Option<NodeId>>,
     spans: Vec<Option<(usize, usize)>>,
@@ -172,6 +258,18 @@ impl Projector<'_> {
                     }
                     "pc" => {
                         let segment = self.extract_punctuation(id);
+                        self.push(segment, Some(id), self.element_span(id));
+                    }
+                    "num" if self.is_numeral(id) => {
+                        let mut lb = false;
+                        let dsl_content = format!("#{}#", self.levels_dsl(id, &mut lb));
+                        let segment = Segment::Word {
+                            id: self.next_id(),
+                            original_xml: self.original_xml(id),
+                            attributes: self.attributes(id),
+                            dsl_content,
+                            has_inline_lb: lb,
+                        };
                         self.push(segment, Some(id), self.element_span(id));
                     }
                     "lb" | "pb" | "handShift" => {
@@ -324,7 +422,14 @@ impl Projector<'_> {
             id: self.next_id(),
             original_xml: escape_xml_text(&word),
             attributes: HashMap::new(),
-            dsl_content: word,
+            // Text outside words is read as before, except for the
+            // characters that have had a meaning since DSL rules 3; in a
+            // document of words it is one token like a word
+            dsl_content: if self.has_words {
+                punctuation_dsl(escape_dsl(&word, TextContext::Token))
+            } else {
+                word.replace('\\', "\\\\").replace('#', "\\#")
+            },
             has_inline_lb: false,
         };
         self.push(segment, None, span);
@@ -449,7 +554,7 @@ impl Projector<'_> {
 
     fn extract_punctuation(&mut self, id: NodeId) -> Segment {
         let mut lb = false;
-        let dsl_content = self.levels_dsl(id, &mut lb);
+        let dsl_content = punctuation_dsl(self.levels_dsl(id, &mut lb));
         Segment::Punctuation { id: self.next_id(), original_xml: self.original_xml(id), dsl_content }
     }
 
@@ -550,6 +655,7 @@ impl Projector<'_> {
     /// before or after where it had whitespace there.
     fn push_text(&self, id: NodeId, content: &str, out: &mut String) {
         let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+        let normalized = escape_dsl(&normalized, self.text_context(id));
         if content.starts_with(char::is_whitespace) && !out.is_empty() && !out.ends_with(' ') {
             out.push(' ');
         }
@@ -557,6 +663,54 @@ impl Projector<'_> {
         if content.ends_with(char::is_whitespace) && self.next_sibling(id).is_some() && !out.ends_with(' ') {
             out.push(' ');
         }
+    }
+
+    /// A `<num>` that is a token itself (`#…#`), not a wrapper around words,
+    /// punctuation or numerals (`<num><pc>.</pc><w>xv</w><pc>.</pc></num>`).
+    /// Punctuation inside its levels (`<me:facs><pc>.</pc>cc…`) is part of it.
+    fn is_numeral(&self, id: NodeId) -> bool {
+        fn has_token(projector: &Projector, id: NodeId) -> bool {
+            projector.tree.children(id).iter().any(|&child| match projector.local(child) {
+                "w" | "pc" | "num" => true,
+                "facs" | "dipl" | "norm" => false,
+                _ => has_token(projector, child),
+            })
+        }
+        self.local(id) == "num" && !has_token(self, id)
+    }
+
+    /// What the text node `id` is part of in the shorthand: the innermost
+    /// construct around it.
+    fn text_context(&self, id: NodeId) -> TextContext {
+        let mut current = self.tree.parent(id);
+        while let Some(node) = current {
+            match self.local(node) {
+                "note" => return TextContext::Note,
+                "add" | "del" | "unclear" => return TextContext::Inline,
+                "supplied" if !self.has_element_children(node) => return TextContext::Angle,
+                "num" if self.is_numeral(node) && !self.in_token_or_construct(node) => return TextContext::Numeral,
+                "w" | "pc" | "num" | "supplied" | "head" | "body" => return TextContext::Token,
+                _ => {}
+            }
+            current = self.tree.parent(node);
+        }
+        TextContext::Token
+    }
+
+    /// Whether `id` is part of a word or punctuation, or inside the content
+    /// of an inline construct or note: not a token of its own.
+    fn in_token_or_construct(&self, id: NodeId) -> bool {
+        let mut current = self.tree.parent(id);
+        while let Some(node) = current {
+            match self.local(node) {
+                "w" | "pc" | "facs" | "dipl" | "norm" | "note" | "add" | "del" | "unclear" => return true,
+                "supplied" if !self.has_element_children(node) => return true,
+                "body" => return false,
+                _ => {}
+            }
+            current = self.tree.parent(node);
+        }
+        false
     }
 
     /// The children of `id`, each with [`node_to_dsl`](Self::node_to_dsl)
@@ -613,12 +767,26 @@ impl Projector<'_> {
                             None => self.word_levels_to_dsl(c, out, lb, allow_norm),
                         }
                     }
-                    "pc" => self.word_levels_to_dsl(c, out, lb, allow_norm),
+                    "pc" => {
+                        let mut inner = String::new();
+                        self.word_levels_to_dsl(c, &mut inner, lb, allow_norm);
+                        // Inside a word it is part of the word
+                        if self.in_token_or_construct(c) {
+                            out.push_str(&inner);
+                        } else {
+                            out.push_str(&punctuation_dsl(inner));
+                        }
+                    }
+                    "num" if self.is_numeral(c) && !self.in_token_or_construct(c) => {
+                        out.push('#');
+                        out.push_str(&self.levels_dsl(c, lb));
+                        out.push('#');
+                    }
                     "c" => {
                         let mut inner = String::new();
                         self.node_to_dsl(c, &mut inner, lb, allow_norm);
                         if inner.is_empty() {
-                            out.push_str(&self.text_content(c));
+                            out.push_str(&escape_dsl(&self.text_content(c), self.text_context(c)));
                         } else {
                             out.push_str(&inner);
                         }

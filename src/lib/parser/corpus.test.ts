@@ -27,6 +27,8 @@ const NAMES: Record<string, string> = {
     Note: "Note",
     Unclear: "Unclear",
     Entity: "Entity",
+    Literal: "Literal",
+    Numeral: "Numeral",
     WordBoundary: "WordBoundary",
     CompoundJoin: "CompoundJoin",
 };

@@ -108,6 +108,12 @@
             desc: "Unclear reading",
         },
         { syntax: ":thorn:", output: "&thorn;", desc: "Entity reference" },
+        { syntax: "#.x.#", output: "<num>.x.</num>", desc: "Numeral" },
+        {
+            syntax: "ꝼæ\\;ðꝛ",
+            output: "<w>ꝼæ;ðꝛ</w>",
+            desc: "Character as text, part of the word",
+        },
         {
             syntax: "|",
             output: "(word boundary)",

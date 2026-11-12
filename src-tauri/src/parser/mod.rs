@@ -38,6 +38,8 @@
 //! | `-{txt}-` | `<del>txt</del>` | Deletion |
 //! | `+{txt}+` | `<add>txt</add>` | Addition |
 //! | `?{txt}?` | `<unclear>txt</unclear>` | Unclear reading |
+//! | `#.x.#` | `<num>.x.</num>` | Numeral |
+//! | `\c` | `c` | The character as text, part of the word |
 //! | `^{txt}` | `<note>txt</note>` | Editorial note |
 //! | `:name:` | `&name;` | Entity reference |
 //! | `~//` | Word continuation across line break | |

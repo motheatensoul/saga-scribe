@@ -161,6 +161,8 @@ Press **F1** in the app for the shorthand reference and keyboard shortcuts. The
 | `?{text}?`               | Unclear reading                            | `<unclear>text</unclear>`                                |
 | `^{text}`                | Note                                       | `<note>text</note>`                                      |
 | `:name:`                 | Special character (MENOTA/MUFI entity)     | `&name;`                                                 |
+| `#.x.#`                  | Numeral                                    | `<num>.x.</num>`                                         |
+| `ꝼæ\;ðꝛ`                 | Character as text, part of the word        | `<w>ꝼæ;ðꝛ</w>`                                           |
 | `hár~//2fagra`           | Word continues over a line (`~///` page)   | `<w>hár<lb n="2"/>fagra</w>`                             |
 | `upp~haf`                | One word written as two                    | `<w>upp haf</w>`                                         |
 | `\|`                     | Word boundary with no space                |                                                          |

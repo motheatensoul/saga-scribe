@@ -300,7 +300,8 @@ text).
    writer, the check before saving. Gate: all files parse and write back byte for byte;
    the tree equals libxml2's for each.
 2. **Projection.** `get` on the tree. Gate: the same shorthand as today's importer for
-   every file. The importer then uses it.
+   every file. The importer then uses it (the old extractor and this gate were retired
+   once the projection's rules changed, with DSL rules 3).
 3. **`put` through operations.** Replaces the patcher, in two parts:
    - **3a, merging edited words** (done): the patcher still decides which word is which,
      but an edited word's XML is no longer compiled from scratch; the change between the
@@ -309,8 +310,11 @@ text).
    - **3b, operations:** the tree replaces segments; replaced and removed words are kept
      as records; GetPut and PutGet on every file; a fuzzed edit in every word keeps all
      markup outside the edited range (Locality); the existing round-trip tests.
-   Both need the shorthand to read as the same tokens as the file's words, which most
-   Menota files don't yet (see `TODO.md`); until then the gate skips those files.
+   Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
+   (escaped characters, `#…#` numerals, separated neighbours) brought that from 94 to 269
+   of the 288 files; the rest need syntax for any break number and supplied text with
+   markup (see `TODO.md`), and the gate skips them. Gate:
+   `corpus_xml_and_shorthand_read_as_the_same_tokens`.
 4. **Profile and levels.** The profile with the import dialog; derived and pinned levels.
 5. **Word panel** on the typed layer.
 6. **New documents and the file format.** The same path for new documents; the new

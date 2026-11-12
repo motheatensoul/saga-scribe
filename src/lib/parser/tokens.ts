@@ -19,6 +19,8 @@ import {
     Note,
     Unclear,
     Entity,
+    Literal,
+    Numeral,
     WordBoundary,
     CompoundJoin,
     Text,
@@ -69,6 +71,11 @@ function skipWhile(peek: Peek, offset: number, test: (code: number) => boolean):
     return offset;
 }
 
+const BACKSLASH = 92;
+
+/** Past the character escaped by a backslash at `offset` (a backslash escapes a whole code point) */
+const escaped = (peek: Peek, offset: number) => offset + codePoint(peek, offset + 1)[1];
+
 /** After the bracket closing with `end` (nested brackets counted), or -1 */
 function bracketed(peek: Peek, offset: number, end: string): number {
     const close = end.charCodeAt(0);
@@ -80,6 +87,8 @@ function bracketed(peek: Peek, offset: number, end: string): number {
             depth++;
         } else if ((code === 125 || code === 93 || code === 62) && depth > 1) { // } ] >
             depth--;
+        } else if (code === BACKSLASH) {
+            offset = escaped(peek, offset);
         }
     }
     return -1;
@@ -93,6 +102,8 @@ function bracedBlock(peek: Peek, offset: number): number {
             if (--depth === 0) return offset + 1;
         } else if (code === 123) {
             depth++;
+        } else if (code === BACKSLASH) {
+            offset = escaped(peek, offset);
         }
     }
     return -1;
@@ -103,14 +114,15 @@ function until(peek: Peek, offset: number, end: string): number {
     const close = end.charCodeAt(0);
     for (let code = peek(offset); code >= 0; code = peek(++offset)) {
         if (code === close) return offset + 1;
+        if (code === BACKSLASH) offset = escaped(peek, offset);
     }
     return -1;
 }
 
 const found = (token: number, length: number): Found => ({ token, length });
 
-/** The characters a construct can start with: / . [ < - + ^ ? : ~ | */
-const OPENERS = new Set([..."/.[<-+^?:~|"].map((c) => c.charCodeAt(0)));
+/** The characters a construct can start with: \\ # / . [ < - + ^ ? : ~ | */
+const OPENERS = new Set([..."\\#/.[<-+^?:~|"].map((c) => c.charCodeAt(0)));
 
 /** The construct starting at `offset`, if any */
 function scan(peek: Peek, offset: number): Found | Failed | null {
@@ -124,6 +136,14 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
         return end < 0 ? { opener: 2 } : found(token, end - offset);
     };
 
+    // Any character after a backslash is text (a backslash at the very end is itself text)
+    if (peek(offset) === BACKSLASH) {
+        return peek(offset + 1) < 0 ? null : found(Literal, 1 + codePoint(peek, offset + 1)[1]);
+    }
+    if (at("#")) {
+        const end = until(peek, offset + 1, "#");
+        return end < 0 ? { opener: 1 } : found(Numeral, end - offset);
+    }
     if (at("///")) {
         return found(PageBreak, skipWhile(peek, offset + 3, (c) => !isWhitespace(c)) - offset);
     }

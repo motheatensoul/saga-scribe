@@ -43,10 +43,14 @@ pub fn merge_word_edit(word_xml: &str, old_compiled: &str, new_compiled: &str) -
     let (old, old_w) = parse_word(old_compiled)?;
     let (new, new_w) = parse_word(new_compiled)?;
 
-    // A level the word has but leaves empty stays empty
+    // A level the word has but leaves empty stays empty (one with only
+    // markup, such as `<gap/>`, isn't empty)
     let word_levels: Vec<(String, NodeId)> = levels(&word, w)
         .into_iter()
-        .filter(|&(_, id)| !Flat::read(&word, id, false).atoms.is_empty())
+        .filter(|&(_, id)| {
+            let flat = Flat::read(&word, id, false);
+            !flat.atoms.is_empty() || !flat.spans.is_empty()
+        })
         .collect();
     let old_levels = levels(&old, old_w);
     let new_levels = levels(&new, new_w);

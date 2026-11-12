@@ -116,6 +116,29 @@ Punctuation written as an entity is a separate `<pc>` element when it stands alo
 spaces (`þa :middot: þo`). Attached to letters, it is part of the word (`:middot:Q:middot:`
 is the numeral ·Q·). A single letter entity such as `:inodot:` (the word í) is a word.
 
+### Numerals
+
+```
+#.x.#        Numeral (<num>), here .x.
+```
+
+A numeral is a token of its own, like a word, and its dots and other punctuation are part
+of it. It is not numbered or lemmatized as a word.
+
+### Characters that are otherwise shorthand
+
+A backslash before a character makes it plain text, part of the word it stands in:
+
+```
+ꝼæ\;ðꝛ       One word containing a semicolon (a lone ";" would be punctuation)
+\(anno\)     One word in brackets
+,\,          One punctuation mark made of two commas
+\#  \\  \|   The characters #, \ and | themselves
+```
+
+Right after punctuation, an escaped character continues the punctuation (`,\,`); `|`
+keeps them apart. A word made only of escaped punctuation (`\(`) is punctuation.
+
 ### Special characters
 
 Characters outside the ordinary alphabet are written as MENOTA/MUFI entities between colons:
@@ -400,6 +423,15 @@ line breaks become `//`, page breaks `///`, each paragraph starts with `.p`, and
 Lemmas, analyses and normalized forms in the file are taken over, and its header is read
 into the [metadata editor](#manuscript-metadata).
 
+Each word, numeral and punctuation mark of the file is one word of the shorthand, so that
+Saga-Scribe knows which element an edit belongs to. Where the file has two of them with
+nothing between them, the shorthand sets them apart: a note by a space (`skrims ^{sic}`,
+where `skrims^{sic}` would put the note inside the word), others by `|` (`þꝩi|at`, two words
+written together). Characters that would otherwise split a word are escaped (`iðran\;`), and
+a `<num>` is written `#…#`. A few files still read differently, for instance where a line
+break's number contains letters (`<lb n="56r"/>`) or supplied text with markup sits inside
+a word; editing such a word may affect its neighbours.
+
 An imported document is marked **Imported** in the editor header. In this mode, the
 original file is kept and only edited passages are rewritten when the document is saved or
 exported:
@@ -408,6 +440,10 @@ exported:
   including the header, comments, namespaces and markup the shorthand cannot express.
 - Changes that do not affect the encoding (whitespace in the shorthand, for instance) do
   not change the file.
+- An edited word is changed in place, not written anew: markup the shorthand does not show
+  (expansions `<ex>`, abbreviation marks `<am>`, editors' attributes, comments) stays with
+  its text, a transcription level the edit cannot be placed in (such as a curated
+  normalized form) is kept as it was, and no level the word did not have is added.
 - Lemmas confirmed in Saga-Scribe are written into the words' `lemma` and `me:msa` (or
   `msa`) attributes; a changed normalized form is written into the word's `<me:norm>`.
   Removing a lemma removes these attributes.

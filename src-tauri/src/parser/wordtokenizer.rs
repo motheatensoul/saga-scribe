@@ -19,7 +19,11 @@
 //! - Whitespace characters
 //! - Punctuation marks (configurable set)
 //! - Explicit `|` word boundary markers
-//! - Block elements (`.head{}`, `.supplied{}`)
+//! - Block elements (`.head{}`, `.supplied{}`) and numerals (`#.x.#`)
+//!
+//! A character written with `\` before it is part of the word, even
+//! punctuation (`ꝼæ\;ðꝛ`); right after punctuation it continues the
+//! punctuation (`,\,` is one `<pc>`).
 //!
 //! Words continue across:
 //! - Line/page breaks when preceded by `~` (explicit continuation)
@@ -75,6 +79,14 @@ impl Builder {
     /// Emits a token that is not part of a word.
     fn emit(&mut self, node: Node, span: Range<usize>) {
         self.result.push((node, span));
+    }
+
+    /// Adds a node to the punctuation token just emitted.
+    fn continue_punctuation(&mut self, node: Node, span: Range<usize>) {
+        if let Some((Node::Punctuation(children), token)) = self.result.last_mut() {
+            children.push(node);
+            token.end = token.end.max(span.end);
+        }
     }
 }
 
@@ -133,8 +145,11 @@ impl WordTokenizer {
         // Set after an explicit `~//`: whitespace right after the break (as in
         // `hel~//5 lo`) doesn't end the word
         let mut skip_leading_whitespace = false;
+        // Punctuation was the last thing emitted, with nothing after it yet
+        let mut glued_punctuation = false;
 
         for (node, span) in nodes {
+            let after_punctuation = std::mem::take(&mut glued_punctuation);
             match &node {
                 // Word boundary marker always splits
                 Node::WordBoundary => {
@@ -193,7 +208,28 @@ impl WordTokenizer {
                     } else {
                         0
                     };
-                    self.process_text(&text[skipped..], span.start + skipped, &mut out, &mut state);
+                    glued_punctuation =
+                        self.process_text(&text[skipped..], span.start + skipped, &mut out, &mut state);
+                    continuation_active = false;
+                }
+
+                // An escaped character: right after punctuation it continues
+                // it (`,\,`), otherwise it is part of the word
+                Node::Literal(c) => {
+                    if after_punctuation && !c.chars().all(char::is_alphanumeric) {
+                        out.continue_punctuation(node, span);
+                        glued_punctuation = true;
+                    } else {
+                        state = State::InWord;
+                        out.add(node, span);
+                    }
+                    continuation_active = false;
+                }
+
+                Node::Numeral(_) => {
+                    out.end_word();
+                    out.emit(node, span);
+                    state = State::BetweenWords;
                     continuation_active = false;
                 }
 
@@ -237,6 +273,7 @@ impl WordTokenizer {
                     out.emit(node, span);
                     state = State::BetweenWords;
                     continuation_active = false;
+                    glued_punctuation = true;
                 }
             }
             skip_leading_whitespace = false;
@@ -252,15 +289,17 @@ impl WordTokenizer {
     }
 
     /// A word made only of punctuation entities (`:middot:` between spaces)
-    /// is punctuation. Glued to letters (`þa:middot:`, `:middot:Q:middot:`)
-    /// an entity stays part of the word.
+    /// and escaped punctuation (`\(`) is punctuation. Glued to letters
+    /// (`þa:middot:`, `:middot:Q:middot:`) an entity stays part of the word.
     fn entity_punctuation(node: Node) -> Node {
         match node {
             Node::Word(children)
                 if !children.is_empty()
-                    && children
-                        .iter()
-                        .all(|c| matches!(c, Node::Entity(name) if crate::entities::is_punctuation_entity(name))) =>
+                    && children.iter().all(|c| match c {
+                        Node::Entity(name) => crate::entities::is_punctuation_entity(name),
+                        Node::Literal(c) => !c.chars().any(char::is_alphanumeric),
+                        _ => false,
+                    }) =>
             {
                 Node::Punctuation(children)
             }
@@ -269,8 +308,9 @@ impl WordTokenizer {
     }
 
     /// Process a text node starting at source offset `at`, splitting on
-    /// whitespace and punctuation
-    fn process_text(&self, text: &str, at: usize, out: &mut Builder, state: &mut State) {
+    /// whitespace and punctuation. Returns whether it ended with punctuation.
+    fn process_text(&self, text: &str, at: usize, out: &mut Builder, state: &mut State) -> bool {
+        let mut ends_with_punctuation = false;
         // The run of regular characters not yet added to the word
         let mut buffer = String::new();
         let mut buffer_start = at;
@@ -284,6 +324,7 @@ impl WordTokenizer {
                 }
                 out.end_word();
                 *state = State::BetweenWords;
+                ends_with_punctuation = false;
             } else if self.punctuation.contains(&c) {
                 // Punctuation: flush buffer, end word, output punctuation as <pc>
                 if !buffer.is_empty() {
@@ -292,7 +333,9 @@ impl WordTokenizer {
                 out.end_word();
                 out.emit(Node::Punctuation(vec![Node::Text(c.to_string())]), pos..pos + c.len_utf8());
                 *state = State::BetweenWords;
+                ends_with_punctuation = true;
             } else {
+                ends_with_punctuation = false;
                 // Regular character
                 if *state == State::BetweenWords {
                     *state = State::InWord;
@@ -308,6 +351,7 @@ impl WordTokenizer {
         if !buffer.is_empty() {
             out.add(Node::Text(buffer), buffer_start..at + text.len());
         }
+        ends_with_punctuation
     }
 
     /// Check if the last character in the word is a letter (for heuristic continuation)
@@ -320,6 +364,7 @@ impl WordTokenizer {
                     }
                 }
                 Node::Entity(_) => return true, // Entities are typically letters
+                Node::Literal(c) => return c.chars().all(char::is_alphabetic),
                 _ => continue,
             }
         }

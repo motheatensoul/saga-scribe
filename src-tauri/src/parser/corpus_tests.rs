@@ -31,6 +31,8 @@ fn kind_name(kind: &SyntaxKind) -> &'static str {
         SyntaxKind::Norm { .. } => "Norm",
         SyntaxKind::Unclear { .. } => "Unclear",
         SyntaxKind::Entity { .. } => "Entity",
+        SyntaxKind::Literal { .. } => "Literal",
+        SyntaxKind::Numeral { .. } => "Numeral",
         SyntaxKind::WordContinuation => "WordContinuation",
         SyntaxKind::CompoundJoin => "CompoundJoin",
         SyntaxKind::WordBoundary => "WordBoundary",
@@ -70,6 +72,7 @@ fn generated_inputs() -> Vec<String> {
         "//", "///", "~", "|", ":", "et", "a", "þ", " ", "\n", "1", "3v", "-", "+", "?", "^",
         "{", "}", "[", "]", "<", ">", "-{", "}-", "+{", "}+", "?{", "}?", "^{", "[...", ".abbr[",
         ".head{", ".supplied{", ".norm{", ".", "~//", "~///", ":et:", "ꝛ", "𝔞", ".p", "p", "h",
+        "\\", "#", ";", ",",
     ];
     let mut state: u64 = 0x2545_F491_4F6C_DD1D;
     let mut next = |n: usize| {

@@ -318,7 +318,7 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     // Create and write manifest.json
     let now = chrono_lite_now();
     let manifest = ProjectManifest {
-        version: "1.6".to_string(),
+        version: "1.7".to_string(),
         template_id,
         created: now.clone(),
         modified: now,
@@ -348,7 +348,7 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         ZipArchive::new(file).map_err(|e| format!("Failed to read archive: {}", e))?;
 
     // Read source.dsl
-    let source = read_zip_file(&mut archive, "source.dsl")?;
+    let mut source = read_zip_file(&mut archive, "source.dsl")?;
 
     // Read output.xml
     let output = read_zip_file(&mut archive, "output.xml")?;
@@ -384,6 +384,20 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         Err(_) => None,
     };
 
+    // Before v1.7, `\` and `#` were text; since, `\` escapes a character
+    // and `#…#` is a numeral. The shorthand and the segments it was made
+    // from are escaped alike, so they still match.
+    if version_before(&manifest.version, 1, 7) {
+        source = escape_pre_1_7(&source);
+        if let Some(doc) = imported_document.as_mut() {
+            for segment in &mut doc.segments {
+                if let Segment::Word { dsl_content, .. } | Segment::Punctuation { dsl_content, .. } = segment {
+                    *dsl_content = escape_pre_1_7(dsl_content);
+                }
+            }
+        }
+    }
+
     // Projects saved before v1.5 have no source spans, and before v1.6 none
     // for element tags (needed to split paragraphs); derive them from the
     // stored original XML so edits can be spliced in byte-for-byte.
@@ -410,6 +424,18 @@ pub fn open_project(path: String) -> Result<ProjectData, String> {
         original_preamble,
         original_postamble,
     })
+}
+
+/// Whether an archive format version (`"1.6"`) is older than `major.minor`.
+fn version_before(version: &str, major: u32, minor: u32) -> bool {
+    let mut parts = version.split('.').map(|part| part.parse::<u32>().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0)) < (major, minor)
+}
+
+/// Shorthand from before v1.7, where `\` and `#` were text, as text in the
+/// shorthand since.
+fn escape_pre_1_7(dsl: &str) -> String {
+    dsl.replace('\\', "\\\\").replace('#', "\\#")
 }
 
 fn read_zip_file<R: Read + std::io::Seek>(
@@ -539,6 +565,15 @@ mod tests {
     }
 
     #[test]
+    fn test_shorthand_before_1_7_is_escaped() {
+        assert!(version_before("1.6", 1, 7));
+        assert!(version_before("1.0", 1, 7));
+        assert!(!version_before("1.7", 1, 7));
+        assert!(!version_before("2.0", 1, 7));
+        assert_eq!(escape_pre_1_7(r"a#b\c ^{#1}"), r"a\#b\\c ^{\#1}");
+    }
+
+    #[test]
     fn test_parse_imported_document_reports_garbage() {
         assert!(ImportedDocument::from_json("{not json").is_err());
     }
@@ -568,7 +603,7 @@ mod tests {
 
         assert_eq!(project.source, "//1 maþr");
         assert_eq!(project.output, "<TEI/>");
-        assert_eq!(project.manifest.version, "1.6");
+        assert_eq!(project.manifest.version, "1.7");
         assert_eq!(project.manifest.template_id, "menota");
         assert!(project.imported_document.unwrap().is_menota);
         assert_eq!(project.original_body_xml.as_deref(), Some("<body></body>"));

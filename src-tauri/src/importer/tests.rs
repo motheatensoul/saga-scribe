@@ -113,7 +113,8 @@ fn test_import_preserves_msa_attribute() {
 fn test_import_del_add() {
     let xml = "<body><del>deleted</del><add>added</add></body>";
     let result = parse(xml).unwrap();
-    assert_eq!(result.dsl, "-{deleted}-+{added}+");
+    // Two elements, two tokens: `|` keeps them apart
+    assert_eq!(result.dsl, "-{deleted}-|+{added}+");
 }
 
 #[test]
@@ -135,7 +136,8 @@ fn test_import_note() {
 fn test_import_note_inline() {
     let xml = "<body>word<note>editorial comment</note>next</body>";
     let result = parse(xml).unwrap();
-    assert_eq!(result.dsl, "word^{editorial comment}next");
+    // Glued to the word, the note would be part of it (as in `<w>word<note>`)
+    assert_eq!(result.dsl, "word ^{editorial comment}|next");
 }
 
 // ============================================================================
@@ -470,8 +472,8 @@ fn test_import_character_annotation() {
     let xml = r#"<body><c type="initial">M</c>aðr</body>"#;
     let result = parse(xml).unwrap();
 
-    // DSL contains the full text
-    assert_eq!(result.dsl.trim(), "Maðr");
+    // The full text, as the two segments it is read as
+    assert_eq!(result.dsl.trim(), "M|aðr");
 }
 
 #[test]
@@ -1643,5 +1645,47 @@ fn test_word_space_between_entities_survives_import() {
         let xml = Compiler::new().with_config(config).compile(dsl).unwrap();
         let back = parse(&format!(r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body>{xml}</body></text></TEI>"#)).unwrap().dsl;
         assert_eq!(back, dsl, "{xml}");
+    }
+}
+
+#[test]
+fn test_edit_keeps_a_level_with_only_markup() {
+    // AM 36 fol: the word's only level holds a gap and no text
+    let xml = menota_body(r#"<w><me:dipl><gap extent="1"/></me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("[...]", "[...]x", 1)).unwrap();
+    assert!(body.contains(r#"<w><me:dipl><gap extent="1"/>x</me:dipl></w>"#), "{body}");
+}
+
+#[test]
+fn test_edit_word_of_escaped_symbols() {
+    // `<w>~</w>` is `\~`, which reads as punctuation but is still the word
+    let xml = menota_body(r#"<w><me:dipl>~</me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    assert_eq!(parse(&xml).unwrap().dsl, r".p \~ ok");
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen(r"\~", r"\~x", 1)).unwrap();
+    assert!(body.contains("<w><me:dipl>~x</me:dipl></w>"), "{body}");
+}
+
+#[test]
+fn test_shorthand_reads_as_the_files_tokens() {
+    let cases = [
+        // A note after a word, with nothing between them, is set off by a space
+        (r#"<w><me:dipl>skrims</me:dipl></w><note>sic</note> <w><me:dipl>ok</me:dipl></w>"#, ".p skrims ^{sic} ok"),
+        // Two words written together
+        (r#"<w><me:dipl>þꝩi</me:dipl></w><w><me:dipl>at</me:dipl></w>"#, ".p þꝩi|at"),
+        // Punctuation inside a word, and a numeral
+        (r#"<w><me:dipl>iðran;</me:dipl></w> <num><choice><me:facs>.x.</me:facs><me:dipl>.x.</me:dipl></choice></num>"#, r".p iðran\; #.x.#"),
+        // Two commas in one <pc>, and a <pc> inside a word
+        (r#"<w><me:dipl>sína</me:dipl></w><pc>,,</pc> <w><me:dipl><pc>.</pc>ij<pc>.</pc></me:dipl></w>"#, r".p sína,\, \.ij\."),
+        // A word continued across a break, then another word right after
+        (r#"<w><me:dipl>míſ<lb n="2"/></me:dipl></w> <w><me:dipl>kun</me:dipl></w>"#, ".p míſ~//2|kun"),
+    ];
+    for (words, expected) in cases {
+        let xml = menota_body(words);
+        let import = parse(&xml).unwrap();
+        assert_eq!(import.dsl, expected);
+        let segments = import.imported_document.unwrap().segments;
+        let from_xml: Vec<String> =
+            segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
+        assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap(), "{expected}");
     }
 }

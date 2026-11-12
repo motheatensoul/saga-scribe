@@ -291,3 +291,13 @@ body {
 	color: var(--color-info);
 	font-style: italic;
 }
+
+/* An escaped character (\;), marked like the word markers */
+.cmt-escape {
+	color: var(--warning-text);
+}
+
+.cmt-number {
+	color: var(--color-primary);
+	font-weight: bold;
+}

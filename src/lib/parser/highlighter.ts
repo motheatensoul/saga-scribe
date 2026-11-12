@@ -35,6 +35,10 @@ export const teiDslHighlightStyle = HighlightStyle.define([
   { tag: tags.separator, class: "cmt-separator" },
   // Gap [...]
   { tag: tags.special(tags.string), class: "cmt-gap" },
+  // Escaped character \c
+  { tag: tags.escape, class: "cmt-escape" },
+  // Numeral #.x.#
+  { tag: tags.number, class: "cmt-number" },
 ]);
 
 /**
@@ -86,6 +90,10 @@ const parserWithMetadata = parser.configure({
 
       // Entity
       Entity: tags.atom,
+
+      // Escaped character, numeral
+      Literal: tags.escape,
+      Numeral: tags.number,
 
       // Word boundary and compound join
       WordBoundary: tags.separator,

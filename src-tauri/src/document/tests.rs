@@ -1,4 +1,3 @@
-use super::project::{find_body, project_body};
 use super::tree::{Attribute, Element, NodeId, NodeKind, Tree};
 
 /// The first element called `name`.
@@ -264,132 +263,78 @@ fn corpus_files_are_written_back_and_edits_stay_local() {
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
 }
 
-/// The opening tag's name and attributes, in any order (the extractor wrote
-/// attributes in hash order).
-fn normalized_tag(xml: &str) -> Vec<String> {
-    // Values are escaped, so `"` only delimits them: pieces alternate between
-    // ` name=` (the first also holding the element name) and a value
-    let inner = xml.trim_start_matches('<').trim_end_matches('>');
-    let pieces: Vec<&str> = inner.split('"').collect();
-    let mut parts = Vec::new();
-    for pair in pieces.chunks(2) {
-        let mut key = pair[0].trim();
-        if parts.is_empty() {
-            let (name, rest) = key.split_once(char::is_whitespace).unwrap_or((key, ""));
-            parts.push(format!("<{name}"));
-            key = rest.trim();
-        }
-        if let Some(value) = pair.get(1) {
-            parts.push(format!("{key}{value}"));
-        }
-    }
-    parts[1..].sort();
-    parts
-}
-
-/// What the old extractor and the projection disagree on, if anything.
-fn projection_difference(source: &str) -> Option<String> {
-    use crate::importer::tei::segments::{Segment, DSL_RULES};
-    use crate::importer::tei::extraction::{segments_to_dsl, Extractor};
-    let tree = Tree::parse(source).ok()?;
-    let body = find_body(&tree)?;
-    let new = project_body(&tree, body);
-
-    // The extractor, on libxml2's tree, with spans relative to the same body
-    let doc = crate::xml::parse(source).ok()?;
-    let mut stack = vec![doc.get_root_element()?];
-    let xml_body = loop {
-        let node = stack.pop()?;
-        if node.get_name() == "body" {
-            break node;
-        }
-        stack.extend(node.get_child_elements().into_iter().rev());
+/// Where the XML's tokens (each word, numeral, punctuation, break and
+/// paragraph, read from the segments) and the shorthand's differ, if they do.
+fn token_difference(source: &str) -> Result<Option<String>, String> {
+    use crate::importer::tei::patching::{dsl_tokens, segment_dsl_token};
+    let import = crate::importer::tei::parse(source)?;
+    let doc = import.imported_document.ok_or("no manifest")?;
+    let from_xml: Vec<String> = doc.segments.iter().filter_map(segment_dsl_token).collect();
+    let from_dsl = dsl_tokens(&import.dsl)?;
+    let Some(at) = (0..from_xml.len().max(from_dsl.len())).find(|&i| from_xml.get(i) != from_dsl.get(i)) else {
+        return Ok(None);
     };
-    let body_text = &source[tree.span(body).unwrap_or(0..source.len())];
-    let mut extractor = Extractor::with_source(body_text);
-    let segments = extractor.extract_segments(&xml_body);
-    let old_spans = extractor.take_spans();
-    let old_dsl = segments_to_dsl(&segments, DSL_RULES);
-    struct Old {
-        segments: Vec<Segment>,
-        spans: Option<crate::importer::tei::segments::SourceSpans>,
-    }
-    let old = Old { segments, spans: old_spans };
-
-    let dsl = segments_to_dsl(&new.segments, DSL_RULES);
-    let import_dsl = old_dsl.trim();
-    if dsl.trim() != import_dsl {
-        let at = dsl.trim().chars().zip(import_dsl.chars()).take_while(|(a, b)| a == b).count();
-        let context: String = import_dsl.chars().skip(at.saturating_sub(40)).take(80).collect();
-        return Some(format!("shorthand differs at char {at}: {context:?}"));
-    }
-    if old.segments.len() != new.segments.len() {
-        return Some(format!("{} segments, then {}", old.segments.len(), new.segments.len()));
-    }
-    for (a, b) in old.segments.iter().zip(&new.segments) {
-        let same = match (a, b) {
-            (
-                Segment::Word { id, attributes, dsl_content, has_inline_lb, .. },
-                Segment::Word { id: id2, attributes: a2, dsl_content: d2, has_inline_lb: l2, .. },
-            ) => id == id2 && attributes == a2 && dsl_content == d2 && has_inline_lb == l2,
-            (Segment::Punctuation { id, dsl_content, .. }, Segment::Punctuation { id: id2, dsl_content: d2, .. }) => {
-                id == id2 && dsl_content == d2
-            }
-            (Segment::Structural { id, xml }, Segment::Structural { id: id2, xml: x2 })
-            | (Segment::Paragraph { id, xml }, Segment::Paragraph { id: id2, xml: x2 }) => {
-                id == id2 && normalized_tag(xml) == normalized_tag(x2)
-            }
-            (Segment::LineBreak { id, attributes }, Segment::LineBreak { id: id2, attributes: a2 })
-            | (Segment::PageBreak { id, attributes }, Segment::PageBreak { id: id2, attributes: a2 })
-            | (Segment::HandShift { id, attributes }, Segment::HandShift { id: id2, attributes: a2 }) => {
-                id == id2 && attributes == a2
-            }
-            (Segment::Whitespace { id, content }, Segment::Whitespace { id: id2, content: c2 }) => {
-                id == id2 && content == c2
-            }
-            _ => false,
-        };
-        if !same {
-            return Some(format!("segment differs: {a:?} became {b:?}"));
-        }
-    }
-    if old.spans != new.spans {
-        let first = old.spans.as_ref().zip(new.spans.as_ref()).and_then(|(a, b)| {
-            a.iter().zip(b).position(|(x, y)| x != y)
-        });
-        return Some(format!(
-            "spans differ (old {}, new {}, first at segment {first:?})",
-            old.spans.is_some(),
-            new.spans.is_some()
-        ));
-    }
-    None
+    let around = |tokens: &[String]| tokens[at.saturating_sub(2)..(at + 3).min(tokens.len())].join(" ");
+    Ok(Some(format!(
+        "token {at} of {}/{}: XML {:?}, shorthand {:?}",
+        from_xml.len(),
+        from_dsl.len(),
+        around(&from_xml),
+        around(&from_dsl)
+    )))
 }
 
 #[test]
-fn test_projection_matches_the_importer_on_holmperg() {
+fn test_holmperg_xml_and_shorthand_read_as_the_same_tokens() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/HolmPerg-34-4to-MLL.xml");
     let Ok(source) = std::fs::read_to_string(path) else { return };
-    assert_eq!(projection_difference(&source), None);
+    assert_eq!(token_difference(&source), Ok(None));
 }
 
-/// Gate of step 2: for every file, the projection gives the importer's
-/// segments (but `original_xml`), spans and shorthand.
+/// The importer's promise, on every file: the shorthand reads as the XML's
+/// words, numerals, punctuation and breaks, token for token (the patcher
+/// pairs them with the file's elements by that).
+/// Files whose shorthand doesn't read as their tokens yet, for want of
+/// syntax (`TODO.md`): supplied text with markup inside a word, break numbers
+/// the shorthand can't write (`n="-3"`, `"56r"`, `"fol. 1r"`, typos), a
+/// `<pc>` with a space. Remove a file once it passes.
+const NOT_YET_TOKEN_FOR_TOKEN: &[&str] = &[
+    // break numbers
+    "AM-132-fol-Egils-saga.xml", "AM-60-4to.xml", "AM-78-4to.xml", "GKS-2365-4to-Vsp.xml",
+    "Holm-A-10.xml", "Holm-A-80.xml", "HolmPerg-4-fol.xml",
+    // supplied text with markup inside a word
+    "AM-243-b-alfa-fol.xml", "AM-35-fol.xml", "AM-619-4to.xml", "AM-677-4to.xml", "DG-4at7-Elis.xml",
+    "DG-8-OHleg.xml", "DN_bind_01_brevnr_098.xml", "DN_bind_02_brevnr_056.xml", "DN_bind_04_brevnr_082.xml",
+    "DN_bind_05_brevnr_050.xml", "DN_bind_13_brevnr_002.xml",
+    // a <pc> with a space
+    "DN_bind_02_brevnr_068_A.xml",
+];
+
 #[test]
-fn corpus_projection_matches_the_importer() {
+fn corpus_xml_and_shorthand_read_as_the_same_tokens() {
     let files = corpus_files();
     let mut failures = Vec::new();
+    let mut known = 0;
     for path in &files {
         let name = path.file_name().unwrap().to_string_lossy().to_string();
         let Ok(source) = std::fs::read_to_string(path) else { continue };
-        match projection_difference(&source) {
-            None => eprintln!("ok      {name}"),
-            Some(difference) => {
+        match token_difference(&source) {
+            Ok(None) => eprintln!("ok      {name}"),
+            Ok(Some(difference)) if NOT_YET_TOKEN_FOR_TOKEN.contains(&name.as_str()) => {
+                eprintln!("known   {name}: {difference}");
+                known += 1;
+            }
+            Ok(Some(difference)) => {
                 eprintln!("FAILED  {name}: {difference}");
+                failures.push(name);
+            }
+            Err(e) => {
+                eprintln!("FAILED  {name}: {e}");
                 failures.push(name);
             }
         }
     }
+    eprintln!("{known} files known not to read token for token yet");
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
 }
 

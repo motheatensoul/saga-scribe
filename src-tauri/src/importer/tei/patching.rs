@@ -1303,8 +1303,7 @@ fn render_modify(
             // The edit is merged into the word as written, so markup the
             // shorthand doesn't show stays (see document/merge.rs). The old
             // shorthand is read as a token, as `new_dsl` was, so the two
-            // differ only by the edit (the token's text drops e.g. the `~`
-            // of a continued line break)
+            // differ only by the edit
             let old_token = match parse_dsl_to_tokens(dsl_content).as_deref() {
                 Ok([token]) => token.clone(),
                 _ => dsl_content.clone(),

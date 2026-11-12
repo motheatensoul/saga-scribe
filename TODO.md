@@ -24,29 +24,31 @@ when it is done (and record it in CHANGELOG.md if users notice).
   (design agreed 2026-11-11; steps 1, 2 and 3a are done: an edited word keeps the markup
   the shorthand doesn't show; next: 3b, operations on the tree instead of segments). It
   comes before the shorthand redesign.
-- **The shorthand of 194 of the 288 Menota files doesn't read as their words, token for
-  token**, though the importer promises it (only Holmperg was tested). The patcher pairs
-  tokens with the file's words, so an edit there can pair them wrongly and rewrite words
-  that weren't edited. Found by the step 3 gate (`corpus_edited_words_keep_their_markup`
-  skips these files). Causes, with counts over the corpus:
-  - a word directly followed by another construct, without whitespace in the XML, is
-    glued to it: `word^{note}` (`<w>…</w><note>…</note>`, thousands), `S?{on}??{…}?`, a
-    middle dot, two `<w>` (`þꝩiat`), a word and an unnumbered `<lb/>` (`r//`);
-  - one element reads as several tokens (11,083): numerals and punctuation within one
-    `<w>` or `<pc>`, such as `.xv.` or `.:iacute:`, which the tokenizer splits at the dots.
-
-  The shorthand needs a way to keep such neighbours apart (perhaps `|`) and to write a
-  numeral like `.xv.` as one word; that belongs to the shorthand design pass. A new
-  `DSL_RULES` version then rewrites these imports.
+- **The shorthand of 19 of the 288 Menota files still doesn't read as their words, token
+  for token** (it was 194 before DSL rules 3: escaped characters, `#…#` numerals and
+  separated neighbours). The patcher pairs tokens with the file's elements, so an edit there
+  can be paired wrongly. Gate: `corpus_xml_and_shorthand_read_as_the_same_tokens`. Left:
+  - supplied text with markup inside a word (11 files: `kæn<supplied>n</supplied>a` with
+    markup is `kæn.supplied{n}a`, and `.supplied{…}` ends a word). The decided `<…>` with
+    shorthand content (below) fixes it;
+  - break numbers the shorthand can't write (7 files): `<lb n="-3"/>`, `n="56r"`,
+    `n="123v"`, typos such as `n="33oat"`, and `<pb n="fol. 1r"/>` (a page number ends at
+    whitespace). Needs syntax for any `n`;
+  - a `<pc>` containing a space (`<pc>: –</pc>`, 1 file).
+- **Text outside words in documents without `<w>`** is still split at punctuation by the
+  shorthand (`Hello,` is one segment, two tokens); in documents with `<w>` such loose text
+  is escaped like a word.
+- **Markup inside `-{…}-`, `+{…}+` and `?{…}?` is written as text**: their content isn't
+  read as shorthand, so `<del>ny<gap/></del>` is `-{ny[...]}-`, compiled as the text
+  `[...]`; editing such a word moves the gap out of the `<del>` (Holm D 4). Like `<…>`, their
+  content should be shorthand.
+- **An edited `<num>` is compiled anew**, not merged like a `<w>` (`document/merge.rs`),
+  so its attributes and markup the shorthand doesn't show are lost.
 - **Without the editor's guidance, the patcher can move words.** Comparing whole
   documents, it may pair a run of identical tokens (e.g. `[...5]`) differently, delete
   words and insert them again as new ones, which loses their markup. The app always sends
   guidance, but the patcher falls back to comparing when guidance doesn't fit. Step 3b's
   removed and replaced records cover this.
-- **The patcher passes edited words' shorthand as it renders the token,** which drops the
-  `~` of a continued line break (`[...4]~//3x` becomes `[...4]//3x`). The merge compares
-  like with like, but where it falls back to compiling the word, the break is written as
-  a plain `<lb/>`.
 - **The compiler writes entities inside `?{…}?` within `.abbr[…]` literally**:
   `.abbr[?{þ:er:}?]{…}` gives `<unclear>þ:er:</unclear>`, not `&er;`.
 - **After the document model works:** a button that opens the word panel on the next word
