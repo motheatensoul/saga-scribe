@@ -19,13 +19,14 @@
     import { editor } from "$lib/stores/editor";
     import { templateStore } from "$lib/stores/template";
     import { entityStore } from "$lib/stores/entities";
-    import { wordNormalizedForm, wordsWithDiplomaticForm } from "$lib/utils/wordNorm";
+    import { wordNormalizedForm, wordsWithDiplomaticForm, wordForms } from "$lib/utils/wordNorm";
     import { settings } from "$lib/stores/settings";
     import { stylesheetStore } from "$lib/stores/stylesheets";
     import { errorStore } from "$lib/stores/errors";
     import { validationStore } from "$lib/stores/validation";
     import * as metadataStore from "$lib/stores/metadata.svelte";
     import { importedStore } from "$lib/stores/imported.svelte";
+    import { nextMarkedWord, wordReveal } from "$lib/stores/wordReveal.svelte";
     import { compileSession } from "$lib/stores/compileSession";
     import { renumberWord } from "$lib/stores/renumber";
     import { preservationStore } from "$lib/stores/preservation.svelte";
@@ -206,6 +207,7 @@
         perfTimeSync("compile.renumber_annotations", () => annotationStore.renumber(map), { words: map.length });
         const move = (index: number) => renumberWord(map, index) ?? -1;
         if (selectedWordIndex >= 0) selectedWordIndex = move(selectedWordIndex);
+        if (lastReviewedWord >= 0) lastReviewedWord = move(lastReviewedWord);
         if (spanEndWordIndex !== null) {
             const end = move(spanEndWordIndex);
             spanEndWordIndex = end >= 0 ? end : null;
@@ -318,6 +320,33 @@
             spanEndWordIndex = null;
             showLemmatizer = true;
         }
+    }
+
+    /** The word F8 last opened, which the next F8 goes on from */
+    let lastReviewedWord = -1;
+
+    /**
+     * F8 / Shift+F8: opens the word panel on the next (previous) word marked
+     * for review in the previews (edited, or replaced and not yet answered),
+     * and shows the word in them.
+     */
+    function reviewNextWord(direction: 1 | -1) {
+        const from = selectedWordIndex >= 0 ? selectedWordIndex : lastReviewedWord;
+        const word = nextMarkedWord(importedStore.editedWords, from, direction);
+        if (word === null) {
+            errorStore.info("Review", "No words are marked for review.");
+            return;
+        }
+        const forms = wordForms(previewContent, word, $entityStore.entities);
+        if (!forms) return;
+        selectedWordFacsimile = forms.facsimile;
+        selectedWordDiplomatic = forms.diplomatic;
+        selectedWordIndex = word;
+        spanEndWordIndex = null;
+        wordPanelTab = "lemmatize";
+        showLemmatizer = true;
+        lastReviewedWord = word;
+        wordReveal.show(word);
     }
 
     function handleLemmatizerClose() {
@@ -903,6 +932,13 @@
                 return;
             }
             // Note: showSettings and showHelp are handled by their own components
+            return;
+        }
+
+        // F8 / Shift+F8: next / previous word marked for review, in the word panel
+        if (event.key === "F8" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            event.preventDefault();
+            reviewNextWord(event.shiftKey ? -1 : 1);
             return;
         }
 

@@ -1,5 +1,6 @@
 <script lang="ts">
-    import { tick } from 'svelte';
+    import { tick, untrack } from 'svelte';
+    import { wordReveal } from '$lib/stores/wordReveal.svelte';
     import { CircleX } from '@lucide/svelte';
     import { entityStore } from '$lib/stores/entities';
     import { getInflections } from '$lib/stores/dictionary';
@@ -173,6 +174,23 @@
         return shownMarks.types.get(wordIndex)?.has(type) ?? false;
     }
 
+    let rootEl: HTMLDivElement;
+
+    // A word to show (opened from the keyboard): turn to its page, scroll to it
+    $effect(() => {
+        const request = wordReveal.request;
+        if (!request) return;
+        untrack(() => void revealWord(request.word));
+    });
+
+    async function revealWord(word: number) {
+        const page = document?.pages.findIndex((p) => p.tokens.some((t) => t.wordIndex === word)) ?? -1;
+        if (page < 0) return;
+        currentPageIndex = page;
+        await tick();
+        rootEl?.querySelector(`[data-word-index="${word}"]`)?.scrollIntoView({ block: 'center' });
+    }
+
     // Navigation functions
     function goToPage(index: number) {
         if (!document) return;
@@ -211,7 +229,7 @@
     }
 </script>
 
-<div class="rendered-text font-serif text-lg leading-loose relative">
+<div class="rendered-text font-serif text-lg leading-loose relative" bind:this={rootEl}>
     {#if validationState.lastResult && !validationState.lastResult.valid}
          <div class="absolute top-0 right-0 m-1 px-2 py-1 rounded bg-base-100/95 text-xs flex items-center gap-1 z-10">
             <CircleX size={14} class="text-error" aria-hidden="true" />
@@ -339,6 +357,7 @@
                             <button
                                 type="button"
                                 class="word-token"
+                                data-word-index={token.wordIndex}
                                 class:is-confirmed={isWordConfirmed(token.wordIndex)}
                                 class:is-edited={isWordEdited(token.wordIndex)}
                                 class:has-suggestion={!isWordConfirmed(token.wordIndex) && hasKnownLemma(token.diplomatic || token.displayText)}

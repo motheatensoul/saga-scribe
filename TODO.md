@@ -103,22 +103,21 @@ when it is done (and record it in CHANGELOG.md if users notice).
     `//n`, so the line numbers in the DSL interleave.
 
   Planned so far:
-  - **Abbreviations as `(mark=expansion)`, with a store** (decided; not implemented yet,
+  - **Abbreviations as `{mark=expansion}`, with a store** (decided; not implemented yet,
     reminded 2026-11-12). `.abbr[kgs]{konungs}` is too heavy for something this common.
-    The parentheses enclose only what is abbreviated, so they can stand inside a word:
-    `(:kbar:=konun)gs`, `(:etslash:=ok)`. The left of `=` is the abbreviation mark, wrapped
+    The braces enclose only what is abbreviated, so they can stand inside a word:
+    `{:kbar:=konun}gs`, `{:etslash:=ok}`. The left of `=` is the abbreviation mark, wrapped
     in `<am>`; the right is the expansion of exactly that mark, wrapped in `<ex>` (this is
     the MENOTA encoding; documents without `<am>`/`<ex>` need a different approach). MUFI
     sometimes fuses the mark into a letter (`:hbar:` = h + bar, where the bar is the
     mark) and sometimes makes it a separate character. A fused letter's base letter was
-    written and isn't part of `<ex>`, so `(:kbar:=konun)gs` gives `<am>&kbar;</am>` on the
+    written and isn't part of `<ex>`, so `{:kbar:=konun}gs` gives `<am>&kbar;</am>` on the
     facsimile level and `k<ex>onun</ex>gs` on the diplomatic level. That needs a table of
     each entity's base letter: `static/normalizer/entity-base-letters.json` is an
     unchecked draft, to be replaced by the base characters in MUFI's specification once
-    its website is reachable again. Literal parentheses in the text then need escaping
-    (`\(`); count them in the corpus first. Check the output on each level against the
-    MENOTA handbook (abbreviations chapter) before implementing.
-    `(:kbar:)` takes the expansion from a store in the project file. The store maps a
+    its website is reachable again. Check the output on each level against the MENOTA
+    handbook (abbreviations chapter) before implementing.
+    `{:kbar:}` takes the expansion from a store in the project file. The store maps a
     mark to one or more expansions, and the first is the default. An explicit expansion
     always overrides the store. A mark that isn't in the store gets a diagnostic with a
     quick fix "add to store", and an explicit form gets an action that adds it. The editor
@@ -142,7 +141,7 @@ when it is done (and record it in CHANGELOG.md if users notice).
     version goes up, and older DSL is rewritten when loaded. `DSL_RULES` goes up for
     imported documents. The importer fills the store from `<am>`/`<ex>` pairs and writes
     short forms where the expansion matches the default. Whole-word `<choice>`
-    abbreviations without `<am>`/`<ex>` still need a DSL form, perhaps `(kgs=konungs)`
+    abbreviations without `<am>`/`<ex>` still need a DSL form, perhaps `{kgs=konungs}`
     over the whole word. XML and DSL must still read as
     the same tokens.
 

@@ -466,7 +466,8 @@ often fixed by selecting it and typing it again, which looks the same as putting
 word in its place. So when a word of the imported file that has a lemma or an analysis is
 replaced in the editor, Saga-Scribe asks whether it is still the same word. The word gets
 a wavy underline in the editor and in the Text and XSLT views. Click it in a view to open
-the word panel. The **Lemmatize** tab names the word it replaced and that word's lemma,
+the word panel, or press **F8**: it opens the panel on the next word marked for review
+(**Shift+F8**: the previous one) and shows that word in the view. The **Lemmatize** tab names the word it replaced and that word's lemma,
 with two buttons:
 
 - **Keep the old lemma**: the word was corrected. It keeps its lemma, analysis and
@@ -538,6 +539,7 @@ shortcuts and the shorthand.
 | Ctrl+S           | Save project                  |
 | Ctrl+Shift+Z     | Undo lemmatization (outside the editor) |
 | Ctrl+Shift+Y     | Redo lemmatization            |
+| F8 / Shift+F8    | Word panel on the next / previous word marked for review |
 | F1 or Ctrl+/     | Help                          |
 | Escape           | Close dialog or panel         |
 | ← / →            | Previous / next tab (in the preview, the word panel and the help) |

@@ -5,6 +5,7 @@
     import { entityStore } from '$lib/stores/entities';
     import { lemmaMappings, getInflections } from '$lib/stores/dictionary';
     import { importedStore } from '$lib/stores/imported.svelte';
+    import { wordReveal } from '$lib/stores/wordReveal.svelte';
     import { isPageLocal, renderPages, splitPages } from '$lib/rendered/xsltPages';
     import { perfRecord, perfTimeSync } from '$lib/perf';
 
@@ -210,6 +211,17 @@
 
         containerEl.addEventListener('click', handler);
         return () => containerEl.removeEventListener('click', handler);
+    });
+
+    // A word to show (opened from the keyboard): scroll to it
+    $effect(() => {
+        const request = wordReveal.request;
+        if (!request) return;
+        untrack(() => {
+            containerEl
+                ?.querySelector(`[data-word-index="${request.word}"]`)
+                ?.scrollIntoView({ block: 'center' });
+        });
     });
 
     // Add word styling in chunks to avoid blocking

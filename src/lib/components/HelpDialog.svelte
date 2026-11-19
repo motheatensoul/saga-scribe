@@ -44,6 +44,8 @@
             action: "Redo editor change (in the editor)",
         },
         { keys: ["Ctrl", "F"], action: "Search and replace in editor" },
+        { keys: ["F8"], action: "Word panel: next word marked for review" },
+        { keys: ["Shift", "F8"], action: "Word panel: previous word marked for review" },
         { keys: ["F1"], action: "Open help" },
         { keys: ["Ctrl", "/"], action: "Open help (alternative)" },
         { keys: ["Escape"], action: "Close dialog" },

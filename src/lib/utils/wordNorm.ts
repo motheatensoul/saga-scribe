@@ -25,6 +25,39 @@ export function wordNormalizedForm(xml: string, wordIndex: number, entities: Ent
         .trim();
 }
 
+/**
+ * The facsimile and diplomatic forms of word number `wordIndex` in compiled
+ * TEI, as the word panel shows them (entity references resolved, tags
+ * removed); a single-level word has its text as both. `null` if there is no
+ * such word.
+ */
+export function wordForms(
+    xml: string,
+    wordIndex: number,
+    entities: EntityMap,
+): { facsimile: string; diplomatic: string } | null {
+    const starts = /<w(?=[\s>/])/g;
+    let match: RegExpExecArray | null = null;
+    for (let n = 0; n <= wordIndex; n++) {
+        match = starts.exec(xml);
+        if (!match) return null;
+    }
+    const start = match!.index;
+    const end = xml.indexOf("</w>", start);
+    if (end < 0) return null;
+    const word = xml.slice(start, end);
+    const text = (inner: string) =>
+        resolveEntityReferences(inner.replace(/<[^>]*>/g, ""), entities).replace(/\s+/g, "").trim();
+    const level = (name: string) => {
+        const found = new RegExp(`<me:${name}\\b[^>]*>([\\s\\S]*?)</me:${name}>`).exec(word);
+        return found ? text(found[1]) : null;
+    };
+    const whole = text(word.slice(word.indexOf(">") + 1));
+    const facsimile = level("facs") ?? whole;
+    const diplomatic = level("dipl") ?? facsimile;
+    return { facsimile, diplomatic };
+}
+
 /** `text` with XML character and entity references replaced by their characters. */
 export function resolveEntityReferences(text: string, entities: EntityMap): string {
     return text.replace(/&(#x[0-9a-fA-F]+|#[0-9]+|[\w.-]+);/g, (ref, name: string) => {

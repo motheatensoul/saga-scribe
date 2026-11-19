@@ -424,8 +424,6 @@ export interface OnpEntry {
 
 export interface OnpSense {
   definition: string;
-  key: string;
-  def: string;
 }
 
 export interface OnpFullEntry {
