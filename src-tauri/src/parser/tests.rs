@@ -1375,3 +1375,25 @@ fn test_supplied_text_is_shorthand() {
     let xml = Compiler::new().with_config(config).compile("sa<m~//14þ>yct").unwrap();
     assert!(xml.contains(r#"<w>sa<supplied>m<lb n="14"/>þ</supplied>yct</w>"#), "{xml}");
 }
+
+#[test]
+fn test_deletions_additions_and_unclear_readings_are_shorthand() {
+    // One word each, markup inside
+    assert_eq!(token_texts("k-{ny[...]}-t a?{þ:er:}?b ok"), ["k-{ny[...]}-t", "a?{þ:er:}?b", "ok"]);
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let mut compiler = Compiler::new().with_config(config);
+    let xml = compiler.compile(r"-{ny[...]}- +{a:thorn:b}+ .abbr[?{þ:er:}?]{þer} -{a~//2b}- ?{a\:b}?").unwrap();
+    for expected in [
+        r#"<del>ny<gap reason="illegible"/></del>"#,
+        "<add>a&thorn;b</add>",
+        "<abbr><unclear>þ&er;</unclear></abbr>",
+        r#"<del>a<lb n="2"/>b</del>"#,
+        "<unclear>a:b</unclear>",
+    ] {
+        assert!(xml.contains(expected), "{expected} in {xml}");
+    }
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+    let xml = Compiler::new().with_config(config).compile("-{ny[...]}-t").unwrap();
+    assert!(xml.contains(r#"<me:facs><del>ny<gap reason="illegible"/></del>t</me:facs>"#), "{xml}");
+    assert!(xml.contains("<me:dipl><del>ny</del>t</me:dipl>"), "{xml}");
+}

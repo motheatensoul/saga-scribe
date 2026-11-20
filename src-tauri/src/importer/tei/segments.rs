@@ -171,7 +171,10 @@ fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
 /// - 4: a break number the plain form can't hold is in braces (`//{56r}`,
 ///   `///{fol. 1r}`), and supplied text with markup inside a word is `<…>`
 ///   with shorthand content (`.supplied{…}` would end the word).
-pub const DSL_RULES: u32 = 4;
+/// - 5: `-{…}-`, `+{…}+` and `?{…}?` have shorthand content too (entities,
+///   gaps and breaks in them used to compile as text): characters that would
+///   read as shorthand in their text are escaped, as in `<…>`.
+pub const DSL_RULES: u32 = 5;
 
 impl ImportedDocument {
     /// Parses a manifest as stored in segments.json.

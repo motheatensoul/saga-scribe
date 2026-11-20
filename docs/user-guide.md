@@ -97,6 +97,11 @@ written by the scribe (`:para:`), not a paragraph break.
 ^{note}      Note
 ```
 
+Supplied text, deletions, additions and unclear readings can contain shorthand: entities,
+gaps, line breaks and abbreviations (`þ?{:er:}?`, `-{ny[...]}-`). A note is plain text.
+To write a character that would be read as shorthand there, put a backslash before it
+(`?{a\:b}?`).
+
 ### Abbreviations
 
 ```

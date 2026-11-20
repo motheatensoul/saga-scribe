@@ -74,9 +74,24 @@ pub fn save_file(path: String, content: String) -> Result<(), String> {
     write_file_atomic(Path::new(&path), content.as_bytes())
 }
 
-#[tauri::command]
-pub fn export_tei(path: String, tei_content: String) -> Result<(), String> {
-    write_file_atomic(Path::new(&path), tei_content.as_bytes())
+/// Writes the TEI-XML export, after libxml2 has read it: XML that isn't
+/// well-formed is refused, not written.
+#[tauri::command(async)]
+pub async fn export_tei(path: String, tei_content: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        check_well_formed(&tei_content)?;
+        write_file_atomic(Path::new(&path), tei_content.as_bytes())
+    })
+    .await
+    .map_err(|e| format!("Export failed: {e}"))?
+}
+
+/// An error unless libxml2 reads `xml` as a well-formed document.
+fn check_well_formed(xml: &str) -> Result<(), String> {
+    let timer = crate::perf::timer();
+    let result = crate::xml::check_well_formed(xml);
+    timer.done("export.check", [("ok", result.is_ok().into())]);
+    result.map_err(|e| format!("Not exported: the XML is not well-formed ({e}). Please report this as a bug."))
 }
 
 #[tauri::command]
@@ -624,5 +639,12 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "new");
         assert!(!dir.join(".out.xml.tmp").exists());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_export_refuses_xml_that_is_not_well_formed() {
+        assert!(check_well_formed("<TEI><text>a &thorn; b</text></TEI>").is_ok());
+        let error = check_well_formed("<TEI><text><w>a</text></TEI>").unwrap_err();
+        assert!(error.starts_with("Not exported"), "{error}");
     }
 }

@@ -552,7 +552,6 @@
     {"dsl":"/// ","nodes":[["PageBreak",0,3],["Text",3,4]]},
     {"dsl":":et:|,^+\n.p[","nodes":[["Entity",0,4],["WordBoundary",4,5],["Text",5,12]]},
     {"dsl":"}//","nodes":[["Text",0,1],["LineBreak",1,3]]},
-    {"dsl":"^?{.?{.#:et:}}?:et:p}+h~/////1","nodes":[["Text",0,1],["Unclear",1,15],["Entity",15,19],["Text",19,23],["WordContinuation",23,24],["PageBreak",24,30]]},
     {"dsl":"~//~///}.𝔞.pþ|//","nodes":[["WordContinuation",0,1],["LineBreak",1,3],["WordContinuation",3,4],["PageBreak",4,17]]},
     {"dsl":"~3v:~//","nodes":[["CompoundJoin",0,1],["Text",1,4],["WordContinuation",4,5],["LineBreak",5,7]]},
     {"dsl":".head{ 1}?","nodes":[["Head",0,9],["Text",9,10]]},
@@ -997,7 +996,6 @@
     {"dsl":"]///}:et://.norm{[.þ","nodes":[["Text",0,1],["PageBreak",1,20]]},
     {"dsl":"///].abbr[^{𝔞~//?.supplied{^ꝛ.abbr[?þ#","nodes":[["PageBreak",0,39]]},
     {"dsl":"p\n}?///}+-}->.:et:[[...~𝔞h","nodes":[["Text",0,4],["PageBreak",4,27]]},
-    {"dsl":"1-{et//#?~///}-𝔞>þ}+[","nodes":[["Text",0,1],["Deletion",1,15],["Text",15,22]]},
     {"dsl":"}:///}-< ^.p~","nodes":[["Text",0,2],["PageBreak",2,8],["Text",8,12],["CompoundJoin",12,13]]},
     {"dsl":"//}-h//[~:,|~//\\","nodes":[["LineBreak",0,2],["Text",2,5],["LineBreak",5,7],["Text",7,8],["CompoundJoin",8,9],["Text",9,11],["WordBoundary",11,12],["WordContinuation",12,13],["LineBreak",13,15],["Text",15,16]]},
     {"dsl":"}+^}-///,.head{}+.supplied{+{","nodes":[["Text",0,5],["PageBreak",5,29]]},
@@ -1029,6 +1027,8 @@
     {"dsl":"///.head{:\\+𝔞///><~//[...1\\h","nodes":[["PageBreak",0,29]]},
     {"dsl":":et:et:","nodes":[["Entity",0,4],["Text",4,7]]},
     {"dsl":"\\# }","nodes":[["Literal",0,2],["Text",2,4]]},
-    {"dsl":"~///.supplied{\\?{a:et:}?h","nodes":[["WordContinuation",0,1],["PageBreak",1,25]]}
+    {"dsl":"~///.supplied{\\?{a:et:}?h","nodes":[["WordContinuation",0,1],["PageBreak",1,25]]},
+    {"dsl":"et{","nodes":[["Text",0,3]]},
+    {"dsl":"\\{","nodes":[["Literal",0,2]]}
   ]
 }

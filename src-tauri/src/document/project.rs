@@ -28,10 +28,9 @@ enum TextContext {
     Token,
     /// `#…#`: syntax
     Numeral,
-    /// `-{…}-`, `+{…}+`, `?{…}?`: what could close the construct
+    /// `<…>`, `-{…}-`, `+{…}+`, `?{…}?`, whose content is shorthand
+    /// (`-{…}-` and the like since DSL rules 5)
     Inline,
-    /// `<…>`, whose content is shorthand
-    Angle,
     /// `^{…}`: only braces nest in a note
     Note,
 }
@@ -52,7 +51,7 @@ fn escape_dsl(text: &str, context: TextContext) -> String {
                         '\\' | '#' | '|' | '~' | '<' | '>' | '[' | ']' | '{' | '}' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?'
                     )
             }
-            TextContext::Numeral | TextContext::Angle => {
+            TextContext::Numeral | TextContext::Inline => {
                 // `.p` standalone is a paragraph; `.abbr[` and the like have
                 // their bracket escaped
                 let paragraph = c == '.' && next == Some('p') && chars.get(i + 2).is_none_or(|c| c.is_whitespace());
@@ -60,7 +59,6 @@ fn escape_dsl(text: &str, context: TextContext) -> String {
                     || paragraph
                     || matches!(c, '\\' | '#' | '|' | '~' | '<' | '>' | '[' | ']' | '{' | '}' | ':')
             }
-            TextContext::Inline => matches!(c, '\\' | '#' | '{' | '}' | '[' | ']' | '<' | '>'),
             TextContext::Note => matches!(c, '\\' | '#' | '{' | '}'),
         };
         if escape {
@@ -727,7 +725,7 @@ impl Projector<'_> {
                 "note" => return TextContext::Note,
                 "add" | "del" | "unclear" => return TextContext::Inline,
                 "supplied" if !self.has_element_children(node) || self.in_token_or_construct(node) => {
-                    return TextContext::Angle
+                    return TextContext::Inline
                 }
                 "num" if self.is_numeral(node) && !self.in_token_or_construct(node) => return TextContext::Numeral,
                 "w" | "pc" | "num" | "supplied" | "head" | "body" => return TextContext::Token,

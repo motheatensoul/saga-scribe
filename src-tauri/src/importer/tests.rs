@@ -1763,3 +1763,42 @@ fn test_deleting_the_only_word_of_a_wrapper_removes_the_wrapper() {
     let (original, body) = imported_roundtrip(&xml, |d| d.replace(" b", "")).unwrap();
     assert_eq!(body, original.replace(r#"<w><me:dipl>b</me:dipl></w>"#, ""));
 }
+
+#[test]
+fn test_deletions_and_unclear_readings_with_markup_read_as_tokens() {
+    let cases = [
+        (r#"<w><me:facs><del>ny<gap/></del>t</me:facs></w>"#, ".p -{ny[...]}-t"),
+        (r#"<w><me:facs>þ<unclear>&er;</unclear></me:facs></w>"#, ".p þ?{:er:}?"),
+        // Text that would read as shorthand is escaped
+        (r#"<w><me:facs><del>a:b:c</del></me:facs></w>"#, r".p -{a\:b\:c}-"),
+    ];
+    for (words, expected) in cases {
+        let xml = menota_body(words);
+        let import = parse(&xml).unwrap();
+        assert_eq!(import.dsl, expected);
+        let segments = import.imported_document.unwrap().segments;
+        let from_xml: Vec<String> =
+            segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
+        assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap(), "{expected}");
+    }
+    // An edited word keeps the gap in its deletion (Holm D 4)
+    let xml = menota_body(r#"<w><me:facs><del>ny<gap reason="damage"/></del>t</me:facs></w> <w><me:facs>ok</me:facs></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("}-t", "}-tt")).unwrap();
+    assert!(body.contains(r#"<me:facs><del>ny<gap reason="damage"/></del>tt</me:facs>"#), "{body}");
+}
+
+#[test]
+fn test_edited_numeral_keeps_its_attributes_and_markup() {
+    let xml = menota_body(
+        r#"<w><me:facs>ok</me:facs></w> <num value="10"><me:facs>.<hi rend="red">x</hi>.</me:facs><me:dipl>.x.</me:dipl></num> <w><me:facs>ok</me:facs></w>"#,
+    );
+    let (_, body) = imported_roundtrip(&xml, |d| {
+        assert!(d.contains("#.x.#"), "{d}");
+        d.replace(".x.#", ".xv.#")
+    })
+    .unwrap();
+    assert!(
+        body.contains(r#"<num value="10"><me:facs>.<hi rend="red">x</hi>v.</me:facs><me:dipl>.xv.</me:dipl></num>"#),
+        "{body}"
+    );
+}

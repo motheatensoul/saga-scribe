@@ -55,18 +55,18 @@ pub enum SyntaxKind {
     Supplied { content: Span, children: Vec<SyntaxNode> },
     /// `.supplied{dsl}`
     SuppliedBlock { content: Span, children: Vec<SyntaxNode> },
-    /// `-{text}-`
-    Deletion { content: Span },
-    /// `+{text}+`
-    Addition { content: Span },
+    /// `-{dsl}-`: deleted text, its content parsed into `children`
+    Deletion { content: Span, children: Vec<SyntaxNode> },
+    /// `+{dsl}+`: added text, its content parsed into `children`
+    Addition { content: Span, children: Vec<SyntaxNode> },
     /// `^{text}`
     Note { content: Span },
     /// `.head{dsl}`
     Head { content: Span, children: Vec<SyntaxNode> },
     /// `.norm{dsl}`
     Norm { content: Span, children: Vec<SyntaxNode> },
-    /// `?{text}?`
-    Unclear { content: Span },
+    /// `?{dsl}?`: an unclear reading, its content parsed into `children`
+    Unclear { content: Span, children: Vec<SyntaxNode> },
     /// `:name:`
     Entity { name: Span },
     /// `\c`: the character `c` as text (`char` is its span)
@@ -151,12 +151,12 @@ pub fn lower(nodes: &[SyntaxNode], source: &str) -> Vec<Node> {
             },
             SyntaxKind::Supplied { content, .. } => Node::Supplied(text(content)),
             SyntaxKind::SuppliedBlock { content, .. } => Node::SuppliedBlock(text(content)),
-            SyntaxKind::Deletion { content } => Node::Deletion(text(content)),
-            SyntaxKind::Addition { content } => Node::Addition(text(content)),
+            SyntaxKind::Deletion { content, .. } => Node::Deletion(text(content)),
+            SyntaxKind::Addition { content, .. } => Node::Addition(text(content)),
             SyntaxKind::Note { content } => Node::Note(text(content)),
             SyntaxKind::Head { content, .. } => Node::Head(text(content)),
             SyntaxKind::Norm { content, .. } => Node::Norm(text(content)),
-            SyntaxKind::Unclear { content } => Node::Unclear(text(content)),
+            SyntaxKind::Unclear { content, .. } => Node::Unclear(text(content)),
             SyntaxKind::Entity { name } => Node::Entity(text(name)),
             SyntaxKind::Literal { char } => Node::Literal(text(char)),
             SyntaxKind::Numeral { content, .. } => Node::Numeral(text(content)),
@@ -345,10 +345,10 @@ impl<'a> Parser<'a> {
                     Some((1, result))
                 } else if rest.starts_with("-{") {
                     flush_text!(start);
-                    Some((2, self.inline(start, Some('-'), |content| SyntaxKind::Deletion { content })))
+                    Some((2, self.inline(start, Some('-'), |content, children| SyntaxKind::Deletion { content, children })))
                 } else if rest.starts_with("+{") {
                     flush_text!(start);
-                    Some((2, self.inline(start, Some('+'), |content| SyntaxKind::Addition { content })))
+                    Some((2, self.inline(start, Some('+'), |content, children| SyntaxKind::Addition { content, children })))
                 } else if rest.starts_with("^{") {
                     // Free prose ("ð < g"): only braces nest, as in blocks
                     flush_text!(start);
@@ -359,7 +359,7 @@ impl<'a> Parser<'a> {
                     Some((2, result))
                 } else if rest.starts_with("?{") {
                     flush_text!(start);
-                    Some((2, self.inline(start, Some('?'), |content| SyntaxKind::Unclear { content })))
+                    Some((2, self.inline(start, Some('?'), |content, children| SyntaxKind::Unclear { content, children })))
                 } else if rest.starts_with(':') {
                     // Not an entity unless the closing colon follows; then it's text
                     match self.try_parse_entity() {
@@ -476,14 +476,15 @@ impl<'a> Parser<'a> {
         &mut self,
         start: usize,
         closing: Option<char>,
-        make: impl FnOnce(Span) -> SyntaxKind,
+        make: impl FnOnce(Span, Vec<SyntaxNode>) -> SyntaxKind,
     ) -> Result<Vec<SyntaxNode>, Failure> {
         self.pos += 2;
         let content = self.consume_bracketed('}')?;
         if let Some(c) = closing {
             self.expect(c)?;
         }
-        Ok(vec![self.node(make(content), start)])
+        let children = self.parse_nested(content.clone());
+        Ok(vec![self.node(make(content, children), start)])
     }
 
     fn current_char(&self) -> Option<char> {

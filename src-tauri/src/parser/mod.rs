@@ -35,9 +35,9 @@
 //! | `[...3]` | `<gap quantity="3"/>` | Gap with character count |
 //! | `[...<txt>]` | `<gap/><supplied>txt</supplied>` | Gap with supplied reading |
 //! | `<txt>` | `<supplied>txt</supplied>` | Editorial supplied text |
-//! | `-{txt}-` | `<del>txt</del>` | Deletion |
-//! | `+{txt}+` | `<add>txt</add>` | Addition |
-//! | `?{txt}?` | `<unclear>txt</unclear>` | Unclear reading |
+//! | `-{dsl}-` | `<del>…</del>` | Deletion (content is shorthand) |
+//! | `+{dsl}+` | `<add>…</add>` | Addition (content is shorthand) |
+//! | `?{dsl}?` | `<unclear>…</unclear>` | Unclear reading (content is shorthand) |
 //! | `#.x.#` | `<num>.x.</num>` | Numeral |
 //! | `\c` | `c` | The character as text, part of the word |
 //! | `^{txt}` | `<note>txt</note>` | Editorial note |

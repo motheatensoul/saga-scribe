@@ -337,15 +337,15 @@ impl<'a> Compiler<'a> {
                 let content = self.compile_fragment_from_dsl(text);
                 format!("<supplied>{}</supplied>", content)
             }
-            Node::Deletion(text) => format!("<del>{}</del>", self.escape_xml(&unescape(text))),
-            Node::Addition(text) => format!("<add>{}</add>", self.escape_xml(&unescape(text))),
+            Node::Deletion(text) => format!("<del>{}</del>", self.inline_xml(text)),
+            Node::Addition(text) => format!("<add>{}</add>", self.inline_xml(text)),
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(&unescape(text))),
             Node::Head(text) => {
                 let content = self.compile_fragment_from_dsl(text);
                 format!("<head>{}</head>", content)
             }
             Node::Norm(text) => self.compile_normalized_fragment(text),
-            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(&unescape(text))),
+            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.inline_xml(text)),
             Node::Entity(name) => self.compile_entity(name),
             Node::Literal(c) => self.escape_xml(c),
             Node::Numeral(content) => self.compile_numeral(content),
@@ -820,7 +820,7 @@ impl<'a> Compiler<'a> {
             Node::Abbreviation { abbr, .. } => {
                 format!("<abbr>{}</abbr>", self.nodes_to_facs(&inline_nodes(abbr)))
             }
-            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(&unescape(text))),
+            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.nodes_to_facs(&inline_nodes(text))),
             Node::Gap { quantity, supplied } => {
                 // Facsimile shows gap only, not supplied (but its breaks)
                 let gap = match quantity {
@@ -833,8 +833,8 @@ impl<'a> Compiler<'a> {
             // Supplied text isn't in the manuscript; the breaks in it are
             Node::Supplied(text) => self.word_breaks_xml(&inline_nodes(text)),
             Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
-            Node::Deletion(text) => format!("<del>{}</del>", self.escape_xml(&unescape(text))),
-            Node::Addition(text) => format!("<add>{}</add>", self.escape_xml(&unescape(text))),
+            Node::Deletion(text) => format!("<del>{}</del>", self.nodes_to_facs(&inline_nodes(text))),
+            Node::Addition(text) => format!("<add>{}</add>", self.nodes_to_facs(&inline_nodes(text))),
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(&unescape(text))),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in facsimile
@@ -887,7 +887,7 @@ impl<'a> Compiler<'a> {
             Node::Abbreviation { expansion, .. } => {
                 format!("<expan>{}</expan>", self.nodes_to_diplomatic(&inline_nodes(expansion)))
             }
-            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(&unescape(text))),
+            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.nodes_to_diplomatic(&inline_nodes(text))),
             // Clippy is cranky about this being two nested matches, its suggested fix does not work though.
             Node::Gap { supplied, .. } => {
                 // Diplomatic shows supplied text if available
@@ -898,8 +898,8 @@ impl<'a> Compiler<'a> {
             }
             Node::Supplied(text) => format!("<supplied>{}</supplied>", self.nodes_to_diplomatic(&inline_nodes(text))),
             Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
-            Node::Deletion(text) => format!("<del>{}</del>", self.escape_xml(&unescape(text))),
-            Node::Addition(text) => format!("<add>{}</add>", self.escape_xml(&unescape(text))),
+            Node::Deletion(text) => format!("<del>{}</del>", self.nodes_to_diplomatic(&inline_nodes(text))),
+            Node::Addition(text) => format!("<add>{}</add>", self.nodes_to_diplomatic(&inline_nodes(text))),
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(&unescape(text))),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in diplomatic
@@ -995,10 +995,7 @@ impl<'a> Compiler<'a> {
             Node::Abbreviation { expansion, .. } => {
                 format!("<expan>{}</expan>", self.nodes_to_normalized(&inline_nodes(expansion)))
             }
-            Node::Unclear(text) => {
-                let normalized = self.normalize_text(&unescape(text));
-                format!("<unclear>{}</unclear>", self.escape_xml(&normalized))
-            }
+            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.nodes_to_normalized(&inline_nodes(text))),
             Node::Gap { supplied, .. } => match supplied.as_deref() {
                 Some(text) if !text.is_empty() => {
                     format!("<supplied>{}</supplied>", self.nodes_to_normalized(&inline_nodes(text)))
@@ -1007,14 +1004,8 @@ impl<'a> Compiler<'a> {
             },
             Node::Supplied(text) => format!("<supplied>{}</supplied>", self.nodes_to_normalized(&inline_nodes(text))),
             Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
-            Node::Deletion(text) => {
-                let normalized = self.normalize_text(&unescape(text));
-                format!("<del>{}</del>", self.escape_xml(&normalized))
-            }
-            Node::Addition(text) => {
-                let normalized = self.normalize_text(&unescape(text));
-                format!("<add>{}</add>", self.escape_xml(&normalized))
-            }
+            Node::Deletion(text) => format!("<del>{}</del>", self.nodes_to_normalized(&inline_nodes(text))),
+            Node::Addition(text) => format!("<add>{}</add>", self.nodes_to_normalized(&inline_nodes(text))),
             Node::Note(text) => {
                 let normalized = self.normalize_text(&unescape(text));
                 format!("<note>{}</note>", self.escape_xml(&normalized))

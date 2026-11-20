@@ -157,9 +157,9 @@ Press **F1** in the app for the shorthand reference and keyboard shortcuts. The
 | `[...]` or `[...3]`      | Gap, optionally with its length in letters | `<gap reason="illegible" quantity="3" unit="chars"/>`    |
 | `[...3<ok>]`             | Gap with supplied text                     | `<gap …/><supplied>ok</supplied>`                        |
 | `<text>`                 | Supplied text (may contain shorthand)      | `<supplied>text</supplied>`                              |
-| `-{text}-`               | Deletion                                   | `<del>text</del>`                                        |
-| `+{text}+`               | Addition                                   | `<add>text</add>`                                        |
-| `?{text}?`               | Unclear reading                            | `<unclear>text</unclear>`                                |
+| `-{text}-`               | Deletion (may contain shorthand)           | `<del>text</del>`                                        |
+| `+{text}+`               | Addition (may contain shorthand)           | `<add>text</add>`                                        |
+| `?{text}?`               | Unclear reading (may contain shorthand)    | `<unclear>text</unclear>`                                |
 | `^{text}`                | Note                                       | `<note>text</note>`                                      |
 | `:name:`                 | Special character (MENOTA/MUFI entity)     | `&name;`                                                 |
 | `#.x.#`                  | Numeral                                    | `<num>.x.</num>`                                         |

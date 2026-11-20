@@ -1267,10 +1267,20 @@ fn without_breaks(xml: &str) -> String {
 /// Whether a segment's original XML is a `<w>` element (as opposed to bare text
 /// or another inline element stored as a word segment).
 fn is_w_element(original_xml: &str) -> bool {
-    original_xml
-        .strip_prefix("<w")
+    is_element(original_xml, "w")
+}
+
+/// Whether `xml` starts with an element named `name` (no namespace prefix).
+fn is_element(xml: &str, name: &str) -> bool {
+    xml.strip_prefix('<')
+        .and_then(|rest| rest.strip_prefix(name))
         .and_then(|rest| rest.chars().next())
         .is_some_and(|c| c == '>' || c == '/' || c.is_whitespace())
+}
+
+/// Whether `dsl` is a single numeral, `#…#`.
+fn is_numeral_dsl(dsl: &str) -> bool {
+    matches!(parse_dsl_nodes(dsl).as_deref(), Ok([Node::Numeral(_)]))
 }
 
 /// Compiles newly inserted DSL in the style of the document (word-wrapped or not).
@@ -1346,6 +1356,19 @@ pub(super) fn render_modify(
                         crate::document::as_different_word(&merged.xml, &compiled).unwrap_or(compiled)
                     }
                 }
+                None => compiled,
+            }
+        }
+        // A numeral stays a numeral: the edit is merged into it as into a
+        // word, keeping its attributes and the markup the shorthand doesn't show
+        (Segment::Word { original_xml, dsl_content, .. }, TokenKind::Other)
+            if is_element(original_xml, "num") && is_numeral_dsl(new_dsl) && is_numeral_dsl(dsl_content) =>
+        {
+            let original = source.unwrap_or(original_xml);
+            let compiled = render_insert(new_dsl, compiler);
+            let before = render_insert(dsl_content.trim(), compiler);
+            match crate::document::merge_word_edit(original, &before, &compiled) {
+                Some(merged) => merged.xml,
                 None => compiled,
             }
         }

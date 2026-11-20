@@ -135,8 +135,9 @@ saga-scribe/
 | `[...]` | `<gap/>` | Gap |
 | `[...<txt>]` | `<gap/><supplied>txt</supplied>` | Gap + Supplied |
 | `<txt>` | `<supplied>txt</supplied>` | Supplied (content is DSL: entities, breaks, abbreviations) |
-| `-{txt}-` | `<del>txt</del>` | Deletion |
-| `+{txt}+` | `<add>txt</add>` | Addition |
+| `-{txt}-` | `<del>txt</del>` | Deletion (content is DSL, as in `<txt>`) |
+| `+{txt}+` | `<add>txt</add>` | Addition (content is DSL) |
+| `?{txt}?` | `<unclear>txt</unclear>` | Unclear reading (content is DSL) |
 | `:name:` | `&name;` | Entity |
 | `#.x.#` | `<num>.x.</num>` | Numeral (a token of its own, not a word) |
 | `\c` | `c` | The character `c` as text, part of the word (`ꝼæ\;ðꝛ`); after punctuation it continues it (`,\,`) |

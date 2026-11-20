@@ -43,7 +43,7 @@ user chose, data loss, or network access the user didn't ask for. In particular:
   displayed, exported or printed, and the app runs under a strict Content
   Security Policy.
 - **Project files (`.teis`, zip archives)**: contents are read, never executed.
-- **Exports (HTML, PDF, TEI-XML)**: written atomically to the path the user chose.
+- **Exports (HTML, PDF, TEI-XML)**: written atomically to the path the user chose. TEI-XML is parsed by libxml2 (without network access) first and not written unless it is well-formed.
 
 Out of scope:
 

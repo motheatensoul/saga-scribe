@@ -36,12 +36,6 @@ when it is done (and record it in CHANGELOG.md if users notice).
 - **Text outside words in documents without `<w>`** is still split at punctuation by the
   shorthand (`Hello,` is one segment, two tokens); in documents with `<w>` such loose text
   is escaped like a word.
-- **Markup inside `-{…}-`, `+{…}+` and `?{…}?` is written as text**: their content isn't
-  read as shorthand, so `<del>ny<gap/></del>` is `-{ny[...]}-`, compiled as the text
-  `[...]`; editing such a word moves the gap out of the `<del>` (Holm D 4). Like `<…>`, their
-  content should be shorthand.
-- **An edited `<num>` is compiled anew**, not merged like a `<w>` (`document/merge.rs`),
-  so its attributes and markup the shorthand doesn't show are lost.
 - **Without the editor's guidance, the patcher can move words.** Comparing whole
   documents, it may pair a run of identical tokens (e.g. `[...5]`) differently, delete
   words and insert them again as new ones, which loses their markup. The app always sends
@@ -53,11 +47,16 @@ when it is done (and record it in CHANGELOG.md if users notice).
   tree alone is well over 100 MB, and the memory slows the patcher down: an edit there
   compiles in about 29 ms instead of 20 before the tree. Goes away when the patcher works
   on the tree (3b); the nodes (200 bytes each) could also be made smaller.
-- **Output isn't checked by libxml2 before saving**: `Tree::write_checked` exists, but a
-  compile writes with `write`, since parsing the whole file again on every edit is too slow.
-  The check should run when saving or exporting, or only on the nodes an edit wrote anew.
-- **The compiler writes entities inside `?{…}?` within `.abbr[…]` literally**:
-  `.abbr[?{þ:er:}?]{…}` gives `<unclear>þ:er:</unclear>`, not `&er;`.
+- **Output is only partly checked before saving**: exporting TEI-XML refuses XML libxml2
+  doesn't read as well-formed (`export_tei`), but a compile writes with `Tree::write`, not
+  `write_checked` (parsing the whole file again on every edit is too slow), so nothing
+  checks that the written file reads as the tree it came from, and the project's
+  `output.xml` isn't checked at all. The tree check could run on the nodes an edit wrote anew.
+- **Import accepts XML that isn't well-formed**: `crate::xml::parse` uses libxml2's
+  recover mode (the `libxml` crate's default), so a broken file is imported as libxml2
+  repairs it, without a warning; unedited parts are still copied from the original bytes.
+  Importing should say so, or refuse (`xml::check_well_formed` is strict). All 288 Menota
+  files are well-formed.
 - **After the document model works:** inferring a changed lemma and analysis after an
   edit (and from them dipl and norm), which needs a robust lemmatizer.
 

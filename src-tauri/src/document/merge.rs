@@ -35,7 +35,8 @@ pub struct MergedWord {
 }
 
 /// Merges the edit from `old_compiled` to `new_compiled` (the compiler's XML
-/// for the word's old and new shorthand) into `word_xml`, the word as written
+/// for the word's old and new shorthand) into `word_xml`, the word (a `<w>`,
+/// or a `<num>` written `#…#`) as written
 /// in the file. `None` if the fragments can't be read or lined up at all; the
 /// caller then uses `new_compiled`.
 pub fn merge_word_edit(word_xml: &str, old_compiled: &str, new_compiled: &str) -> Option<MergedWord> {
@@ -132,7 +133,7 @@ fn parse_word(xml: &str) -> Option<(Tree, NodeId)> {
         .children(root)
         .iter()
         .copied()
-        .find(|&id| tree.element(id).is_some_and(|e| local(&e.name) == "w"))?;
+        .find(|&id| tree.element(id).is_some_and(|e| matches!(local(&e.name), "w" | "num")))?;
     Some((tree, w))
 }
 
@@ -190,6 +191,9 @@ struct Span {
     end: usize,
     /// Opening order in the document, to keep nesting and order
     order: usize,
+    /// The `order` of the element it is in, if any: a node of length zero
+    /// at the end of an element (`<del>ny<gap/></del>`) stays inside it
+    parent: Option<usize>,
 }
 
 impl Span {
@@ -214,12 +218,12 @@ impl Flat {
     fn read(tree: &Tree, level: NodeId, compiled: bool) -> Flat {
         let mut flat = Flat { atoms: Vec::new(), spans: Vec::new() };
         for &child in tree.children(level) {
-            flat.read_node(tree, child, compiled);
+            flat.read_node(tree, child, compiled, None);
         }
         flat
     }
 
-    fn read_node(&mut self, tree: &Tree, id: NodeId, compiled: bool) {
+    fn read_node(&mut self, tree: &Tree, id: NodeId, compiled: bool, parent: Option<usize>) {
         match tree.kind(id) {
             NodeKind::Text(text) if compiled => {
                 let mut layout = false;
@@ -240,16 +244,17 @@ impl Flat {
                     start,
                     end: start,
                     order: index,
+                    parent,
                 });
                 for &child in tree.children(id) {
-                    self.read_node(tree, child, compiled);
+                    self.read_node(tree, child, compiled, Some(index));
                 }
                 self.spans[index].end = self.atoms.len();
             }
             other => {
                 let at = self.atoms.len();
                 let order = self.spans.len();
-                self.spans.push(Span { node: other.clone(), start: at, end: at, order });
+                self.spans.push(Span { node: other.clone(), start: at, end: at, order, parent });
             }
         }
     }
@@ -477,7 +482,7 @@ fn merge_level(ours: &Flat, theirs_old: &Flat, theirs_new: &Flat) -> Option<(Fla
                 let new_span = &theirs_new.spans[n];
                 let (start, end) = (new_position(new_span.start)?, new_position(new_span.end)?);
                 let node = with_attribute_changes(&span.node, &theirs_old.spans[o].node, &new_span.node);
-                spans.push(Span { node, start, end, order: span.order });
+                spans.push(Span { node, start, end, order: span.order, parent: span.parent });
             }
             // Not shown: moves with the text
             None => {
@@ -487,17 +492,28 @@ fn merge_level(ours: &Flat, theirs_old: &Flat, theirs_new: &Flat) -> Option<(Fla
                     removed.push(span.name().unwrap_or("?").to_string());
                     continue;
                 }
-                spans.push(Span { node: span.node.clone(), start, end, order: span.order });
+                spans.push(Span { node: span.node.clone(), start, end, ..span.clone() });
             }
         }
     }
-    // Markup the edit added
+    // Markup the edit added, in the element of ours that its parent in the
+    // new version is, or in other added markup
+    let added_order = |n: usize| usize::MAX / 2 + n;
+    let parent_in_ours = |n: usize| -> Option<usize> {
+        if !new_taken[n] {
+            return Some(added_order(n));
+        }
+        let o = old_to_new.iter().position(|&m| m == Some(n))?;
+        let k = shown.iter().position(|&s| s == Some(o))?;
+        Some(ours.spans[k].order)
+    };
     for (n, new_span) in theirs_new.spans.iter().enumerate() {
         if new_taken[n] {
             continue;
         }
         let (start, end) = (new_position(new_span.start)?, new_position(new_span.end)?);
-        spans.push(Span { node: new_span.node.clone(), start, end, order: usize::MAX / 2 + n });
+        let parent = new_span.parent.and_then(parent_in_ours);
+        spans.push(Span { node: new_span.node.clone(), start, end, order: added_order(n), parent });
     }
     Some((Flat { atoms, spans }, removed))
 }
@@ -572,8 +588,8 @@ fn rebuild(tree: &mut Tree, level: NodeId, flat: &Flat, order: &[usize]) {
     for child in tree.children(level).to_vec() {
         tree.remove(child);
     }
-    // Open elements: (node, end)
-    let mut stack: Vec<(NodeId, usize)> = vec![(level, usize::MAX)];
+    // Open elements: (node, end, order)
+    let mut stack: Vec<(NodeId, usize, Option<usize>)> = vec![(level, usize::MAX, None)];
     let mut next_span = 0;
     let mut text = String::new();
     let flush = |tree: &mut Tree, parent: NodeId, text: &mut String| {
@@ -582,10 +598,31 @@ fn rebuild(tree: &mut Tree, level: NodeId, flat: &Flat, order: &[usize]) {
             tree.insert(parent, at, NodeKind::Text(std::mem::take(text)));
         }
     };
-    let top = |stack: &[(NodeId, usize)]| stack.last().map_or(level, |&(node, _)| node);
+    let top = |stack: &[(NodeId, usize, Option<usize>)]| stack.last().map_or(level, |&(node, _, _)| node);
     for pos in 0..=flat.atoms.len() {
+        // Nodes of length zero at the end of an element that ends here go
+        // inside it (`<del>ny<gap/></del>`)
+        while let Some(span) = spans.get(next_span).filter(|s| s.start == pos && s.end == pos) {
+            let Some(depth) = stack.iter().rposition(|&(_, end, order)| order.is_some() && order == span.parent && end == pos)
+            else {
+                break;
+            };
+            // Close the elements inside it, which end here too
+            if stack[depth + 1..].iter().any(|&(_, end, _)| end != pos) {
+                break;
+            }
+            while stack.len() > depth + 1 {
+                flush(tree, top(&stack), &mut text);
+                stack.pop();
+            }
+            let parent = top(&stack);
+            flush(tree, parent, &mut text);
+            let at = tree.children(parent).len();
+            tree.insert(parent, at, span.node.clone());
+            next_span += 1;
+        }
         // Close what ends here
-        while stack.len() > 1 && stack.last().is_some_and(|&(_, end)| end == pos) {
+        while stack.len() > 1 && stack.last().is_some_and(|&(_, end, _)| end == pos) {
             flush(tree, top(&stack), &mut text);
             stack.pop();
         }
@@ -598,7 +635,7 @@ fn rebuild(tree: &mut Tree, level: NodeId, flat: &Flat, order: &[usize]) {
             let at = tree.children(parent).len();
             let node = tree.insert(parent, at, span.node.clone());
             if matches!(span.node, NodeKind::Element(_)) && span.end > span.start {
-                stack.push((node, span.end));
+                stack.push((node, span.end, Some(span.order)));
             }
         }
         if let Some(atom) = flat.atoms.get(pos) {

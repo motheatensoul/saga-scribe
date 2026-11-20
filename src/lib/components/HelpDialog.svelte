@@ -102,8 +102,8 @@
             output: "<supplied>text</supplied>",
             desc: "Supplied text (may contain shorthand)",
         },
-        { syntax: "-{text}-", output: "<del>text</del>", desc: "Deletion" },
-        { syntax: "+{text}+", output: "<add>text</add>", desc: "Addition" },
+        { syntax: "-{text}-", output: "<del>text</del>", desc: "Deletion (may contain shorthand)" },
+        { syntax: "+{text}+", output: "<add>text</add>", desc: "Addition (may contain shorthand)" },
         {
             syntax: "^{note}",
             output: "<note>note</note>",
@@ -112,7 +112,7 @@
         {
             syntax: "?{text}?",
             output: "<unclear>text</unclear>",
-            desc: "Unclear reading",
+            desc: "Unclear reading (may contain shorthand)",
         },
         { syntax: ":thorn:", output: "&thorn;", desc: "Entity reference" },
         { syntax: "#.x.#", output: "<num>.x.</num>", desc: "Numeral" },
