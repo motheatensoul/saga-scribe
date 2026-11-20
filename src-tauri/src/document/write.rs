@@ -158,7 +158,8 @@ impl Tree {
                 out.push_str("]]>");
                 Ok(())
             }
-            NodeKind::ProcessingInstruction { target, data } => {
+            NodeKind::ProcessingInstruction(pi) => {
+                let (target, data) = (&pi.target, &pi.data);
                 check_name(target)?;
                 if data.contains("?>") {
                     return Err(format!("A processing instruction can't contain \"?>\": {data:?}"));

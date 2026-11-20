@@ -1,7 +1,7 @@
 use super::tei::parse;
 use crate::importer::tei::helpers;
 use crate::importer::tei::patching::{
-    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body,
+    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body, Originals,
     PatchOperation, Patcher, RenderedBody,
 };
 use crate::identity::{Guidance, TextChange};
@@ -1020,8 +1020,13 @@ fn imported_render(
     let doc = import.imported_document.expect("manifest");
     let original_body = import.original_body_xml.expect("body");
     let patches = compute_patches(&doc.segments, doc.dsl_rules, &edit(&import.dsl))?;
-    let mut compiler = Compiler::new().with_config(compiler_config_for(&doc));
     let tree = tree_source(&import.original_preamble, &original_body, &import.original_postamble, &doc);
+    let mut compiler = Compiler::new().with_config(compiler_config_for(&doc, Originals::new(tree.as_ref())));
+    // As a session holds it: without the copies of the XML the tree has
+    let mut doc = doc;
+    if let Some(tree) = &tree {
+        doc.drop_copies(|id| tree.segment_xml(id).is_some());
+    }
     let body = render_body(&doc, Some(&original_body), tree.as_ref(), &patches, &mut compiler)?;
     Ok((original_body, body))
 }
@@ -1499,6 +1504,7 @@ struct Session {
     body: String,
     tree: Option<crate::importer::tei::apply::TreeSource>,
     patcher: Patcher,
+    config: crate::parser::CompilerConfig,
     dsl: String,
 }
 
@@ -1510,7 +1516,12 @@ impl Session {
         let body = import.original_body_xml.unwrap();
         let tree = tree_source(&import.original_preamble, &body, &import.original_postamble, &doc);
         assert!(tree.is_some(), "the file maps onto its segments");
-        let mut session = Session { doc, body, tree, patcher, dsl: import.dsl.clone() };
+        let config = compiler_config_for(&doc, Originals::new(tree.as_ref()));
+        let mut doc = doc;
+        if let Some(tree) = &tree {
+            doc.drop_copies(|id| tree.segment_xml(id).is_some());
+        }
+        let mut session = Session { doc, body, tree, patcher, config, dsl: import.dsl.clone() };
         session.compile(&import.dsl, false).unwrap();
         session
     }
@@ -1525,7 +1536,7 @@ impl Session {
     fn compile_with(&mut self, dsl: &str, change: TextChange, blind: bool) -> Result<String, String> {
         let guidance = Guidance { base_revision: self.patcher.revision(), changes: vec![change] };
         let (patches, state) = self.patcher.compute(dsl, (!blind).then_some(&guidance))?;
-        let mut compiler = Compiler::new().with_config(compiler_config_for(&self.doc));
+        let mut compiler = Compiler::new().with_config(self.config.clone());
         let body = render_body(&self.doc, Some(&self.body), self.tree.as_ref(), &patches, &mut compiler)?;
         self.patcher.commit(state);
         self.dsl = dsl.to_string();

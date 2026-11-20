@@ -18,8 +18,8 @@
 //! a word in it is edited.
 
 use super::patching::{
-    keeps_word_data, render_insert, render_modify, token_kind, Origin, ParagraphStructure, PatchOperation,
-    RenderedBody, TokenKind,
+    keeps_word_data, render_insert, render_modify, token_kind, Origin, Originals, ParagraphStructure,
+    PatchOperation, RenderedBody, TokenKind,
 };
 use super::segments::Segment;
 use crate::document::{find_body, Element, NodeId, NodeKind, Piece, Tree};
@@ -49,6 +49,8 @@ pub struct TreeSource {
     postamble_len: usize,
     /// By segment ID
     places: Vec<Option<Place>>,
+    /// Where each segment is in the file's text, by segment ID
+    spans: Vec<Option<(u32, u32)>>,
     /// Where each `<w>` of the body starts in the file, in order
     words: Vec<usize>,
 }
@@ -100,6 +102,7 @@ impl TreeSource {
         texts.sort_unstable();
 
         let mut places = vec![None; segments.len()];
+        let mut located = vec![None; segments.len()];
         for segment in segments {
             let id = segment.id();
             let Some(&Some((start, end))) = spans.get(id) else { continue };
@@ -129,8 +132,25 @@ impl TreeSource {
                 },
             };
             *places.get_mut(id).ok_or("segment IDs out of order")? = Some(place);
+            let offset = |o: usize| u32::try_from(o).map_err(|_| "the file is too large".to_string());
+            located[id] = Some((offset(key.0)?, offset(key.1)?));
         }
-        Ok(Self { tree, body_start, postamble_len: postamble.len(), places, words })
+        Ok(Self { tree, body_start, postamble_len: postamble.len(), places, spans: located, words })
+    }
+
+    /// Segment `id` as written in the file (a word, punctuation, a tag).
+    pub fn segment_xml(&self, id: usize) -> Option<&str> {
+        let (start, end) = (*self.spans.get(id)?)?;
+        self.tree.source().get(start as usize..end as usize)
+    }
+
+    /// The element segment `id` is (a word, punctuation, a break), as read
+    /// from the file.
+    pub fn segment_element(&self, id: usize) -> Option<&Element> {
+        match self.places.get(id)?.as_ref()? {
+            Place::Node(node) => self.tree.element(*node),
+            _ => None,
+        }
     }
 }
 
@@ -292,6 +312,7 @@ pub(super) fn apply_to_tree(
     compiler: &mut Compiler,
 ) -> Option<RenderedBody> {
     let by_id: HashMap<usize, &Segment> = segments.iter().map(|s| (s.id(), s)).collect();
+    let originals = Originals::new(Some(source));
     let structure = ParagraphStructure::new(segments);
     let mut applier = Applier {
         source,
@@ -324,7 +345,7 @@ pub(super) fn apply_to_tree(
                 let at = applier.tree.index_in_parent(paragraph)? + 1;
                 applier.insert_text("\n", container, at);
                 let element = Element { name, namespaces: Vec::new(), attributes: Vec::new() };
-                let new = applier.tree.insert(container, at + 1, NodeKind::Element(element));
+                let new = applier.tree.insert(container, at + 1, NodeKind::Element(Box::new(element)));
                 applier.created.insert(new, *token);
                 let rest: Vec<NodeId> = applier.tree.children(paragraph)[from..].to_vec();
                 for (i, node) in rest.into_iter().enumerate() {
@@ -369,17 +390,17 @@ pub(super) fn apply_to_tree(
                             _ => {
                                 // Another word in its place keeps the
                                 // transcription markup that follows the text
-                                let xml = if *fresh && !keeps_word_data(segment, new_dsl) {
+                                let xml = if *fresh && !keeps_word_data(segment, new_dsl, originals) {
                                     render_insert(new_dsl, compiler)
                                 } else {
                                     let original = applier.tree.node_xml(node).ok()?;
-                                    render_modify(segment, Some(&original), new_dsl, !fresh, compiler)
+                                    render_modify(segment, originals, Some(&original), new_dsl, !fresh, compiler)
                                 };
                                 let parent = applier.tree.parent(node)?;
                                 let index = applier.tree.index_in_parent(node)?;
                                 applier.tree.remove(node);
                                 let roots = applier.insert_xml(&xml, parent, index, *token)?;
-                                if !fresh && keeps_word_data(segment, new_dsl) {
+                                if !fresh && keeps_word_data(segment, new_dsl, originals) {
                                     let word = roots.iter().copied().find(|&r| applier.tree.element(r).is_some());
                                     applier.edited.extend(word);
                                 }

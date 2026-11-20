@@ -105,11 +105,11 @@ fn test_inserted_and_removed_nodes() {
     let ex = tree.insert(
         root,
         0,
-        NodeKind::Element(Element {
+        NodeKind::Element(Box::new(Element {
             name: "ex".into(),
             namespaces: vec![],
             attributes: vec![Attribute { name: "resp".into(), value: "\"A&B\"".into() }],
-        }),
+        })),
     );
     tree.insert(ex, 0, NodeKind::Text("onun".into()));
     // The CDATA section goes
@@ -320,7 +320,7 @@ fn corpus_xml_and_shorthand_read_as_the_same_tokens() {
 /// byte for byte (the importer works on the projection).
 #[test]
 fn corpus_unchanged_import_round_trips() {
-    use crate::importer::tei::patching::{compiler_config_for, compute_patches, render_body};
+    use crate::importer::tei::patching::{compiler_config_for, compute_patches, render_body, Originals};
     let files = corpus_files();
     let mut failures = Vec::new();
     for path in &files {
@@ -334,8 +334,12 @@ fn corpus_unchanged_import_round_trips() {
                 return Err("no spans".into());
             }
             let patches = compute_patches(&doc.segments, doc.dsl_rules, &import.dsl)?;
-            let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc));
-            let body = render_body(&doc, Some(&original), Some(&gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?), &patches, &mut compiler)?;
+            let (doc, tree) = {
+                let tree = gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?;
+                slim(doc, tree)
+            };
+            let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc, Originals::new(Some(&tree))));
+            let body = render_body(&doc, Some(&original), Some(&tree), &patches, &mut compiler)?;
             if body.xml != original {
                 return Err("the unedited body changed".into());
             }
@@ -358,7 +362,7 @@ fn corpus_unchanged_import_round_trips() {
 #[test]
 fn corpus_edited_words_keep_their_markup() {
     use crate::identity::{Guidance, TextChange};
-    use crate::importer::tei::patching::{compiler_config_for, render_body, Patcher};
+    use crate::importer::tei::patching::{compiler_config_for, render_body, Originals, Patcher};
     use crate::importer::tei::segments::Segment;
     use std::collections::BTreeMap;
 
@@ -428,8 +432,12 @@ fn corpus_edited_words_keep_their_markup() {
                 .collect();
             let guidance = Guidance { base_revision: patcher.revision(), changes };
             let (patches, _) = patcher.compute(&dsl, Some(&guidance))?;
-            let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc));
-            let body = render_body(&doc, Some(&original), Some(&gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?), &patches, &mut compiler)?;
+            let (doc, tree) = {
+                let tree = gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?;
+                slim(doc, tree)
+            };
+            let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc, Originals::new(Some(&tree))));
+            let body = render_body(&doc, Some(&original), Some(&tree), &patches, &mut compiler)?;
             let written = format!(
                 "{}{}{}",
                 import.original_preamble.unwrap_or_default(),
@@ -464,6 +472,16 @@ fn corpus_edited_words_keep_their_markup() {
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
 }
 
+/// The document as a session holds it: without the copies of the file's
+/// XML that the tree has (see `ImportedDocument::drop_copies`).
+fn slim(
+    mut doc: crate::importer::tei::segments::ImportedDocument,
+    tree: crate::importer::tei::apply::TreeSource,
+) -> (crate::importer::tei::segments::ImportedDocument, crate::importer::tei::apply::TreeSource) {
+    doc.drop_copies(|id| tree.segment_xml(id).is_some());
+    (doc, tree)
+}
+
 /// The imported file as a tree, as the app edits it.
 fn gate_tree(
     preamble: &Option<String>,
@@ -494,7 +512,7 @@ struct GateEdit {
 /// and the written one.
 fn put_edits(source: &str, edits: &[GateEdit]) -> Result<(String, String, String), String> {
     use crate::identity::{Guidance, TextChange};
-    use crate::importer::tei::patching::{compiler_config_for, render_body, Patcher};
+    use crate::importer::tei::patching::{compiler_config_for, render_body, Originals, Patcher};
     let import = crate::importer::tei::parse(source)?;
     let doc = import.imported_document.ok_or("no manifest")?;
     let original = import.original_body_xml.clone().ok_or("no body")?;
@@ -519,8 +537,12 @@ fn put_edits(source: &str, edits: &[GateEdit]) -> Result<(String, String, String
     patcher.commit(state);
     let guidance = Guidance { base_revision: patcher.revision(), changes };
     let (patches, _) = patcher.compute(&dsl, Some(&guidance))?;
-    let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc));
-    let body = render_body(&doc, Some(&original), Some(&gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?), &patches, &mut compiler)?;
+    let (doc, tree) = {
+        let tree = gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?;
+        slim(doc, tree)
+    };
+    let mut compiler = crate::parser::Compiler::new().with_config(compiler_config_for(&doc, Originals::new(Some(&tree))));
+    let body = render_body(&doc, Some(&original), Some(&tree), &patches, &mut compiler)?;
     Ok((dsl, original, body.xml))
 }
 
@@ -675,4 +697,11 @@ fn corpus_edits_are_put_back_locally() {
         }
     }
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
+}
+
+/// A manuscript's tree has millions of nodes: a node's own data stays small
+/// (an element's data and a changed node's old attributes are boxed).
+#[test]
+fn test_nodes_stay_small() {
+    assert!(super::node_data_size() <= 112, "{} bytes", super::node_data_size());
 }

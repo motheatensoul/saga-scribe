@@ -1,7 +1,9 @@
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
 use crate::identity::{numbers_by_key, renumbering, Guidance, Renumbering, Tracked};
-use crate::importer::tei::patching::{apply_decisions, compiler_config_for, render_body, write_lemmas, Patcher, WordRecord};
+use crate::importer::tei::patching::{
+    apply_decisions, compiler_config_for, render_body, write_lemmas, Originals, Patcher, WordRecord,
+};
 use crate::importer::tei::apply::TreeSource;
 use crate::importer::tei::segments::{Decision, ImportedDocument};
 use crate::normalizer::LevelDictionary;
@@ -182,22 +184,43 @@ pub struct ImportedSession(Arc<Mutex<Option<ImportedSource>>>);
 
 /// Everything needed to compile edited DSL back into the original file.
 pub struct ImportedSource {
+    /// The segments, without the copies of the file's XML they were saved
+    /// with where the tree has it (see [`Originals`])
     document: ImportedDocument,
     original_body_xml: String,
     preamble: String,
     postamble: String,
-    /// Which word is which across edits; built on the first compile
-    patcher: Option<Patcher>,
-    /// The file as a tree, edits are applied to; built on the first compile
-    /// (`Some(None)` if the file couldn't be mapped onto its segments)
-    tree: Option<Option<TreeSource>>,
+    /// Which word is which across edits
+    patcher: Patcher,
+    /// The file as a tree, edits are applied to; `None` if the file couldn't
+    /// be mapped onto its segments (edits then rebuild the body from them)
+    tree: Option<TreeSource>,
+    /// Compiler settings matching the file's encoding
+    config: CompilerConfig,
     /// The key of every word of the last compile, in document order
     words: Option<Vec<WordKey>>,
 }
 
 impl ImportedSource {
-    pub fn new(document: ImportedDocument, original_body_xml: String, preamble: String, postamble: String) -> Self {
-        Self { document, original_body_xml, preamble, postamble, patcher: None, tree: None, words: None }
+    /// Reads the file into its tree and prepares the patcher, so the first
+    /// edit doesn't wait for either (a large manuscript takes a second).
+    pub fn new(mut document: ImportedDocument, original_body_xml: String, preamble: String, postamble: String) -> Self {
+        let timer = perf::timer();
+        let tree = document.spans.as_deref().and_then(|spans| {
+            TreeSource::new(&preamble, &original_body_xml, &postamble, &document.segments, spans)
+                .inspect_err(|e| {
+                    log::warn!("The imported file couldn't be mapped onto its segments ({e}); edits rebuild its body")
+                })
+                .ok()
+        });
+        let config = compiler_config_for(&document, Originals::new(tree.as_ref()));
+        let patcher = Patcher::new(&document.segments, document.dsl_rules);
+        // The tree has the file's XML; the segments' copies of it go
+        if let Some(tree) = &tree {
+            document.drop_copies(|id| tree.segment_xml(id).is_some());
+        }
+        timer.done("imported.load", [("tree", tree.is_some().into()), ("segments", document.segments.len().into())]);
+        Self { document, original_body_xml, preamble, postamble, patcher, tree, config, words: None }
     }
 }
 
@@ -307,7 +330,7 @@ pub async fn compile_imported(
         timer.done("compile.load_entities", []);
 
         // Match the document's own encoding style
-        let config = compiler_config_for(&source.document);
+        let config = source.config.clone();
 
         let mut compiler = Compiler::new()
             .with_entities(&registry)
@@ -350,38 +373,21 @@ pub(crate) fn compile_imported_source(
     // Compute patches between original segments and edited DSL, using the
     // editor's changes to keep track of which word is which
     let mut timer = perf::timer();
-    let patcher = source.patcher.get_or_insert_with(|| {
-        Patcher::new(&source.document.segments, source.document.dsl_rules)
-    });
-    let (mut patches, state) = patcher.compute(edited_dsl, guidance)?;
+    let (mut patches, state) = source.patcher.compute(edited_dsl, guidance)?;
     timer.lap("compile.compute_patches", [("patches", patches.len().into())]);
 
     // Replaced and deleted words, with the patcher's answers as suggestions;
     // the editor's answers win
-    let mut records = patcher.records(&source.document.segments, &patches, &state, decisions);
-    apply_decisions(&source.document.segments, &mut patches, decisions);
+    let originals = Originals::new(source.tree.as_ref());
+    let mut records = source.patcher.records(&source.document.segments, originals, &patches, &state, decisions);
+    apply_decisions(&source.document.segments, originals, &mut patches, decisions);
     timer.lap("compile.records", [("records", records.len().into())]);
 
-    // Apply patches to the document's tree (made on the first edit: the
-    // unedited document is the original body)
-    let edits = patches.iter().any(|p| !matches!(p, crate::importer::tei::patching::PatchOperation::Keep { .. }));
-    let tree = if !edits { &None } else { source.tree.get_or_insert_with(|| {
-        let spans = source.document.spans.as_deref()?;
-        TreeSource::new(
-            &source.preamble,
-            &source.original_body_xml,
-            &source.postamble,
-            &source.document.segments,
-            spans,
-        )
-        .inspect_err(|e| log::warn!("The imported file couldn't be mapped onto its segments ({e}); edits rebuild its body"))
-        .ok()
-    }) };
-    timer.lap("compile.tree", []);
+    // Apply patches to the document's tree
     let body = render_body(
         &source.document,
         Some(&source.original_body_xml),
-        tree.as_ref(),
+        source.tree.as_ref(),
         &patches,
         compiler,
     )?;
@@ -389,10 +395,7 @@ pub(crate) fn compile_imported_source(
 
     // Which word is which: lemmas follow their words (no guidance: the
     // document was just loaded, numbered as it is now)
-    let patcher = source.patcher.get_or_insert_with(|| {
-        Patcher::new(&source.document.segments, source.document.dsl_rules)
-    });
-    let words = patcher.word_keys(&source.document, &body, &state);
+    let words = source.patcher.word_keys(&source.document, &body, &state);
     timer.lap("compile.word_keys", [("words", words.len().into())]);
     let previous = source.words.as_ref().filter(|_| guidance.is_some());
     let renumbered = previous.and_then(|previous| renumbering(previous, &words));
@@ -424,12 +427,12 @@ pub(crate) fn compile_imported_source(
     timer.lap("compile.write_lemmas", [("lemmas", lemmas.len().into())]);
 
     // Only a successful compile becomes the basis for the next one
-    patcher.commit(state);
+    source.patcher.commit(state);
     source.words = Some(words);
 
     // Combine with preamble (everything before body) and postamble (everything after)
     Ok(CompileOutput {
-        revision: patcher.revision(),
+        revision: source.patcher.revision(),
         renumbering: renumbered,
         edited_words: body.edited_word_indices(),
         records,
@@ -820,7 +823,7 @@ mod imported_identity_tests {
         guidance: Option<Guidance>,
         lemmas: &[(u32, &str, &str, Option<&str>)],
     ) -> CompileOutput {
-        let mut compiler = Compiler::new().with_config(compiler_config_for(&source.document));
+        let mut compiler = Compiler::new().with_config(source.config.clone());
         let lemmas = lemmas
             .iter()
             .map(|(n, lemma, msa, norm)| {
@@ -843,10 +846,31 @@ mod imported_identity_tests {
             from_b: utf16(dsl, prefix),
             to_b: utf16(dsl, dsl_len - suffix),
         };
-        let guidance = Guidance { base_revision: source.patcher.as_ref().map_or(0, |p| p.revision()), changes: vec![change] };
-        let mut compiler = Compiler::new().with_config(compiler_config_for(&source.document));
+        let guidance = Guidance { base_revision: source.patcher.revision(), changes: vec![change] };
+        let mut compiler = Compiler::new().with_config(source.config.clone());
         let decisions: HashMap<usize, Decision> = decisions.iter().copied().collect();
         compile_imported_source(source, &mut compiler, dsl, Some(&guidance), &decisions, HashMap::new()).unwrap()
+    }
+
+    #[test]
+    fn test_session_reads_words_from_the_tree_not_copies() {
+        let (mut source, dsl) = open(TWO_OKS);
+        assert!(source.tree.is_some());
+        assert!(source.config.word_wrap && source.config.multi_level);
+        for segment in &source.document.segments {
+            if let crate::importer::tei::segments::Segment::Word { original_xml, attributes, .. } = segment {
+                assert!(original_xml.is_empty() && attributes.is_empty(), "{segment:?}");
+            }
+        }
+        compile(&mut source, &dsl, None, &[]);
+        // An edited word keeps its lemma (read from the tree) ...
+        let edited = dsl.replacen("ok", "okk", 1);
+        let out = compile_decided(&mut source, &dsl, &edited, &[]);
+        assert!(out.xml.contains(r#"<w lemma="ok" me:msa="xCC"><choice><me:facs>okk</me:facs>"#), "{}", out.xml);
+        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
+        assert_eq!((record.lemma.as_deref(), record.msa.as_deref()), (Some("ok"), Some("xCC")));
+        // ... and the next word is still the file's, untouched
+        assert!(out.xml.contains("<me:norm>maðr</me:norm>"), "{}", out.xml);
     }
 
     #[test]
@@ -902,10 +926,10 @@ mod imported_identity_tests {
         let (mut source, dsl) = open(TWO_OKS);
         compile(&mut source, &dsl, None, &[(0, "ok", "xCC")]);
         let edited = dsl.replacen("ok", "þá", 1);
-        let mut compiler = Compiler::new().with_config(compiler_config_for(&source.document));
+        let mut compiler = Compiler::new().with_config(source.config.clone());
         let at = dsl.find("ok").unwrap();
         let guidance = Guidance {
-            base_revision: source.patcher.as_ref().unwrap().revision(),
+            base_revision: source.patcher.revision(),
             changes: vec![TextChange { from_a: at, to_a: at + 2, from_b: at, to_b: at + 2 }],
         };
         let old = HashMap::from([(0, LemmaMapping { lemma: "ok".into(), msa: "xCC".into(), normalized: None })]);
@@ -914,7 +938,7 @@ mod imported_identity_tests {
         assert!(!out.xml.contains("lemma=\"ok\""), "{}", out.xml);
         // A lemma chosen for the new word is written
         let new = HashMap::from([(0, LemmaMapping { lemma: "þá".into(), msa: "xAV".into(), normalized: None })]);
-        let guidance = Guidance { base_revision: source.patcher.as_ref().unwrap().revision(), changes: vec![] };
+        let guidance = Guidance { base_revision: source.patcher.revision(), changes: vec![] };
         let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), new).unwrap();
         assert!(out.xml.contains(r#"<w lemma="þá" me:msa="xAV">"#), "{}", out.xml);
     }
@@ -962,7 +986,7 @@ mod imported_identity_tests {
         let at = dsl.find("maþr").unwrap();
         let edited = format!("{}ek {}", &dsl[..at], &dsl[at..]);
         let guidance = Guidance {
-            base_revision: source.patcher.as_ref().unwrap().revision(),
+            base_revision: source.patcher.revision(),
             changes: vec![TextChange { from_a: at, to_a: at, from_b: at, to_b: at + 3 }],
         };
         let out = compile(&mut source, &edited, Some(guidance), &[(1, "maðr", "xNC")]);
@@ -1031,7 +1055,7 @@ mod imported_identity_tests {
         let units = |s: &str| s.encode_utf16().count();
         let from = units(&dsl[..at]);
         let guidance = Guidance {
-            base_revision: source.patcher.as_ref().unwrap().revision(),
+            base_revision: source.patcher.revision(),
             changes: vec![TextChange { from_a: from, to_a: from + units(old), from_b: from, to_b: from + units(new) }],
         };
         compile(source, &edited, Some(guidance), lemmas)

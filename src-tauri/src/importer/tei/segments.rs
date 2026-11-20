@@ -177,6 +177,26 @@ fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
 pub const DSL_RULES: u32 = 5;
 
 impl ImportedDocument {
+    /// Drops the copies of the file's XML that words and punctuation hold
+    /// (their XML and a word's attributes), for those `in_tree` says the
+    /// file's tree has: a session reads them there
+    /// (`patching::Originals`), and a manuscript's copies are tens of
+    /// megabytes.
+    pub fn drop_copies(&mut self, in_tree: impl Fn(usize) -> bool) {
+        for segment in &mut self.segments {
+            match segment {
+                Segment::Word { id, original_xml, attributes, .. } if in_tree(*id) => {
+                    *original_xml = String::new();
+                    *attributes = HashMap::new();
+                }
+                Segment::Punctuation { id, original_xml, .. } if in_tree(*id) => {
+                    *original_xml = String::new();
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Parses a manifest as stored in segments.json.
     ///
     /// Since project format 1.5 this is the full manifest. Versions up to 1.4

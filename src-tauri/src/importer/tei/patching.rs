@@ -271,6 +271,7 @@ impl Patcher {
     pub fn records(
         &self,
         segments: &[Segment],
+        originals: Originals,
         patches: &[PatchOperation],
         state: &Tracked,
         decisions: &HashMap<usize, Decision>,
@@ -280,13 +281,13 @@ impl Patcher {
         for patch in patches {
             let PatchOperation::Modify { segment_id, new_dsl, token: Some(j), fresh } = patch else { continue };
             let Some(span) = state.spans.get(*j) else { continue };
-            let Some(seg @ Segment::Word { original_xml, attributes, dsl_content, .. }) = segment(*segment_id) else { continue };
+            let Some(seg @ Segment::Word { dsl_content, .. }) = segment(*segment_id) else { continue };
             // A word replaced by something else (punctuation, a break) is deleted
-            if !is_w_element(original_xml) || !keeps_word_data(seg, new_dsl) {
+            if !keeps_word_data(seg, new_dsl, originals) {
                 continue;
             }
-            let lemma = attributes.get("lemma").cloned();
-            let msa = attributes.get("me:msa").or_else(|| attributes.get("msa")).cloned();
+            let lemma = originals.attribute(seg, "lemma");
+            let msa = originals.attribute(seg, "me:msa").or_else(|| originals.attribute(seg, "msa"));
             if lemma.is_none() && msa.is_none() {
                 continue;
             }
@@ -331,7 +332,12 @@ impl Patcher {
 /// Applies the editor's answers to `patches`: a replaced word that is the
 /// same word keeps its data, another word loses it, whatever the patcher
 /// suggested.
-pub fn apply_decisions(segments: &[Segment], patches: &mut [PatchOperation], decisions: &HashMap<usize, Decision>) {
+pub fn apply_decisions(
+    segments: &[Segment],
+    originals: Originals,
+    patches: &mut [PatchOperation],
+    decisions: &HashMap<usize, Decision>,
+) {
     if decisions.is_empty() {
         return;
     }
@@ -343,7 +349,7 @@ pub fn apply_decisions(segments: &[Segment], patches: &mut [PatchOperation], dec
                 None => continue,
             };
             let segment = segments.get(*segment_id).filter(|s| s.id() == *segment_id);
-            if segment.is_some_and(|s| keeps_word_data(s, new_dsl)) {
+            if segment.is_some_and(|s| keeps_word_data(s, new_dsl, originals)) {
                 *fresh = !same;
             }
         }
@@ -718,13 +724,84 @@ fn replace_in_place(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
     result
 }
 
+/// The original elements behind the segments, as the patcher reads them: in
+/// the file's tree when there is one, otherwise in the copies the segments
+/// hold. A session with a tree drops those copies
+/// ([`ImportedDocument::drop_copies`]), so with a tree everything about a
+/// word's XML must be read here.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Originals<'a> {
+    tree: Option<&'a TreeSource>,
+}
+
+impl<'a> Originals<'a> {
+    pub fn new(tree: Option<&'a TreeSource>) -> Self {
+        Self { tree }
+    }
+
+    /// The segment as written in the file.
+    pub fn xml<'s>(&self, segment: &'s Segment) -> std::borrow::Cow<'s, str>
+    where
+        'a: 's,
+    {
+        if let Some(xml) = self.tree.and_then(|tree| tree.segment_xml(segment.id())) {
+            return xml.into();
+        }
+        match segment {
+            Segment::Word { original_xml, .. } | Segment::Punctuation { original_xml, .. } => original_xml.into(),
+            other => serialize_original_segment(other).into(),
+        }
+    }
+
+    /// Whether the segment is an element named `name` (as written, with
+    /// its prefix if it has one).
+    fn is_element(&self, segment: &Segment, name: &str) -> bool {
+        if !matches!(segment, Segment::Word { .. } | Segment::Punctuation { .. }) {
+            return false;
+        }
+        match self.tree {
+            Some(tree) if tree.segment_xml(segment.id()).is_some() => {
+                tree.segment_element(segment.id()).is_some_and(|e| e.name == name)
+            }
+            _ => is_element(&self.xml(segment), name),
+        }
+    }
+
+    /// Whether the segment is a `<w>` element (not text outside words, or
+    /// another element stored as a word, such as `<num>`).
+    pub fn is_word(&self, segment: &Segment) -> bool {
+        matches!(segment, Segment::Word { .. }) && self.is_element(segment, "w")
+    }
+
+    /// A word's attributes (lemma, analysis, …).
+    fn attributes(&self, segment: &Segment) -> HashMap<String, String> {
+        if let Some(tree) = self.tree.filter(|tree| tree.segment_xml(segment.id()).is_some()) {
+            return tree
+                .segment_element(segment.id())
+                .map(|e| e.attributes.iter().map(|a| (a.name.clone(), a.value.clone())).collect())
+                .unwrap_or_default();
+        }
+        match segment {
+            Segment::Word { attributes, .. } => attributes.clone(),
+            _ => HashMap::new(),
+        }
+    }
+
+    pub(super) fn attribute(&self, segment: &Segment, name: &str) -> Option<String> {
+        if let Some(tree) = self.tree.filter(|tree| tree.segment_xml(segment.id()).is_some()) {
+            return tree.segment_element(segment.id())?.attribute(name).map(str::to_string);
+        }
+        match segment {
+            Segment::Word { attributes, .. } => attributes.get(name).cloned(),
+            _ => None,
+        }
+    }
+}
+
 /// Compiler settings matching an imported document's own encoding style:
 /// MENOTA three-level words, plain `<w>` words, or unwrapped text.
-pub fn compiler_config_for(doc: &ImportedDocument) -> CompilerConfig {
-    let word_wrap = doc.is_menota
-        || doc.segments.iter().any(|seg| {
-            matches!(seg, Segment::Word { original_xml, .. } if is_w_element(original_xml))
-        });
+pub fn compiler_config_for(doc: &ImportedDocument, originals: Originals) -> CompilerConfig {
+    let word_wrap = doc.is_menota || doc.segments.iter().any(|seg| originals.is_word(seg));
     CompilerConfig {
         word_wrap,
         auto_line_numbers: false,
@@ -766,6 +843,7 @@ pub fn render_body(
 
     let patches = separate_paragraph_edits(&doc.segments, patches);
     check_paragraph_edits(&doc.segments, &patches)?;
+    let originals = Originals::new(tree);
 
     if let Some(tree) = tree {
         if let Some(rendered) = apply_to_tree(tree, &doc.segments, &patches, compiler) {
@@ -789,7 +867,7 @@ pub fn render_body(
                 .to_string(),
         );
     }
-    Ok(reconstruct(&doc.segments, &patches, compiler))
+    Ok(reconstruct(&doc.segments, originals, &patches, compiler))
 }
 
 /// The rewritten `<body>` of an imported document.
@@ -1211,9 +1289,8 @@ pub(super) fn token_kind(dsl: &str) -> TokenKind {
 
 /// Whether a modification keeps an imported word's lemma, msa and norm (an
 /// edited `<w>` that is still a word); such words are reported for review.
-pub(super) fn keeps_word_data(segment: &Segment, new_dsl: &str) -> bool {
-    matches!(segment, Segment::Word { original_xml, .. } if is_w_element(original_xml))
-        && matches!(token_kind(new_dsl), TokenKind::Word)
+pub(super) fn keeps_word_data(segment: &Segment, new_dsl: &str, originals: Originals) -> bool {
+    originals.is_word(segment) && matches!(token_kind(new_dsl), TokenKind::Word)
 }
 
 /// The content of the first element named `level` (any namespace prefix),
@@ -1264,12 +1341,6 @@ fn without_breaks(xml: &str) -> String {
     out
 }
 
-/// Whether a segment's original XML is a `<w>` element (as opposed to bare text
-/// or another inline element stored as a word segment).
-fn is_w_element(original_xml: &str) -> bool {
-    is_element(original_xml, "w")
-}
-
 /// Whether `xml` starts with an element named `name` (no namespace prefix).
 fn is_element(xml: &str, name: &str) -> bool {
     xml.strip_prefix('<')
@@ -1299,25 +1370,19 @@ pub(super) fn render_insert(dsl: &str, compiler: &mut Compiler) -> String {
 /// rewrite only the `n` attribute in place.
 pub(super) fn render_modify(
     segment: &Segment,
+    originals: Originals,
     source: Option<&str>,
     new_dsl: &str,
     same_word: bool,
     compiler: &mut Compiler,
 ) -> String {
+    let original_xml = originals.xml(segment);
     match (segment, token_kind(new_dsl)) {
-        (
-            Segment::Word {
-                attributes,
-                original_xml,
-                dsl_content,
-                ..
-            },
-            TokenKind::Word,
-        ) if is_w_element(original_xml) => {
+        (Segment::Word { dsl_content, .. }, TokenKind::Word) if originals.is_word(segment) => {
             // The same word: lemma, msa (attributes) and the curated norm are
             // kept; facs and dipl follow the edit. The word is reported as
             // edited for review. Another word: those are dropped
-            let original = source.unwrap_or(original_xml);
+            let original = source.unwrap_or(&original_xml);
             let norm = compiler
                 .config()
                 .multi_level
@@ -1325,7 +1390,7 @@ pub(super) fn render_modify(
                 .flatten()
                 .map(without_breaks)
                 .filter(|_| same_word);
-            let mut attributes = attributes.clone();
+            let mut attributes = originals.attributes(segment);
             if !same_word {
                 attributes.retain(|name, _| !matches!(name.as_str(), "lemma" | "me:msa" | "msa"));
             }
@@ -1361,10 +1426,10 @@ pub(super) fn render_modify(
         }
         // A numeral stays a numeral: the edit is merged into it as into a
         // word, keeping its attributes and the markup the shorthand doesn't show
-        (Segment::Word { original_xml, dsl_content, .. }, TokenKind::Other)
-            if is_element(original_xml, "num") && is_numeral_dsl(new_dsl) && is_numeral_dsl(dsl_content) =>
+        (Segment::Word { dsl_content, .. }, TokenKind::Other)
+            if originals.is_element(segment, "num") && is_numeral_dsl(new_dsl) && is_numeral_dsl(dsl_content) =>
         {
-            let original = source.unwrap_or(original_xml);
+            let original = source.unwrap_or(&original_xml);
             let compiled = render_insert(new_dsl, compiler);
             let before = render_insert(dsl_content.trim(), compiler);
             match crate::document::merge_word_edit(original, &before, &compiled) {
@@ -1424,10 +1489,10 @@ pub fn apply_patches_and_reconstruct(
     patches: &[PatchOperation],
     compiler: &mut Compiler,
 ) -> String {
-    reconstruct(segments, patches, compiler).xml
+    reconstruct(segments, Originals::default(), patches, compiler).xml
 }
 
-fn reconstruct(segments: &[Segment], patches: &[PatchOperation], compiler: &mut Compiler) -> RenderedBody {
+fn reconstruct(segments: &[Segment], originals: Originals, patches: &[PatchOperation], compiler: &mut Compiler) -> RenderedBody {
     let mut out = Output::with_capacity(0);
     let mut edited_words = Vec::new();
     let mut current_patch_idx = 0;
@@ -1465,17 +1530,17 @@ fn reconstruct(segments: &[Segment], patches: &[PatchOperation], compiler: &mut 
                         }
                         match patch {
                             PatchOperation::Keep { .. } => {
-                                out.push(&serialize_original_segment(seg), Origin::Segment(seg_id));
+                                out.push(&originals.xml(seg), Origin::Segment(seg_id));
                             }
                             PatchOperation::Modify { new_dsl, token, fresh, .. } => {
-                                let word = keeps_word_data(seg, new_dsl);
+                                let word = keeps_word_data(seg, new_dsl, originals);
                                 if *fresh && !word {
                                     out.generate(&render_insert(new_dsl, compiler), *token);
                                 } else {
                                     if word && !fresh {
                                         edited_words.push(out.xml.len());
                                     }
-                                    out.generate(&render_modify(seg, None, new_dsl, !fresh, compiler), *token);
+                                    out.generate(&render_modify(seg, originals, None, new_dsl, !fresh, compiler), *token);
                                 }
                             }
                             PatchOperation::Delete { .. } if matches!(seg, Segment::Paragraph { .. }) => {
@@ -1498,7 +1563,7 @@ fn reconstruct(segments: &[Segment], patches: &[PatchOperation], compiler: &mut 
             }
 
             if !handled {
-                out.push(&serialize_original_segment(seg), Origin::Segment(seg_id));
+                out.push(&originals.xml(seg), Origin::Segment(seg_id));
             }
         } else {
             // Structural or whitespace segment
@@ -1588,9 +1653,9 @@ mod tests {
 
     #[test]
     fn test_is_w_element() {
-        assert!(is_w_element("<w>a</w>"));
-        assert!(is_w_element(r#"<w lemma="x">a</w>"#));
-        assert!(!is_w_element("<wx>a</wx>"));
-        assert!(!is_w_element("word"));
+        assert!(is_element("<w>a</w>", "w"));
+        assert!(is_element(r#"<w lemma="x">a</w>"#, "w"));
+        assert!(!is_element("<wx>a</wx>", "w"));
+        assert!(!is_element("word", "w"));
     }
 }

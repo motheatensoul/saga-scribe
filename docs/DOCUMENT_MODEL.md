@@ -333,8 +333,9 @@ text).
      (`apply_decisions`). The editor holds the file's lemmas by word number and sends
      them with every compile, so a different word's old lemma is not written back unless
      another one is chosen. Validate lists the open records, and saving or exporting says
-     how many there are. Left: the patcher still works on segments (the tree should
-     replace them, which also halves the memory a session holds); records keep only the
+     how many there are. The session reads the file's words in the tree (built when the
+     document is loaded), not in segments (`patching::Originals`): its segments keep
+     their shorthand and their place, not copies of the XML. Left: records keep only the
      old word's shorthand and data, not its whole XML; annotations other than lemmas aren't counted as
      data a word loses; cut and paste isn't recognised as a moved word.
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3

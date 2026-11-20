@@ -48,19 +48,38 @@ impl Element {
 
 /// What a node is. Every kind of node libxml2 gives for a document has one,
 /// so nothing in the document falls outside the tree.
+///
+/// Kept as small as a `String` (an element's data is boxed): a manuscript's
+/// tree has millions of nodes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NodeKind {
     Document,
-    Element(Element),
+    Element(Box<Element>),
     /// Text with references resolved (`&amp;` is `&`, `&#xE6;` is `æ`)
     Text(String),
     /// A named entity reference (`&thorn;`), kept as a reference
     EntityRef(String),
     Comment(String),
     Cdata(String),
-    ProcessingInstruction { target: String, data: String },
+    ProcessingInstruction(Box<ProcessingInstruction>),
     /// The document type declaration, as written. It isn't edited.
     Doctype(String),
+}
+
+/// A processing instruction, `<?target data?>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessingInstruction {
+    pub target: String,
+    pub data: String,
+}
+
+/// Where a node is in the original text, and for an element its start and end
+/// tag, as `u32` offsets (a manuscript's tree has a node for every element,
+/// text and reference, so their size counts).
+#[derive(Debug, Clone, Copy)]
+struct Place {
+    span: [u32; 2],
+    tags: Option<[u32; 4]>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,13 +87,12 @@ struct NodeData {
     kind: NodeKind,
     parent: Option<NodeId>,
     children: Vec<NodeId>,
-    /// Where the node is in the original text, if known
-    span: Option<Span>,
-    /// For elements: the spans of the start and end tag (empty for `<x/>`)
-    tags: Option<(Span, Span)>,
+    /// Where the node is in the original text, if known; for elements also
+    /// the spans of the start and end tag (empty for `<x/>`)
+    place: Option<Place>,
     /// The element's attributes as read, kept once they are first changed, so
     /// the start tag can be patched in place
-    original_attributes: Option<Vec<Attribute>>,
+    original_attributes: Option<Box<[Attribute]>>,
     /// The node's own data (text, attributes) changed
     changed: bool,
     /// Children were added or removed
@@ -89,14 +107,19 @@ impl NodeData {
             kind,
             parent,
             children: Vec::new(),
-            span: None,
-            tags: None,
+            place: None,
             original_attributes: None,
             changed: false,
             children_changed: false,
             descendant_changed: false,
         }
     }
+}
+
+/// The size of a node's data, for measuring.
+#[cfg(test)]
+pub fn node_data_size() -> usize {
+    std::mem::size_of::<NodeData>()
 }
 
 /// The nodes of a tree, shared between its copies: a copy holds only the
@@ -204,8 +227,7 @@ impl Tree {
         tree.spans = tree.locate_spans().is_some();
         if !tree.spans {
             for node in tree.nodes.iter_mut() {
-                node.span = None;
-                node.tags = None;
+                node.place = None;
             }
         }
         tree
@@ -244,7 +266,7 @@ impl Tree {
     }
 
     pub fn span(&self, id: NodeId) -> Option<Span> {
-        self.nodes[id.index()].span.clone()
+        self.nodes[id.index()].place.map(|p| p.span[0] as usize..p.span[1] as usize)
     }
 
     /// How many nodes the tree has had (removed ones included): every
@@ -298,8 +320,7 @@ impl Tree {
     pub(super) fn forget_spans(&mut self) {
         self.spans = false;
         for node in self.nodes.iter_mut() {
-            node.span = None;
-            node.tags = None;
+            node.place = None;
         }
     }
 
@@ -342,7 +363,7 @@ impl Tree {
             return Ok(());
         }
         if node.original_attributes.is_none() {
-            node.original_attributes = Some(element.attributes.clone());
+            node.original_attributes = Some(element.attributes.clone().into_boxed_slice());
         }
         match (position, value) {
             (Some(i), Some(v)) => element.attributes[i].value = v.to_string(),
@@ -432,7 +453,8 @@ impl Tree {
     }
 
     pub fn tags(&self, id: NodeId) -> Option<(Span, Span)> {
-        self.nodes[id.index()].tags.clone()
+        let [a, b, c, d] = self.nodes[id.index()].place?.tags?.map(|o| o as usize);
+        Some((a..b, c..d))
     }
 
     pub(super) fn own_data_changed(&self, id: NodeId) -> bool {
@@ -449,7 +471,7 @@ impl Tree {
 
     fn copy(&mut self, node: &XmlNode, parent: NodeId, doctype: Option<&str>) {
         let kind = match node.get_type() {
-            Some(NodeType::ElementNode) => NodeKind::Element(Element {
+            Some(NodeType::ElementNode) => NodeKind::Element(Box::new(Element {
                 name: qualified_name(node),
                 namespaces: node
                     .get_namespace_declarations()
@@ -457,15 +479,15 @@ impl Tree {
                     .map(|ns| (ns.get_prefix(), ns.get_href()))
                     .collect(),
                 attributes: attributes(node),
-            }),
+            })),
             Some(NodeType::TextNode) => NodeKind::Text(node.get_content()),
             Some(NodeType::EntityRefNode) => NodeKind::EntityRef(node.get_name()),
             Some(NodeType::CommentNode) => NodeKind::Comment(node.get_content()),
             Some(NodeType::CDataSectionNode) => NodeKind::Cdata(node.get_content()),
-            Some(NodeType::PiNode) => NodeKind::ProcessingInstruction {
+            Some(NodeType::PiNode) => NodeKind::ProcessingInstruction(Box::new(ProcessingInstruction {
                 target: node.get_name(),
                 data: node.get_content(),
-            },
+            })),
             // libxml2 gives a DTD node also when only crate::xml::parse added
             // one (to declare entities); only a declaration in the text counts
             Some(NodeType::DTDNode | NodeType::DocumentTypeNode) => match doctype {
@@ -514,31 +536,42 @@ impl Tree {
 
     fn locate(&mut self, id: NodeId, cursor: &mut SourceCursor) -> Option<()> {
         let start = cursor.pos();
-        match self.kind(id).clone() {
+        let offset = |o: usize| u32::try_from(o).ok();
+        let mut tags = None;
+        // Read without cloning the node's kind (texts are most of the document)
+        match self.kind(id) {
             NodeKind::Element(element) => {
-                let start_tag = cursor.open_tag(&element.name)?;
-                for child in self.children(id).to_vec() {
+                let name = element.name.clone();
+                let start_tag = cursor.open_tag(&name)?;
+                let children = self.children(id).to_vec();
+                for child in children {
                     self.locate(child, cursor)?;
                 }
-                let end_tag = cursor.close_tag(&element.name)?;
-                self.nodes[id.index()].tags = Some((start_tag, end_tag));
+                let end_tag = cursor.close_tag(&name)?;
+                tags = Some([
+                    offset(start_tag.start)?,
+                    offset(start_tag.end)?,
+                    offset(end_tag.start)?,
+                    offset(end_tag.end)?,
+                ]);
             }
             NodeKind::Text(text) => {
-                cursor.text(&text)?;
+                cursor.text(text)?;
             }
-            NodeKind::EntityRef(name) => cursor.entity_ref(&name)?,
+            NodeKind::EntityRef(name) => cursor.entity_ref(name)?,
             NodeKind::Comment(_) => cursor.comment()?,
             NodeKind::Cdata(_) => cursor.cdata()?,
-            NodeKind::ProcessingInstruction { .. } => cursor.processing_instruction()?,
+            NodeKind::ProcessingInstruction(_) => cursor.processing_instruction()?,
             NodeKind::Doctype(text) => {
-                if !cursor.at(&text) {
+                if !cursor.at(text) {
                     return None;
                 }
-                cursor.advance(text.len());
+                let len = text.len();
+                cursor.advance(len);
             }
             NodeKind::Document => return None,
         }
-        self.nodes[id.index()].span = Some(start..cursor.pos());
+        self.nodes[id.index()].place = Some(Place { span: [offset(start)?, offset(cursor.pos())?], tags });
         Some(())
     }
 }

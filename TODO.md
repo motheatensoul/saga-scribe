@@ -42,11 +42,13 @@ when it is done (and record it in CHANGELOG.md if users notice).
   guidance, but the patcher falls back to comparing when guidance doesn't fit. Step 3b's
   replaced records cover a word paired with another; a word deleted and inserted again
   is not asked about.
-- **An imported session holds the file twice**: as segments (each word's XML as a
-  string) and as the tree edits are applied to. For AM 28 8vo (7.5 MB, 427k nodes) the
-  tree alone is well over 100 MB, and the memory slows the patcher down: an edit there
-  compiles in about 29 ms instead of 20 before the tree. Goes away when the patcher works
-  on the tree (3b); the nodes (200 bytes each) could also be made smaller.
+- **The frontend holds the whole manifest of an imported file** (every segment with its
+  XML, as reactive state) only to send it back when loading and saving, and reads the
+  file's lemmas from it on import. The backend no longer needs it (it reads words from
+  the tree): it could keep the manifest and stage imports itself.
+- **A session's tree is large**: about 240 MB for Njáls saga (16 MB, 1.8M nodes) at 112
+  bytes a node (was 200), plus each text node's own string and each element's list of
+  children. Text could be read from the file's text where it has no references.
 - **Output is only partly checked before saving**: exporting TEI-XML refuses XML libxml2
   doesn't read as well-formed (`export_tei`), but a compile writes with `Tree::write`, not
   `write_checked` (parsing the whole file again on every edit is too slow), so nothing
