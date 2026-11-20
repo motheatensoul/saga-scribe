@@ -29,6 +29,7 @@
     import { nextMarkedWord, wordReveal } from "$lib/stores/wordReveal.svelte";
     import { compileSession } from "$lib/stores/compileSession";
     import { renumberWord } from "$lib/stores/renumber";
+    import { annotatedWords } from "$lib/types/annotations";
     import type { Metadata } from "$lib/types/metadata";
     import { isMetadataEmpty } from "$lib/types/metadata";
     import {
@@ -159,6 +160,7 @@
                     importedStore.compile(content, () => ({
                         ...entityOptions,
                         lemmaMappingsJson: lemmaMappingsJson(),
+                        annotatedWords: annotatedWords(annotationStore.getSet()),
                     })),
                 { mode: "imported", dsl_chars: content.length },
             );

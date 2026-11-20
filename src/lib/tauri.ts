@@ -127,6 +127,8 @@ export interface WordRecord {
   xml: string;
   lemma: string | null;
   msa: string | null;
+  /** The word has annotations other than its lemma; they stay with it whatever the answer */
+  annotated: boolean;
 }
 
 /** Result from importing a file */
@@ -214,6 +216,8 @@ export interface CompileImportedOptions {
   customMappings?: Record<string, string>;
   /** Confirmed lemmas by word number (written into the file's words) */
   lemmaMappingsJson?: string;
+  /** Words (by number) with annotations other than lemmas, which replaced words report */
+  annotatedWords?: number[];
 }
 
 /**
@@ -287,6 +291,7 @@ export async function compileImported(
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     guidance: guidance ?? null,
     decisions: decisions ?? null,
+    annotatedWords: options?.annotatedWords?.length ? options.annotatedWords : null,
     xmlBase: xmlBase ?? null,
   });
 }

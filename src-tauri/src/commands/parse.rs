@@ -9,7 +9,7 @@ use crate::importer::tei::segments::{Decision, ImportedDocument};
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping, WordKey};
 use crate::perf;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tauri::State;
 
@@ -357,6 +357,7 @@ pub async fn compile_imported(
     lemma_mappings_json: Option<String>,
     guidance: Option<Guidance>,
     decisions: Option<HashMap<usize, Decision>>,
+    annotated_words: Option<Vec<u32>>,
     xml_base: Option<u64>,
     sent: State<'_, SentOutput>,
 ) -> Result<CompileReply, String> {
@@ -418,7 +419,9 @@ pub async fn compile_imported(
         }
 
         let decisions = decisions.unwrap_or_default();
-        let output = compile_imported_source(source, &mut compiler, &edited_dsl, guidance.as_ref(), &decisions, lemmas)?;
+        let annotated = annotated_words.unwrap_or_default();
+        let output =
+            compile_imported_source(source, &mut compiler, &edited_dsl, guidance.as_ref(), &decisions, lemmas, &annotated)?;
         total.done(
             "compile_imported",
             [
@@ -438,7 +441,8 @@ pub async fn compile_imported(
 /// Compiles edited DSL into the imported document `source` (see
 /// [`compile_imported`]): splices the edits into the original, keeps track of
 /// which word is which, and writes confirmed `lemmas` (numbered by the
-/// previous compile) into the words.
+/// previous compile) into the words. `annotated` are the words (numbered
+/// likewise) with annotations other than lemmas, which replaced words report.
 pub(crate) fn compile_imported_source(
     source: &mut ImportedSource,
     compiler: &mut Compiler,
@@ -446,6 +450,7 @@ pub(crate) fn compile_imported_source(
     guidance: Option<&Guidance>,
     decisions: &HashMap<usize, Decision>,
     lemmas: HashMap<u32, LemmaMapping>,
+    annotated: &[u32],
 ) -> Result<CompileOutput, String> {
     // Compute patches between original segments and edited DSL, using the
     // editor's changes to keep track of which word is which
@@ -456,7 +461,14 @@ pub(crate) fn compile_imported_source(
     // Replaced and deleted words, with the patcher's answers as suggestions;
     // the editor's answers win
     let originals = Originals::new(source.tree.as_ref());
-    let mut records = source.patcher.records(&source.document.segments, originals, &patches, &state, decisions);
+    let mut records = source.patcher.records(
+        &source.document.segments,
+        originals,
+        &patches,
+        &state,
+        decisions,
+        !annotated.is_empty(),
+    );
     apply_decisions(&source.document.segments, originals, &mut patches, decisions);
     timer.lap("compile.records", [("records", records.len().into())]);
 
@@ -490,6 +502,20 @@ pub(crate) fn compile_imported_source(
     // still holds it for this word number (read from the file), and only
     // another lemma is the editor's choice for the new word
     WordRecord::number(&mut records, &words);
+    if !annotated.is_empty() {
+        let annotated: HashSet<usize> = annotated
+            .iter()
+            .filter_map(|&n| match &renumbered {
+                Some(map) => map.get(n as usize).copied().flatten(),
+                None => Some(n),
+            })
+            .map(|n| n as usize)
+            .collect();
+        for record in &mut records {
+            record.annotated = record.word.is_some_and(|n| annotated.contains(&n));
+        }
+        records.retain(|r| r.lemma.is_some() || r.msa.is_some() || r.annotated);
+    }
     for record in records.iter().filter(|r| r.outcome() == Decision::Different) {
         let Some(n) = record.word else { continue };
         let old = |lemma: &LemmaMapping| {
@@ -908,11 +934,23 @@ mod imported_identity_tests {
                 (*n, mapping)
             })
             .collect();
-        compile_imported_source(source, &mut compiler, dsl, guidance.as_ref(), &HashMap::new(), lemmas).unwrap()
+        compile_imported_source(source, &mut compiler, dsl, guidance.as_ref(), &HashMap::new(), lemmas, &[]).unwrap()
     }
 
     /// Compiles `dsl` as an edit of `from` (guided), with `decisions`.
     fn compile_decided(source: &mut ImportedSource, from: &str, dsl: &str, decisions: &[(usize, Decision)]) -> CompileOutput {
+        compile_guided(source, from, dsl, decisions, &[])
+    }
+
+    /// Compiles `dsl` as an edit of `from` (guided), with `decisions` and the
+    /// `annotated` words (numbered by the previous compile).
+    fn compile_guided(
+        source: &mut ImportedSource,
+        from: &str,
+        dsl: &str,
+        decisions: &[(usize, Decision)],
+        annotated: &[u32],
+    ) -> CompileOutput {
         let prefix = from.chars().zip(dsl.chars()).take_while(|(a, b)| a == b).count();
         let suffix = from[prefix..].chars().rev().zip(dsl[prefix..].chars().rev()).take_while(|(a, b)| a == b).count();
         let utf16 = |s: &str, chars: usize| s.chars().take(chars).map(char::len_utf16).sum::<usize>();
@@ -926,7 +964,7 @@ mod imported_identity_tests {
         let guidance = Guidance { base_revision: source.patcher.revision(), changes: vec![change] };
         let mut compiler = Compiler::new().with_config(source.config.clone());
         let decisions: HashMap<usize, Decision> = decisions.iter().copied().collect();
-        compile_imported_source(source, &mut compiler, dsl, Some(&guidance), &decisions, HashMap::new()).unwrap()
+        compile_imported_source(source, &mut compiler, dsl, Some(&guidance), &decisions, HashMap::new(), annotated).unwrap()
     }
 
     /// The way the app goes: import (staged), load, edit, save from the
@@ -980,7 +1018,7 @@ mod imported_identity_tests {
             .with_current_mut(|source| {
                 let mut compiler = Compiler::new().with_config(source.config.clone());
                 let decisions: HashMap<usize, Decision> = reopened.decisions.clone();
-                compile_imported_source(source, &mut compiler, &edited, None, &decisions, HashMap::new()).unwrap()
+                compile_imported_source(source, &mut compiler, &edited, None, &decisions, HashMap::new(), &[]).unwrap()
             })
             .unwrap()
             .unwrap();
@@ -1049,6 +1087,29 @@ mod imported_identity_tests {
     }
 
     #[test]
+    fn test_replaced_word_with_annotations_is_a_record() {
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[]);
+        // "maþr" has no lemma: replaced, it is a record only if annotated
+        let edited = dsl.replacen("maþr", "maþrr", 1);
+        assert!(compile_decided(&mut source, &dsl, &edited, &[]).records.is_empty());
+        let again = edited.replacen("maþrr", "maþr", 1);
+        compile_decided(&mut source, &edited, &again, &[]);
+        let out = compile_guided(&mut source, &again, &edited, &[], &[1]);
+        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
+        assert_eq!((record.word, record.annotated, record.lemma.as_deref()), (Some(1), true, None));
+        // Annotations elsewhere don't make it one; a word with a lemma is
+        // one either way, marked as annotated only if it is
+        let both = edited.replacen("ok", "okk", 1);
+        let out = compile_guided(&mut source, &edited, &both, &[], &[1]);
+        assert_eq!(out.records.len(), 2, "{:?}", out.records);
+        assert!(!out.records[0].annotated && out.records[1].annotated);
+        let out = compile_guided(&mut source, &both, &both, &[], &[0]);
+        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
+        assert!(record.annotated && record.lemma.is_some());
+    }
+
+    #[test]
     fn test_corrected_word_is_a_record_suggested_as_the_same_word() {
         let (mut source, dsl) = open(TWO_OKS);
         compile(&mut source, &dsl, None, &[]);
@@ -1108,13 +1169,13 @@ mod imported_identity_tests {
             changes: vec![TextChange { from_a: at, to_a: at + 2, from_b: at, to_b: at + 2 }],
         };
         let old = HashMap::from([(0, LemmaMapping { lemma: "ok".into(), msa: "xCC".into(), normalized: None })]);
-        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), old).unwrap();
+        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), old, &[]).unwrap();
         assert_eq!((out.records[0].suggestion, out.records[0].word), (Decision::Different, Some(0)));
         assert!(!out.xml.contains("lemma=\"ok\""), "{}", out.xml);
         // A lemma chosen for the new word is written
         let new = HashMap::from([(0, LemmaMapping { lemma: "þá".into(), msa: "xAV".into(), normalized: None })]);
         let guidance = Guidance { base_revision: source.patcher.revision(), changes: vec![] };
-        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), new).unwrap();
+        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), new, &[]).unwrap();
         assert!(out.xml.contains(r#"<w lemma="þá" me:msa="xAV">"#), "{}", out.xml);
     }
 

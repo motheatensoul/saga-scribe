@@ -338,8 +338,11 @@ text).
      their shorthand and their place, not copies of the XML. The document stays in the
      backend: importing or opening stages it, the editor loads it by a handle, and saving
      writes the manifest from it (`ImportedSession`). Each record carries the old word's
-     XML as the file has it, which the word panel shows. Left: annotations other than lemmas aren't counted as
-     data a word loses; cut and paste isn't recognised as a moved word.
+     XML as the file has it, which the word panel shows. A replaced word with
+     annotations of its own (other than its lemma; sent with each compile as word
+     numbers) is a record too, marked as annotated; the answer doesn't remove them, as
+     they may be about the place rather than the word. Left: cut and paste isn't
+     recognised as a moved word.
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
    and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,
    shorthand in `<…>`) brought that from 94 to all 288 files. Gate:

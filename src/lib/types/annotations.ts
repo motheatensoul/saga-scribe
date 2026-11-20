@@ -283,6 +283,19 @@ export function getAnnotationsForWord(
     return set.annotations.filter((a) => targetIncludesWord(a.target, wordIndex) && !isRemovedLemma(a));
 }
 
+/**
+ * The words (by number, ascending) with annotations of their own other than
+ * lemmas: a word or character target. A span is about several words, not
+ * one of them.
+ */
+export function annotatedWords(set: AnnotationSet): number[] {
+    const words = new Set<number>();
+    for (const a of set.annotations) {
+        if (a.type !== "lemma" && a.target.type !== "span") words.add(a.target.wordIndex);
+    }
+    return [...words].sort((a, b) => a - b);
+}
+
 /** Get all annotations of a specific type from a set */
 export function getAnnotationsByType(
     set: AnnotationSet,

@@ -491,6 +491,13 @@ answered, the wavy line goes away, and the panel still offers the other answer. 
 answers are saved with the project. Words not yet decided stay open after saving and
 reopening; **Validate** lists them, and saving or exporting says how many there are.
 
+A replaced word that has no lemma but has annotations of its own (a note or category on
+the word, made in the **Annotate** tab) is asked about too, with the buttons **Keep it as
+the same word** and **Treat it as a different word**; the answer decides whether it keeps
+the old word's normalized form. Annotations are never removed by the answer, as they may
+be about the place in the text rather than the word: the panel says the word has some, so
+you can check that they still fit. Annotations on a span of several words don't count.
+
 A deleted word is not asked about: it is removed with its lemma, and **Undo** brings it
 back.
 

@@ -175,6 +175,12 @@
     let shownConfirmation = $derived(recordOpen ? undefined : sessionConfirmation);
 
     /** Keeps the old word's lemma and analysis: the same word, corrected. */
+    // A replaced word without a lemma (asked about for its annotations) is
+    // still the same word or another one
+    const hasLemma = $derived(!!record && (record.lemma !== null || record.msa !== null));
+    const keepLabel = $derived(hasLemma ? 'Keep the old lemma' : 'Keep it as the same word');
+    const newLabel = $derived(hasLemma ? 'Set a new lemma' : 'Treat it as a different word');
+
     function keepOldLemma() {
         if (!record) return;
         const { lemma, msa } = record;
@@ -589,10 +595,22 @@
                 {#if record.lemma}
                     whose lemma is <span class="font-medium">{record.lemma}</span>
                     {#if record.msa}<code class="text-xs px-1 rounded bg-base-300">{record.msa}</code>{/if}.
-                {:else}
+                {:else if record.msa}
                     whose analysis is <code class="text-xs px-1 rounded bg-base-300">{record.msa}</code>.
+                {:else}
+                    which has no lemma.
                 {/if}
-                {#if record.decision === 'same'}
+                {#if !record.lemma && !record.msa}
+                    {#if record.decision === 'same'}
+                        It is the same word, corrected, and keeps its normalized form.
+                    {:else if record.decision === 'different'}
+                        It is a different word, without the old normalized form.
+                    {:else if record.suggestion === 'same'}
+                        The forms are alike, so the word keeps its normalized form until you choose.
+                    {:else}
+                        The forms differ, so the word is without its normalized form until you choose.
+                    {/if}
+                {:else if record.decision === 'same'}
                     It is kept: the same word, corrected.
                 {:else if record.decision === 'different'}
                     It was removed with the analysis and normalized form: a different word.
@@ -600,6 +618,10 @@
                     The forms are alike, so the word keeps it until you choose.
                 {:else}
                     The forms differ, so the word is without it until you choose.
+                {/if}
+                {#if record.annotated}
+                    Its annotations (<span class="font-medium">Annotate</span> tab) stay with it
+                    either way: check that they still fit.
                 {/if}
             </p>
             <details class="text-sm">
@@ -613,7 +635,9 @@
                         class="btn btn-sm {recordOpen && record.suggestion === 'same' ? 'btn-primary' : 'btn-ghost border-base-300'}"
                         onclick={keepOldLemma}
                     >
-                        {record.decision === 'different' ? 'Keep the old lemma after all' : 'Keep the old lemma'}
+                        {record.decision === 'different'
+                            ? `${keepLabel} after all`
+                            : keepLabel}
                     </button>
                 {/if}
                 {#if record.decision !== 'different'}
@@ -622,7 +646,9 @@
                         class="btn btn-sm {recordOpen && record.suggestion === 'different' ? 'btn-primary' : 'btn-ghost border-base-300'}"
                         onclick={setNewLemma}
                     >
-                        {record.decision === 'same' ? 'Set a new lemma instead' : 'Set a new lemma'}
+                        {record.decision === 'same'
+                            ? `${newLabel} instead`
+                            : newLabel}
                     </button>
                 {/if}
             </div>

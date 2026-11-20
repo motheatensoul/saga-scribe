@@ -260,7 +260,9 @@ impl Patcher {
 
     /// The words of the original that `patches` (as [`compute`](Self::compute)
     /// made them, for the DSL tracked in `state`) replace with another word
-    /// and that have something to lose: a lemma or an analysis. Each has the
+    /// and that have something to lose: a lemma or an analysis, or (if
+    /// `annotations` says some words have any) annotations, which the caller
+    /// checks once the words are numbered. Each has the
     /// patcher's answer as its suggestion, and the editor's from `decisions`
     /// if there is one. Their word numbers are filled in by
     /// [`WordRecord::number`] once the body is written.
@@ -275,6 +277,7 @@ impl Patcher {
         patches: &[PatchOperation],
         state: &Tracked,
         decisions: &HashMap<usize, Decision>,
+        annotations: bool,
     ) -> Vec<WordRecord> {
         let segment = |id: usize| segments.get(id).filter(|s| s.id() == id).or_else(|| segments.iter().find(|s| s.id() == id));
         let mut records = Vec::new();
@@ -288,7 +291,7 @@ impl Patcher {
             }
             let lemma = originals.attribute(seg, "lemma");
             let msa = originals.attribute(seg, "me:msa").or_else(|| originals.attribute(seg, "msa"));
-            if lemma.is_none() && msa.is_none() {
+            if lemma.is_none() && msa.is_none() && !annotations {
                 continue;
             }
             let was = match parse_dsl_to_tokens(dsl_content).as_deref() {
@@ -307,6 +310,7 @@ impl Patcher {
                 xml: originals.xml(seg).trim().to_string(),
                 lemma,
                 msa,
+                annotated: false,
             });
         }
         // Byte offsets in the DSL to UTF-16 (the editor's)
@@ -385,6 +389,10 @@ pub struct WordRecord {
     pub xml: String,
     pub lemma: Option<String>,
     pub msa: Option<String>,
+    /// The word has annotations (other than its lemma) in the project. They
+    /// stay with it whatever the answer: they may be about the place in the
+    /// text rather than the word
+    pub annotated: bool,
 }
 
 impl WordRecord {

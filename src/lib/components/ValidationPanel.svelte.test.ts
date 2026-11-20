@@ -17,6 +17,7 @@ const record = (key: number, word: number | null, from: number, to: number): Wor
     from,
     to,
     was: "konungr",
+    annotated: false,
     xml: "<w lemma=\"konungr\">konungr</w>",
     lemma: "konungr",
     msa: null,
