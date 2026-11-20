@@ -304,6 +304,7 @@ impl Patcher {
                 from: span.start,
                 to: span.end,
                 was,
+                xml: originals.xml(seg).trim().to_string(),
                 lemma,
                 msa,
             });
@@ -379,6 +380,9 @@ pub struct WordRecord {
     pub to: usize,
     /// The old word's shorthand
     pub was: String,
+    /// The old word's XML as the file has it: everything a different word
+    /// would lose, shown in the word panel
+    pub xml: String,
     pub lemma: Option<String>,
     pub msa: Option<String>,
 }

@@ -602,6 +602,10 @@
                     The forms differ, so the word is without it until you choose.
                 {/if}
             </p>
+            <details class="text-sm">
+                <summary class="cursor-pointer opacity-80">The replaced word’s XML</summary>
+                <pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-base-200 p-2 text-xs">{record.xml}</pre>
+            </details>
             <div class="flex flex-wrap gap-2">
                 {#if record.decision !== 'same'}
                     <button

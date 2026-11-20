@@ -337,8 +337,8 @@ text).
      document is loaded), not in segments (`patching::Originals`): its segments keep
      their shorthand and their place, not copies of the XML. The document stays in the
      backend: importing or opening stages it, the editor loads it by a handle, and saving
-     writes the manifest from it (`ImportedSession`). Left: records keep only the
-     old word's shorthand and data, not its whole XML; annotations other than lemmas aren't counted as
+     writes the manifest from it (`ImportedSession`). Each record carries the old word's
+     XML as the file has it, which the word panel shows. Left: annotations other than lemmas aren't counted as
      data a word loses; cut and paste isn't recognised as a moved word.
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
    and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,

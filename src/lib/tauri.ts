@@ -123,6 +123,8 @@ export interface WordRecord {
   to: number;
   /** The old word's shorthand */
   was: string;
+  /** The old word's XML as the file has it */
+  xml: string;
   lemma: string | null;
   msa: string | null;
 }

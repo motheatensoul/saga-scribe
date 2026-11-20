@@ -1039,6 +1039,11 @@ mod imported_identity_tests {
         assert!(out.xml.contains(r#"<w lemma="ok" me:msa="xCC"><choice><me:facs>okk</me:facs>"#), "{}", out.xml);
         let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
         assert_eq!((record.lemma.as_deref(), record.msa.as_deref()), (Some("ok"), Some("xCC")));
+        // The record keeps the old word's whole XML, as the file has it
+        assert_eq!(
+            record.xml,
+            r#"<w lemma="ok" me:msa="xCC"><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w>"#
+        );
         // ... and the next word is still the file's, untouched
         assert!(out.xml.contains("<me:norm>maðr</me:norm>"), "{}", out.xml);
     }

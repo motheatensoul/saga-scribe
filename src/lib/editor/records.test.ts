@@ -13,6 +13,7 @@ const replaced: WordRecord = {
     from: 3,
     to: 7,
     was: "bok",
+    xml: "<w lemma=\"bók\">bok</w>",
     lemma: "bók",
     msa: "xNC",
 };

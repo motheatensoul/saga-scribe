@@ -28,8 +28,7 @@ when it is done (and record it in CHANGELOG.md if users notice).
   applied to the file's tree instead of spliced into its text (2026-11-12). Replaced words
   are marked in the shorthand and asked about in the word panel (2026-11-12). **Next in
   3b:** the patcher pairing tokens with tree nodes instead of segments; the rest of the
-  records (listed in the design under 3b: the old word's whole XML, annotations, moved
-  words). It comes before the
+  records (listed in the design under 3b: annotations, moved words). It comes before the
   shorthand redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).
