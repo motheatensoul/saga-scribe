@@ -25,7 +25,7 @@
     import { errorStore } from "$lib/stores/errors";
     import { validationStore } from "$lib/stores/validation";
     import * as metadataStore from "$lib/stores/metadata.svelte";
-    import { importedStore } from "$lib/stores/imported.svelte";
+    import { importedStore, openRecordsNotice } from "$lib/stores/imported.svelte";
     import { nextMarkedWord, wordReveal } from "$lib/stores/wordReveal.svelte";
     import { compileSession } from "$lib/stores/compileSession";
     import { renumberWord } from "$lib/stores/renumber";
@@ -337,6 +337,11 @@
             errorStore.info("Review", "No words are marked for review.");
             return;
         }
+        openWordForReview(word);
+    }
+
+    /** Opens the word panel's Lemmatize tab on `word` and shows the word in the previews. */
+    function openWordForReview(word: number) {
         const forms = wordForms(previewContent, word, $entityStore.entities);
         if (!forms) return;
         selectedWordFacsimile = forms.facsimile;
@@ -588,9 +593,17 @@
 
             editor.setFile(path, $editor.content);
             errorStore.info("Project", `Saved project to ${path}`);
+            warnOpenRecords("Project");
         } catch (e) {
             errorStore.error("Save", `Failed to save project: ${e}`);
         }
+    }
+
+    /** Says how many replaced words are still to be decided, after saving or exporting */
+    function warnOpenRecords(category: string) {
+        if (!importedStore.isImportedMode) return;
+        const notice = openRecordsNotice(importedStore.openRecords.length);
+        if (notice) errorStore.warning(category, notice);
     }
 
     /** The active template; logs why `action` can't go ahead without one */
@@ -632,6 +645,7 @@
 
             await exportTei(path, previewContent);
             errorStore.info("Export", `Exported TEI-XML to ${path}`);
+            warnOpenRecords("Export");
         } catch (e) {
             errorStore.error("Export", `Failed to export: ${e}`);
         }
@@ -1151,6 +1165,12 @@
             >
                 <ValidationPanel
                     xmlContent={previewContent}
+                    records={importedStore.isImportedMode ? importedStore.openRecords : []}
+                    recordsDsl={importedStore.recordsDsl}
+                    onopenword={(word) => {
+                        showValidationPanel = false;
+                        openWordForReview(word);
+                    }}
                     onclose={() => (showValidationPanel = false)}
                 />
             </div>

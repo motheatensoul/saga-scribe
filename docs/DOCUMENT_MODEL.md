@@ -332,10 +332,10 @@ text).
      original word's segment ID in the manifest (`.teis` 1.8) and override the suggestion
      (`apply_decisions`). The editor holds the file's lemmas by word number and sends
      them with every compile, so a different word's old lemma is not written back unless
-     another one is chosen. Left: the patcher still works on segments (the tree should
+     another one is chosen. Validate lists the open records, and saving or exporting says
+     how many there are. Left: the patcher still works on segments (the tree should
      replace them, which also halves the memory a session holds); records keep only the
-     old word's shorthand and data, not its whole XML; Validate doesn't list records and
-     saving doesn't say how many are open; annotations other than lemmas aren't counted as
+     old word's shorthand and data, not its whole XML; annotations other than lemmas aren't counted as
      data a word loses; cut and paste isn't recognised as a moved word.
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
    and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,
@@ -374,8 +374,8 @@ Steps 1 and 2 change nothing users see. From step 3 on, edits stop losing markup
 
 Later, once this works:
 
-- a button that opens the word panel on the next word marked for review, so editors don't
-  have to look through the whole text for marks;
+- (done: F8) a key that opens the word panel on the next word marked for review, so
+  editors don't have to look through the whole text for marks;
 - with a robust lemmatizer, the program could infer the changed lemma and analysis after
   an edit, and from them the new dipl and norm, instead of only marking the word.
 

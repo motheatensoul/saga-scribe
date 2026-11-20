@@ -414,7 +414,9 @@ Annotations are saved in the project. For imported TEI files, see
 
 **Validate** in the toolbar checks the compiled document against a schema:
 **TEI P5** (`tei_all`) or **MENOTA P5** (RelaxNG). Errors are listed with their line
-numbers where available.
+numbers where available. In an imported document, the replaced words still to be decided
+(see [Replaced words](#replaced-words)) are listed above the results, each with an **Open**
+button that opens the word panel on it.
 
 ## Importing existing files
 
@@ -480,7 +482,8 @@ suggests an answer, and until you choose, the file follows it: the old word's le
 if the old and new forms are alike, and removed otherwise. In both cases the transcription
 markup the shorthand does not show (such as expansions) stays with the text. Once
 answered, the wavy line goes away, and the panel still offers the other answer. The
-answers are saved with the project.
+answers are saved with the project. Words not yet decided stay open after saving and
+reopening; **Validate** lists them, and saving or exporting says how many there are.
 
 A deleted word is not asked about: it is removed with its lemma, and **Undo** brings it
 back.

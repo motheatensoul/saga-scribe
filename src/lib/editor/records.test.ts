@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { openRecordRanges, setRecordMarks, wordRecordMarks } from "./records";
-import { wordsToCheck } from "$lib/stores/imported.svelte";
+import { openRecordsNotice, wordsToCheck } from "$lib/stores/imported.svelte";
 import type { WordRecord } from "$lib/tauri";
 
 const replaced: WordRecord = {
@@ -42,5 +42,13 @@ describe("words to check", () => {
         const answered = { ...replaced, key: 4, word: 5, decision: "same" as const };
         const open = { ...replaced, key: 6, word: 7, suggestion: "different" as const };
         expect([...wordsToCheck([2, 5], [answered, open, { ...open, key: 8, word: null }])].sort()).toEqual([2, 7]);
+    });
+});
+
+describe("openRecordsNotice", () => {
+    it("says nothing without open records and counts them otherwise", () => {
+        expect(openRecordsNotice(0)).toBeNull();
+        expect(openRecordsNotice(1)).toMatch(/^1 replaced word is still to be decided/);
+        expect(openRecordsNotice(3)).toMatch(/^3 replaced words are still to be decided/);
     });
 });

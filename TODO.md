@@ -28,7 +28,7 @@ when it is done (and record it in CHANGELOG.md if users notice).
   applied to the file's tree instead of spliced into its text (2026-11-12). Replaced words
   are marked in the shorthand and asked about in the word panel (2026-11-12). **Next in
   3b:** the patcher pairing tokens with tree nodes instead of segments; the rest of the
-  records (listed in the design under 3b: Validate, count on saving, annotations, moved
+  records (listed in the design under 3b: the old word's whole XML, annotations, moved
   words). It comes before the
   shorthand redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
@@ -58,9 +58,8 @@ when it is done (and record it in CHANGELOG.md if users notice).
   The check should run when saving or exporting, or only on the nodes an edit wrote anew.
 - **The compiler writes entities inside `?{…}?` within `.abbr[…]` literally**:
   `.abbr[?{þ:er:}?]{…}` gives `<unclear>þ:er:</unclear>`, not `&er;`.
-- **After the document model works:** a button that opens the word panel on the next word
-  marked for review; inferring a changed lemma and analysis after an edit (and from them
-  dipl and norm), which needs a robust lemmatizer.
+- **After the document model works:** inferring a changed lemma and analysis after an
+  edit (and from them dipl and norm), which needs a robust lemmatizer.
 
 ## Shorthand (DSL)
 

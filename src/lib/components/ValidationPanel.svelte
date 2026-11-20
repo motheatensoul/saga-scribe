@@ -8,7 +8,7 @@
         availableSchemas,
         selectedSchemaId,
     } from "$lib/stores/validation";
-    import { listSchemas, validateXml } from "$lib/tauri";
+    import { listSchemas, validateXml, type WordRecord } from "$lib/tauri";
     import { errorStore } from "$lib/stores/errors";
     import {
         CircleCheck,
@@ -18,8 +18,22 @@
     } from "@lucide/svelte";
     import { onMount } from "svelte";
 
-    let { xmlContent, onclose }: { xmlContent: string; onclose?: () => void } =
-        $props();
+    let {
+        xmlContent,
+        records = [],
+        recordsDsl = "",
+        onopenword,
+        onclose,
+    }: {
+        xmlContent: string;
+        /** Replaced words still to be decided (imported documents) */
+        records?: WordRecord[];
+        /** The DSL the records' positions are in */
+        recordsDsl?: string;
+        /** Opens the word panel on a word */
+        onopenword?: (word: number) => void;
+        onclose?: () => void;
+    } = $props();
 
     onMount(async () => {
         try {
@@ -113,6 +127,35 @@
     </div>
 
     <div class="overflow-y-auto flex-1 p-2">
+        {#if records.length > 0}
+            <section class="mb-3 pb-2 border-b border-base-300" aria-labelledby="validation-records-title">
+                <h3 id="validation-records-title" class="flex items-center gap-1 font-bold text-xs mb-1">
+                    <TriangleAlert size={14} class="text-warning" aria-hidden="true" />
+                    Replaced words to decide ({records.length})
+                </h3>
+                <p class="text-xs opacity-80 mb-1">
+                    The XML has the suggested answer until you decide in the word panel.
+                </p>
+                <ul>
+                    {#each records as record (record.key)}
+                        <li class="grid grid-cols-[1fr_auto] gap-2 p-1.5 rounded hover:bg-base-content/10 items-center">
+                            <span class="wrap-break-word">
+                                {record.was} → {recordsDsl.slice(record.from, record.to)}
+                                <span class="opacity-80 text-xs">
+                                    ({record.lemma ?? record.msa}; suggested: {record.suggestion === "same" ? "same word" : "different word"})
+                                </span>
+                            </span>
+                            {#if record.word !== null && onopenword}
+                                {@const word = record.word}
+                                <button class="btn btn-ghost btn-xs" onclick={() => onopenword(word)}>
+                                    Open<span class="sr-only"> {recordsDsl.slice(record.from, record.to)} in the word panel</span>
+                                </button>
+                            {/if}
+                        </li>
+                    {/each}
+                </ul>
+            </section>
+        {/if}
         {#if $isValidating}
             <div class="text-center py-8 flex items-center justify-center gap-2">
                 <Loader class="animate-spin" size={20} />

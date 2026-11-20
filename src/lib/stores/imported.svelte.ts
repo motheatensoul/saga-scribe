@@ -49,6 +49,8 @@ class ImportedStore {
   recordByWord = $derived(
     new Map(this.records.filter((r) => r.word !== null).map((r) => [r.word as number, r])),
   );
+  /** Replaced words the editor hasn't answered for yet (the XML follows the suggestion) */
+  openRecords = $derived(this.records.filter((r) => r.decision === null));
   /** The editor's answers for them, by the original word's key; saved with the manifest */
   decisions = $state<Record<number, Decision>>({});
   /** Called after an answer changes, to compile with it (set by the page) */
@@ -161,6 +163,16 @@ export function wordsToCheck(edited: readonly number[], records: readonly WordRe
     else words.delete(record.word);
   }
   return words;
+}
+
+/**
+ * What saving or exporting tells the editor about replaced words still to be
+ * decided, or null if there are none.
+ */
+export function openRecordsNotice(open: number): string | null {
+  if (open === 0) return null;
+  const words = open === 1 ? "1 replaced word is" : `${open} replaced words are`;
+  return `${words} still to be decided; the XML has the suggested answers. Validate lists them, F8 goes to the next.`;
 }
 
 export const importedStore = new ImportedStore();
