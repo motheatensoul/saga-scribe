@@ -739,16 +739,19 @@ impl<'a> Originals<'a> {
         Self { tree }
     }
 
-    /// The segment as written in the file.
+    /// The segment as written in the file: its copy, or where it has none
+    /// (dropped), the tree's.
     pub fn xml<'s>(&self, segment: &'s Segment) -> std::borrow::Cow<'s, str>
     where
         'a: 's,
     {
-        if let Some(xml) = self.tree.and_then(|tree| tree.segment_xml(segment.id())) {
-            return xml.into();
-        }
         match segment {
-            Segment::Word { original_xml, .. } | Segment::Punctuation { original_xml, .. } => original_xml.into(),
+            Segment::Word { original_xml, .. } | Segment::Punctuation { original_xml, .. } if !original_xml.is_empty() => {
+                original_xml.into()
+            }
+            Segment::Word { .. } | Segment::Punctuation { .. } => {
+                self.tree.and_then(|tree| tree.segment_xml(segment.id())).unwrap_or_default().into()
+            }
             other => serialize_original_segment(other).into(),
         }
     }
@@ -773,26 +776,20 @@ impl<'a> Originals<'a> {
         matches!(segment, Segment::Word { .. }) && self.is_element(segment, "w")
     }
 
-    /// A word's attributes (lemma, analysis, …).
+    /// A word's attributes (lemma, analysis, …): its copy, or where it has
+    /// none (dropped), the tree's.
     fn attributes(&self, segment: &Segment) -> HashMap<String, String> {
-        if let Some(tree) = self.tree.filter(|tree| tree.segment_xml(segment.id()).is_some()) {
-            return tree
-                .segment_element(segment.id())
-                .map(|e| e.attributes.iter().map(|a| (a.name.clone(), a.value.clone())).collect())
-                .unwrap_or_default();
-        }
         match segment {
-            Segment::Word { attributes, .. } => attributes.clone(),
+            Segment::Word { attributes, .. } if !attributes.is_empty() => attributes.clone(),
+            Segment::Word { .. } => self.tree.and_then(|tree| tree.segment_attributes(segment.id())).unwrap_or_default(),
             _ => HashMap::new(),
         }
     }
 
     pub(super) fn attribute(&self, segment: &Segment, name: &str) -> Option<String> {
-        if let Some(tree) = self.tree.filter(|tree| tree.segment_xml(segment.id()).is_some()) {
-            return tree.segment_element(segment.id())?.attribute(name).map(str::to_string);
-        }
         match segment {
-            Segment::Word { attributes, .. } => attributes.get(name).cloned(),
+            Segment::Word { attributes, .. } if !attributes.is_empty() => attributes.get(name).cloned(),
+            Segment::Word { .. } => self.tree?.segment_element(segment.id())?.attribute(name).map(str::to_string),
             _ => None,
         }
     }

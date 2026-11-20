@@ -176,11 +176,84 @@ pub(crate) fn compile_tracking_words(
 
 /// The imported document being edited, held in the backend.
 ///
-/// The segment manifest of a large manuscript is tens of megabytes of JSON.
-/// Keeping it here means it crosses IPC once (via [`set_imported_document`])
-/// instead of with every compile.
+/// The segment manifest of a large manuscript is tens of megabytes of JSON:
+/// it never crosses to the frontend. Importing a file or opening a project
+/// reads the document here and stages it ([`ImportedSession::stage`]); the
+/// editor then makes it the current one with [`set_imported_document`], so
+/// it switches documents when it is ready to, and saving writes it from here.
 #[derive(Default, Clone)]
-pub struct ImportedSession(Arc<Mutex<Option<ImportedSource>>>);
+pub struct ImportedSession(Arc<Mutex<ImportedSlots>>);
+
+#[derive(Default)]
+pub struct ImportedSlots {
+    /// The document compiles go to
+    current: Option<ImportedSource>,
+    /// Read, not yet loaded by the editor: its handle and the document
+    staged: Option<(u64, ImportedSource)>,
+    next_handle: u64,
+}
+
+/// What the editor needs of a staged document.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StagedDocument {
+    pub handle: u64,
+    pub is_menota: bool,
+    pub dsl_rules: u32,
+    pub decisions: HashMap<usize, Decision>,
+}
+
+impl ImportedSession {
+    /// Keeps `source` until the editor loads it with [`set_imported_document`]
+    /// (replacing one staged before and not loaded).
+    pub fn stage(&self, source: ImportedSource) -> Result<StagedDocument, String> {
+        let mut slots = self.0.lock().map_err(|_| "Imported document state is poisoned")?;
+        slots.next_handle += 1;
+        let handle = slots.next_handle;
+        let staged = StagedDocument {
+            handle,
+            is_menota: source.document.is_menota,
+            dsl_rules: source.document.dsl_rules,
+            decisions: source.document.decisions.clone(),
+        };
+        slots.staged = Some((handle, source));
+        Ok(staged)
+    }
+
+    /// Makes the staged document `handle` the current one, or with none,
+    /// clears it (see [`set_imported_document`]).
+    ///
+    /// # Errors
+    ///
+    /// If no document with that handle is staged (another was staged since).
+    pub fn load(&self, handle: Option<u64>) -> Result<(), String> {
+        let mut slots = self.0.lock().map_err(|_| "Imported document state is poisoned")?;
+        slots.current = match handle {
+            None => None,
+            Some(handle) => match slots.staged.take() {
+                Some((staged, source)) if staged == handle => Some(source),
+                other => {
+                    slots.staged = other;
+                    return Err("The imported document is no longer available; please open it again".into());
+                }
+            },
+        };
+        Ok(())
+    }
+
+    /// Runs `f` on the current document, to change it, if there is one.
+    #[cfg(test)]
+    pub(crate) fn with_current_mut<T>(&self, f: impl FnOnce(&mut ImportedSource) -> T) -> Result<Option<T>, String> {
+        let mut slots = self.0.lock().map_err(|_| "Imported document state is poisoned")?;
+        Ok(slots.current.as_mut().map(f))
+    }
+
+    /// Runs `f` on the current document, if there is one.
+    pub fn with_current<T>(&self, f: impl FnOnce(&ImportedSource) -> T) -> Result<Option<T>, String> {
+        let slots = self.0.lock().map_err(|_| "Imported document state is poisoned")?;
+        Ok(slots.current.as_ref().map(f))
+    }
+}
 
 /// Everything needed to compile edited DSL back into the original file.
 pub struct ImportedSource {
@@ -197,11 +270,37 @@ pub struct ImportedSource {
     tree: Option<TreeSource>,
     /// Compiler settings matching the file's encoding
     config: CompilerConfig,
+    /// The words whose attributes were dropped (see `ImportedDocument::drop_copies`)
+    dropped_attributes: std::collections::HashSet<usize>,
     /// The key of every word of the last compile, in document order
     words: Option<Vec<WordKey>>,
 }
 
 impl ImportedSource {
+    /// The manifest as saved in a project (`segments.json`), with `decisions`:
+    /// the segments with their copies of the file's XML, as they were read.
+    ///
+    /// # Errors
+    ///
+    /// If it can't be serialized.
+    pub fn manifest_json(&self, decisions: HashMap<usize, Decision>) -> Result<String, String> {
+        let mut document = self.document.clone();
+        if let Some(tree) = &self.tree {
+            document.restore_copies(
+                |id| tree.segment_xml(id),
+                |id| tree.segment_attributes(id),
+                &self.dropped_attributes,
+            );
+        }
+        document.decisions = decisions;
+        serde_json::to_string(&document).map_err(|e| format!("Failed to serialize the imported document: {e}"))
+    }
+
+    /// The original file's body, and what comes before and after it.
+    pub fn original_parts(&self) -> (&str, &str, &str) {
+        (&self.original_body_xml, &self.preamble, &self.postamble)
+    }
+
     /// Reads the file into its tree and prepares the patcher, so the first
     /// edit doesn't wait for either (a large manuscript takes a second).
     pub fn new(mut document: ImportedDocument, original_body_xml: String, preamble: String, postamble: String) -> Self {
@@ -216,46 +315,24 @@ impl ImportedSource {
         let config = compiler_config_for(&document, Originals::new(tree.as_ref()));
         let patcher = Patcher::new(&document.segments, document.dsl_rules);
         // The tree has the file's XML; the segments' copies of it go
-        if let Some(tree) = &tree {
-            document.drop_copies(|id| tree.segment_xml(id).is_some());
-        }
+        let dropped_attributes = match &tree {
+            Some(tree) => document.drop_copies(|id| tree.segment_xml(id), |id| tree.segment_attributes(id)),
+            None => Default::default(),
+        };
         timer.done("imported.load", [("tree", tree.is_some().into()), ("segments", document.segments.len().into())]);
-        Self { document, original_body_xml, preamble, postamble, patcher, tree, config, words: None }
+        Self { document, original_body_xml, preamble, postamble, patcher, tree, config, dropped_attributes, words: None }
     }
 }
 
-/// Sets (or, with no manifest, clears) the imported document used by [`compile_imported`].
+/// Makes the staged document `handle` (see [`ImportedSession::stage`]) the
+/// one [`compile_imported`] compiles into, or with none, clears it.
+///
+/// # Errors
+///
+/// If no document with that handle is staged (another was staged since).
 #[tauri::command(async, rename_all = "camelCase")]
-pub async fn set_imported_document(
-    session: State<'_, ImportedSession>,
-    segments_json: Option<String>,
-    original_body_xml: Option<String>,
-    preamble: Option<String>,
-    postamble: Option<String>,
-) -> Result<(), String> {
-    let source = match segments_json {
-        Some(json) => Some(
-            tauri::async_runtime::spawn_blocking(move || {
-                let timer = perf::timer();
-                let json_bytes = json.len();
-                let document = ImportedDocument::from_json(&json);
-                timer.done("set_imported_document", [("json_bytes", json_bytes.into())]);
-                document.map(|document| {
-                    ImportedSource::new(
-                        document,
-                        original_body_xml.unwrap_or_default(),
-                        preamble.unwrap_or_default(),
-                        postamble.unwrap_or_default(),
-                    )
-                })
-            })
-            .await
-            .map_err(|e| format!("Loading imported document failed: {}", e))??,
-        ),
-        None => None,
-    };
-    *session.0.lock().map_err(|_| "Imported document state is poisoned")? = source;
-    Ok(())
+pub async fn set_imported_document(session: State<'_, ImportedSession>, handle: Option<u64>) -> Result<(), String> {
+    session.load(handle)
 }
 
 /// Compile an imported document using the patching system for round-trip fidelity.
@@ -302,7 +379,7 @@ pub async fn compile_imported(
             .0
             .lock()
             .map_err(|_| "Imported document state is poisoned")?;
-        let source = guard.as_mut().ok_or("No imported document is loaded")?;
+        let source = guard.current.as_mut().ok_or("No imported document is loaded")?;
         timer.lap("compile.wait_for_session", []);
 
         // Load entities if provided
@@ -852,6 +929,99 @@ mod imported_identity_tests {
         compile_imported_source(source, &mut compiler, dsl, Some(&guidance), &decisions, HashMap::new()).unwrap()
     }
 
+    /// The way the app goes: import (staged), load, edit, save from the
+    /// session, open again (staged), load, and the edit and the answer for
+    /// the replaced word come back.
+    #[test]
+    fn test_imported_project_is_saved_from_the_session_and_opened_again() {
+        let compile_in = |session: &ImportedSession, from: &str, dsl: &str, decisions: &[(usize, Decision)]| {
+            session.with_current_mut(|source| compile_decided(source, from, dsl, decisions)).unwrap().unwrap()
+        };
+        let session = ImportedSession::default();
+        let reply = crate::commands::import::stage(crate::importer::tei::parse(TWO_OKS).unwrap(), &session).unwrap();
+        let words = reply.words.as_deref().unwrap();
+        assert_eq!((words[0].lemma.as_deref(), words[0].msa.as_deref()), (Some("ok"), Some("xCC")));
+        session.load(Some(reply.imported.unwrap().handle)).unwrap();
+        let dsl = reply.dsl;
+        compile_in(&session, &dsl, &dsl, &[]);
+        let edited = dsl.replacen("ok", "aok", 1);
+        let suggested = compile_in(&session, &dsl, &edited, &[]);
+        let key = suggested.records[0].key;
+        let before = compile_in(&session, &edited, &edited, &[(key, Decision::Different)]);
+        assert!(!before.xml.contains(r#"lemma="ok""#), "{}", before.xml);
+
+        let dir = std::env::temp_dir().join(format!("saga-scribe-session-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.teis");
+        let fields = crate::commands::file::ProjectFields {
+            source: edited.clone(),
+            output: before.xml.clone(),
+            confirmations_json: "{}".into(),
+            template_id: "menota".into(),
+            metadata_json: None,
+            annotations_json: None,
+        };
+        let decisions = format!(r#"{{"{key}":"different"}}"#);
+        crate::commands::file::save_project_at(&session, &path, fields, Some(decisions)).unwrap();
+
+        let mut project = crate::commands::file::read_project(&path.to_string_lossy()).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        let reopened = session
+            .stage(ImportedSource::new(
+                project.imported_document.take().unwrap(),
+                project.original_body_xml.take().unwrap(),
+                project.original_preamble.take().unwrap_or_default(),
+                project.original_postamble.take().unwrap_or_default(),
+            ))
+            .unwrap();
+        assert_eq!(reopened.decisions.get(&key), Some(&Decision::Different));
+        session.load(Some(reopened.handle)).unwrap();
+        let after = session
+            .with_current_mut(|source| {
+                let mut compiler = Compiler::new().with_config(source.config.clone());
+                let decisions: HashMap<usize, Decision> = reopened.decisions.clone();
+                compile_imported_source(source, &mut compiler, &edited, None, &decisions, HashMap::new()).unwrap()
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.xml, before.xml);
+    }
+
+    #[test]
+    fn test_saved_manifest_is_the_imported_one() {
+        let import = crate::importer::tei::parse(TWO_OKS).unwrap();
+        let document = import.imported_document.unwrap();
+        let decisions: HashMap<usize, Decision> = [(1, Decision::Same)].into_iter().collect();
+        let mut expected = document.clone();
+        expected.decisions = decisions.clone();
+        let source = ImportedSource::new(
+            document,
+            import.original_body_xml.unwrap(),
+            import.original_preamble.unwrap_or_default(),
+            import.original_postamble.unwrap_or_default(),
+        );
+        let saved: serde_json::Value = serde_json::from_str(&source.manifest_json(decisions).unwrap()).unwrap();
+        assert_eq!(saved, serde_json::to_value(&expected).unwrap());
+    }
+
+    #[test]
+    fn test_staged_documents_load_by_handle() {
+        let session = ImportedSession::default();
+        let (first, _) = open(TWO_OKS);
+        let first = session.stage(first).unwrap();
+        let (second, _) = open(TWO_OKS);
+        let second = session.stage(second).unwrap();
+        assert!(first.is_menota && first.decisions.is_empty());
+        // Staging another replaces the first: it can't be loaded any more
+        assert!(session.load(Some(first.handle)).is_err());
+        session.load(Some(second.handle)).unwrap();
+        assert_eq!(session.with_current(|_| ()).unwrap(), Some(()));
+        // Loaded once; clearing leaves none
+        assert!(session.load(Some(second.handle)).is_err());
+        session.load(None).unwrap();
+        assert_eq!(session.with_current(|_| ()).unwrap(), None);
+    }
+
     #[test]
     fn test_session_reads_words_from_the_tree_not_copies() {
         let (mut source, dsl) = open(TWO_OKS);
@@ -1120,3 +1290,4 @@ mod imported_identity_tests {
         assert_eq!(out.xml, xml);
     }
 }
+

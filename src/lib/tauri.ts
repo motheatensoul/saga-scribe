@@ -79,63 +79,27 @@ export async function loadTextFile(path: string): Promise<string> {
   return invoke("load_text_file", { path });
 }
 
-/** Result from importing a file */
-export type Segment =
-  | {
-      type: "structural";
-      id: number;
-      xml: string;
-    }
-  | {
-      /** A paragraph's start tag, shown as `.p` in the DSL */
-      type: "paragraph";
-      id: number;
-      xml: string;
-    }
-  | {
-      type: "word";
-      id: number;
-      original_xml: string;
-      attributes: Record<string, string>;
-      dsl_content: string;
-      has_inline_lb: boolean;
-    }
-  | {
-      type: "punctuation";
-      id: number;
-      original_xml: string;
-      dsl_content: string;
-    }
-  | {
-      type: "line_break";
-      id: number;
-      attributes: Record<string, string>;
-    }
-  | {
-      type: "page_break";
-      id: number;
-      attributes: Record<string, string>;
-    }
-  | {
-      type: "hand_shift";
-      id: number;
-      attributes: Record<string, string>;
-    }
-  | {
-      type: "whitespace";
-      id: number;
-      content: string;
-    };
-
-export interface ImportedDocument {
-  segments: Segment[];
-  is_menota: boolean;
-  /** Byte ranges of segments in the original body, indexed by segment id */
-  spans?: ([number, number] | null)[];
-  /** DSL rules version the document was imported with (absent: 0) */
-  dsl_rules?: number;
+/**
+ * An imported document the backend has read and keeps until the editor loads
+ * it with {@link setImportedDocument}: the manifest stays in the backend.
+ */
+export interface StagedDocument {
+  handle: number;
+  /** Whether the document has MENOTA levels (me:facs/dipl/norm) */
+  isMenota: boolean;
+  /** DSL rules version the document was imported with */
+  dslRules: number;
   /** The editor's answers for replaced words, by the original word's segment id */
-  decisions?: Record<number, Decision>;
+  decisions: Record<number, Decision>;
+}
+
+/** What an imported file says about one of its words */
+export interface ImportedWord {
+  lemma?: string;
+  msa?: string;
+  normalized?: string;
+  diplomatic?: string;
+  facsimile?: string;
 }
 
 /**
@@ -163,19 +127,16 @@ export interface WordRecord {
   msa: string | null;
 }
 
+/** Result from importing a file */
 export interface ImportResult {
   /** The DSL content extracted from the body */
   dsl: string;
   /** Metadata extracted from teiHeader (if present) */
   metadata?: import("$lib/types/metadata").Metadata;
-  /** Segment manifest for imported documents */
-  importedDocument?: ImportedDocument;
-  /** Original body XML for imported documents */
-  originalBodyXml?: string;
-  /** Original XML preamble (before <body>) */
-  originalPreamble?: string;
-  /** Original XML postamble (after </body>) */
-  originalPostamble?: string;
+  /** The imported document, staged in the backend (imported mode) */
+  imported?: StagedDocument;
+  /** The file's words, numbered as the rendered text counts them (imported mode) */
+  words?: ImportedWord[];
   /** Indicates imported mode for round-trip fidelity */
   isImportedMode?: boolean;
 }
@@ -254,23 +215,11 @@ export interface CompileImportedOptions {
 }
 
 /**
- * Loads the imported document into the backend (or clears it with `null`).
- * Sent once per document, so compiles only need to send the edited DSL.
+ * Makes the staged document with `handle` (from importing or opening it) the
+ * one compiles go to, or clears it with `null`.
  */
-export async function setImportedDocument(
-  document: {
-    segmentsJson: string;
-    originalBodyXml: string;
-    preamble: string;
-    postamble: string;
-  } | null,
-): Promise<void> {
-  return invoke("set_imported_document", {
-    segmentsJson: document?.segmentsJson ?? null,
-    originalBodyXml: document?.originalBodyXml ?? null,
-    preamble: document?.preamble ?? null,
-    postamble: document?.postamble ?? null,
-  });
+export async function setImportedDocument(handle: number | null): Promise<void> {
+  return invoke("set_imported_document", { handle });
 }
 
 /** An editor change: `from_a..to_a` of the previous DSL became `from_b..to_b` (UTF-16 offsets). */
@@ -573,14 +522,8 @@ export interface ProjectData {
   metadata?: import("$lib/types/metadata").Metadata;
   /** Full annotation set (new in v1.2) */
   annotations?: import("$lib/types/annotations").AnnotationSet;
-  /** Imported document manifest (new in v1.3) */
-  imported_document?: ImportedDocument;
-  /** Original body XML for imported files (new in v1.3) */
-  original_body_xml?: string;
-  /** Original XML preamble (new in v1.4) */
-  original_preamble?: string;
-  /** Original XML postamble (new in v1.4) */
-  original_postamble?: string;
+  /** The imported document, staged in the backend (imported projects) */
+  imported?: StagedDocument;
 }
 
 // Save project archive (.teis)
@@ -592,10 +535,8 @@ export async function saveProject(
   templateId: string,
   metadataJson?: string,
   annotationsJson?: string,
-  segmentsJson?: string,
-  originalBodyXml?: string,
-  originalPreamble?: string,
-  originalPostamble?: string,
+  /** The answers for replaced words, for an imported document (the backend has the rest of it) */
+  decisionsJson?: string,
 ): Promise<void> {
   return invoke("save_project", {
     path,
@@ -605,10 +546,7 @@ export async function saveProject(
     templateId,
     metadataJson,
     annotationsJson,
-    segmentsJson,
-    originalBodyXml,
-    originalPreamble,
-    originalPostamble,
+    decisionsJson,
   });
 }
 

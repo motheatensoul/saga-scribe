@@ -42,10 +42,6 @@ when it is done (and record it in CHANGELOG.md if users notice).
   guidance, but the patcher falls back to comparing when guidance doesn't fit. Step 3b's
   replaced records cover a word paired with another; a word deleted and inserted again
   is not asked about.
-- **The frontend holds the whole manifest of an imported file** (every segment with its
-  XML, as reactive state) only to send it back when loading and saving, and reads the
-  file's lemmas from it on import. The backend no longer needs it (it reads words from
-  the tree): it could keep the manifest and stage imports itself.
 - **A session's tree is large**: about 240 MB for Njáls saga (16 MB, 1.8M nodes) at 112
   bytes a node (was 200), plus each text node's own string and each element's list of
   children. Text could be read from the file's text where it has no references.

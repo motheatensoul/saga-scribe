@@ -144,6 +144,12 @@ impl TreeSource {
         self.tree.source().get(start as usize..end as usize)
     }
 
+    /// The attributes of the element segment `id` is, as read from the file.
+    pub fn segment_attributes(&self, id: usize) -> Option<HashMap<String, String>> {
+        let element = self.segment_element(id)?;
+        Some(element.attributes.iter().map(|a| (a.name.clone(), a.value.clone())).collect())
+    }
+
     /// The element segment `id` is (a word, punctuation, a break), as read
     /// from the file.
     pub fn segment_element(&self, id: usize) -> Option<&Element> {

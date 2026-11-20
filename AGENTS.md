@@ -115,7 +115,8 @@ saga-scribe/
 ```
 
 ## Key Files
-- **Document tree:** `src-tauri/src/document/` (libxml2's parse copied into an arena with byte spans; the writer copies unchanged nodes from the original text; `write_checked` before anything is saved). `project.rs` turns the body into the importer's segments and their shorthand (`importer/tei/extraction.rs` has `segments_to_dsl`). See `docs/DOCUMENT_MODEL.md`
+- **Document tree:** `src-tauri/src/document/` (libxml2's parse copied into an arena with byte spans; the writer copies unchanged nodes from the original text; `write_checked` also checks that the output reads as the same tree, which compiles skip for speed). `project.rs` turns the body into the importer's segments and their shorthand (`importer/tei/extraction.rs` has `segments_to_dsl`). Nodes are kept small (a test guards their size): a long saga has millions. See `docs/DOCUMENT_MODEL.md`
+- **Imported session:** `ImportedSession` in `src-tauri/src/commands/parse.rs` holds the imported document: importing or opening a project stages it, the frontend loads it by a handle (`set_imported_document`), and saving writes its manifest from there. The frontend never holds the manifest. The session reads words in the file's tree (`patching::Originals`); its segments don't keep copies of the XML
 - **DSL Parser:** `src-tauri/src/parser/syntax.rs` (parsing), `src-tauri/src/parser/compiler.rs`
 - **Editor highlighting:** `src/lib/parser/tei-dsl.grammar`, whose tokens come from `src/lib/parser/tokens.ts`: a rule-for-rule copy of `syntax.rs`'s scanning. Change both together (run `bun run build:grammar` after editing the grammar); the corpus test catches drift
 - **Word Tokenizer:** `src-tauri/src/parser/wordtokenizer.rs`

@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Toolbar grouped by what the actions apply to**: file (Open, Import, Save, Export), document (template, template manager, **Metadata**, **Validate**), lemmatization (undo, redo) and application (log, help, settings). The template manager, metadata editor, validation and log moved there from the editor header, which now has only the actions on the text (undo, redo, search, entities). In a narrow window the toolbar shows icons only and wraps whole groups onto a second row
-- **Large imported files take less memory and don't stall the first edit**: the file is read into its tree when it is opened rather than at the first keystroke, which took about a second for a long saga, and the tree takes about 40% less memory (240 MB instead of 390 for Njáls saga in AM 132 fol). The words' XML is no longer kept a second time while editing
+- **Large imported files take less memory and don't stall the first edit**: the file is read into its tree when it is opened rather than at the first keystroke, which took about a second for a long saga, and the tree takes about 40% less memory (240 MB instead of 390 for Njáls saga in AM 132 fol). The words' XML is no longer kept a second time while editing, and the window no longer holds a copy of the whole imported document (tens of megabytes for a long saga) or passes it back and forth when a file is imported, opened or saved; opening a project no longer blocks the window while it is read
 - **Light theme without black buttons**: buttons, the active tab, focus outlines and other accents use a dark coffee brown instead of black, and turn a lighter brown when pointed at
 
 ### Fixed

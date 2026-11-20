@@ -29,7 +29,6 @@
     import { nextMarkedWord, wordReveal } from "$lib/stores/wordReveal.svelte";
     import { compileSession } from "$lib/stores/compileSession";
     import { renumberWord } from "$lib/stores/renumber";
-    import { preservationStore } from "$lib/stores/preservation.svelte";
     import type { Metadata } from "$lib/types/metadata";
     import { isMetadataEmpty } from "$lib/types/metadata";
     import {
@@ -48,7 +47,7 @@
         generateTeiHeader,
         validateXml,
     } from "$lib/tauri";
-    import type { ImportedDocument } from "$lib/tauri";
+    import type { StagedDocument } from "$lib/tauri";
     import { loadAppResources } from "$lib/startup";
     import { perfEnabled, perfRecord, perfTime, perfTimeSync } from "$lib/perf";
     import { importedLemmas } from "$lib/utils/importedLemmas";
@@ -424,31 +423,16 @@
     const handleLemmaRedo = () => stepAnnotationHistory("Redo");
 
     /**
-     * Enters imported mode on `document` and the original file's parts, or
-     * leaves it if there's no document; returns whether it's imported mode.
+     * Enters imported mode on `document` (staged in the backend when it was
+     * imported or opened), or leaves it if there's none; returns whether it's
+     * imported mode.
      */
-    function setImportedDocument(
-        document: ImportedDocument | undefined,
-        originalBodyXml: string | undefined,
-        preamble = "",
-        postamble = "",
-    ): boolean {
-        if (!document || !originalBodyXml) {
+    function setImportedDocument(document: StagedDocument | undefined): boolean {
+        if (!document) {
             importedStore.reset();
-            preservationStore.clear();
             return false;
         }
-        importedStore.load({
-            segments: document.segments,
-            spans: document.spans,
-            originalBodyXml,
-            originalPreamble: preamble,
-            originalPostamble: postamble,
-            isMenota: document.is_menota ?? false,
-            dslRules: document.dsl_rules ?? 0,
-            decisions: document.decisions ?? {},
-        });
-        preservationStore.setSections({ preamble, postamble });
+        importedStore.load(document);
         return true;
     }
 
@@ -501,12 +485,7 @@
                     metadataStore.resetMetadata();
                 }
 
-                setImportedDocument(
-                    project.imported_document,
-                    project.original_body_xml,
-                    project.original_preamble,
-                    project.original_postamble,
-                );
+                setImportedDocument(project.imported);
 
                 await compileNow(project.source);
 
@@ -521,7 +500,6 @@
                 annotationHistory.clear();
                 sessionLemmaStore.clear();
                 importedStore.reset();
-                preservationStore.clear();
 
                 await compileNow(file.content);
 
@@ -565,17 +543,9 @@
             const metadataJson = currentMetadata
                 ? JSON.stringify(currentMetadata)
                 : undefined;
-            const segmentsJson = importedStore.isImportedMode
-                ? importedStore.buildManifestJson()
-                : undefined;
-            const originalBodyXml = importedStore.isImportedMode
-                ? importedStore.originalBodyXml
-                : undefined;
-            const originalPreamble = importedStore.isImportedMode
-                ? importedStore.originalPreamble
-                : undefined;
-            const originalPostamble = importedStore.isImportedMode
-                ? importedStore.originalPostamble
+            // An imported document's file and manifest are in the backend
+            const decisionsJson = importedStore.isImportedMode
+                ? JSON.stringify(importedStore.decisions)
                 : undefined;
             await saveProject(
                 path,
@@ -585,10 +555,7 @@
                 template.id,
                 metadataJson,
                 annotationsJson,
-                segmentsJson,
-                originalBodyXml,
-                originalPreamble,
-                originalPostamble,
+                decisionsJson,
             );
 
             editor.setFile(path, $editor.content);
@@ -850,16 +817,9 @@
             sessionLemmaStore.clear();
             clearTimeout(compileTimeout);
 
-            const imported = result.isImportedMode ? result.importedDocument : undefined;
-            if (
-                setImportedDocument(
-                    imported,
-                    result.originalBodyXml,
-                    result.originalPreamble,
-                    result.originalPostamble,
-                )
-            ) {
-                const lemmas = importedLemmas(imported!.segments, imported!.is_menota ?? false);
+            const imported = result.isImportedMode ? result.imported : undefined;
+            if (setImportedDocument(imported)) {
+                const lemmas = importedLemmas(result.words ?? [], imported!.isMenota);
                 if (lemmas.missingLemmas > 0) {
                     errorStore.warning("Import", `Missing lemma for ${lemmas.missingLemmas} word(s); left empty.`);
                 }

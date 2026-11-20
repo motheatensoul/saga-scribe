@@ -3,38 +3,17 @@ import {
   setImportedDocument,
   type CompileImportedOptions,
   type Decision,
-  type ImportedDocument,
-  type Segment,
+  type StagedDocument,
   type WordRecord,
 } from "$lib/tauri";
 import { compileSession } from "$lib/stores/compileSession";
 
-export interface ImportedState {
-  isImportedMode: boolean;
-  segments: Segment[];
-  spans: ImportedDocument["spans"];
-  originalBodyXml: string;
-  originalPreamble: string;
-  originalPostamble: string;
-  frontMatter: string;
-  backMatter: string;
-  isMenota: boolean;
-  dslRules: number;
-  decisions: Record<number, Decision>;
-}
-
+/**
+ * The imported document being edited. The document itself (the file and its
+ * segments) is held by the backend; this is what the editor needs of it.
+ */
 class ImportedStore {
   isImportedMode = $state(false);
-  segments = $state<Segment[]>([]);
-  spans = $state<ImportedDocument["spans"]>(undefined);
-  originalBodyXml = $state("");
-  originalPreamble = $state("");
-  originalPostamble = $state("");
-  frontMatter = $state("");
-  backMatter = $state("");
-  isMenota = $state(false);
-  /** DSL rules version the document was imported with; kept so its DSL still matches */
-  dslRules = $state(0);
   /**
    * Words to check since import: edited ones that kept the original's
    * lemma, analysis and normalized form, and replaced ones not yet answered
@@ -62,10 +41,10 @@ class ImportedStore {
    */
   private backendSync: Promise<void> = Promise.resolve();
 
-  private syncBackend(document: Parameters<typeof setImportedDocument>[0]) {
+  private syncBackend(handle: number | null) {
     this.backendSync = this.backendSync
       .catch(() => {})
-      .then(() => setImportedDocument(document));
+      .then(() => setImportedDocument(handle));
   }
 
   reset() {
@@ -75,52 +54,18 @@ class ImportedStore {
     this.recordsDsl = "";
     this.decisions = {};
     compileSession.reset();
-    this.segments = [];
-    this.spans = undefined;
-    this.originalBodyXml = "";
-    this.originalPreamble = "";
-    this.originalPostamble = "";
-    this.frontMatter = "";
-    this.backMatter = "";
-    this.isMenota = false;
-    this.dslRules = 0;
     this.syncBackend(null);
   }
 
-  load(data: Partial<ImportedState>) {
+  /** Edits `document`, which the backend staged when it was imported or opened. */
+  load(document: StagedDocument) {
     this.isImportedMode = true;
     this.editedWords = new Set();
     this.records = [];
     this.recordsDsl = "";
-    this.decisions = { ...(data.decisions ?? {}) };
+    this.decisions = { ...document.decisions };
     compileSession.reset();
-    if (data.segments) this.segments = data.segments;
-    this.spans = data.spans ?? undefined;
-    if (data.originalBodyXml) this.originalBodyXml = data.originalBodyXml;
-    if (data.originalPreamble) this.originalPreamble = data.originalPreamble;
-    if (data.originalPostamble) this.originalPostamble = data.originalPostamble;
-    if (data.frontMatter) this.frontMatter = data.frontMatter;
-    if (data.backMatter) this.backMatter = data.backMatter;
-    if (data.isMenota !== undefined) this.isMenota = data.isMenota;
-    this.dslRules = data.dslRules ?? 0;
-    this.syncBackend({
-      segmentsJson: this.buildManifestJson(),
-      originalBodyXml: this.originalBodyXml,
-      preamble: this.originalPreamble,
-      postamble: this.originalPostamble,
-    });
-  }
-
-  /** Full manifest JSON, sent to the backend on load and written when saving projects. */
-  buildManifestJson(): string {
-    const manifest: ImportedDocument = {
-      segments: this.segments,
-      is_menota: this.isMenota,
-      dsl_rules: this.dslRules,
-      spans: this.spans,
-      decisions: this.decisions,
-    };
-    return JSON.stringify(manifest);
+    this.syncBackend(document.handle);
   }
 
   /** Answers for the original word `key`, and compiles with the answer. */

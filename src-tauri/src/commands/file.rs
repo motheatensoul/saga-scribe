@@ -38,14 +38,16 @@
 //! and renamed over it, so a crash mid-save never leaves a truncated file.
 
 use crate::annotations::AnnotationSet;
+use crate::commands::parse::{ImportedSession, ImportedSource, StagedDocument};
 use crate::importer::tei::recompute_spans;
-use crate::importer::tei::segments::{ImportedDocument, Segment};
+use crate::importer::tei::segments::{Decision, ImportedDocument, Segment};
 use crate::metadata::Metadata;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use tauri::State;
 use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
@@ -201,9 +203,14 @@ pub struct ProjectData {
 ///
 /// Creates a ZIP archive containing all project data. The archive format
 /// is versioned to support backward compatibility with older app versions.
-#[tauri::command]
+///
+/// With `decisions_json` (the answers for replaced words), the project is an
+/// imported document: its manifest and original file come from the
+/// document the backend holds ([`ImportedSession`]).
+#[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
-pub fn save_project(
+pub async fn save_project(
+    session: State<'_, ImportedSession>,
     path: String,
     source: String,
     output: String,
@@ -211,12 +218,58 @@ pub fn save_project(
     template_id: String,
     metadata_json: Option<String>,
     annotations_json: Option<String>,
-    segments_json: Option<String>,
-    original_body_xml: Option<String>,
-    original_preamble: Option<String>,
-    original_postamble: Option<String>,
+    decisions_json: Option<String>,
 ) -> Result<(), String> {
-    write_atomic_with(Path::new(&path), |file| {
+    let session = session.inner().clone();
+    let fields = ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json };
+    tauri::async_runtime::spawn_blocking(move || {
+        let timer = crate::perf::timer();
+        let result = save_project_at(&session, Path::new(&path), fields, decisions_json);
+        timer.done("save_project", [("ok", result.is_ok().into())]);
+        result
+    })
+    .await
+    .map_err(|e| format!("Saving failed: {e}"))?
+}
+
+/// What the editor sends to save a project, besides an imported document's
+/// answers for replaced words.
+pub(crate) struct ProjectFields {
+    pub source: String,
+    pub output: String,
+    pub confirmations_json: String,
+    pub template_id: String,
+    pub metadata_json: Option<String>,
+    pub annotations_json: Option<String>,
+}
+
+/// Saves a project at `path` (see [`save_project`]).
+pub(crate) fn save_project_at(
+    session: &ImportedSession,
+    path: &Path,
+    fields: ProjectFields,
+    decisions_json: Option<String>,
+) -> Result<(), String> {
+    let ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json } = fields;
+    let imported = match decisions_json {
+        Some(json) => {
+            let decisions: HashMap<usize, Decision> =
+                serde_json::from_str(&json).map_err(|e| format!("Failed to read the answers for replaced words: {e}"))?;
+            let parts = session.with_current(|document| {
+                let (body, preamble, postamble) = document.original_parts();
+                document
+                    .manifest_json(decisions)
+                    .map(|manifest| (manifest, body.to_string(), preamble.to_string(), postamble.to_string()))
+            })?;
+            Some(parts.ok_or("No imported document is loaded")??)
+        }
+        None => None,
+    };
+    let (segments_json, original_body_xml, original_preamble, original_postamble) = match imported {
+        Some((manifest, body, preamble, postamble)) => (Some(manifest), Some(body), Some(preamble), Some(postamble)),
+        None => (None, None, None, None),
+    };
+    write_atomic_with(path, |file| {
         write_project_archive(
             file,
             ProjectContents {
@@ -353,13 +406,44 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     Ok(())
 }
 
-/// Opens a .teis project archive and loads all contained data.
+/// A project as the editor gets it: an imported document stays in the
+/// backend, staged ([`ImportedSession::stage`]), instead of its manifest and
+/// original file.
+#[derive(Debug, Serialize)]
+pub struct OpenedProject {
+    #[serde(flatten)]
+    pub project: ProjectData,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported: Option<StagedDocument>,
+}
+
+/// Opens a .teis project archive and loads all contained data; an imported
+/// document is read into its tree and staged.
+#[tauri::command(async)]
+pub async fn open_project(path: String, session: State<'_, ImportedSession>) -> Result<OpenedProject, String> {
+    let session = session.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let timer = crate::perf::timer();
+        let mut project = read_project(&path)?;
+        let preamble = project.original_preamble.take().unwrap_or_default();
+        let postamble = project.original_postamble.take().unwrap_or_default();
+        let imported = match (project.imported_document.take(), project.original_body_xml.take()) {
+            (Some(document), Some(body)) => Some(session.stage(ImportedSource::new(document, body, preamble, postamble))?),
+            _ => None,
+        };
+        timer.done("open_project", [("imported", imported.is_some().into())]);
+        Ok(OpenedProject { project, imported })
+    })
+    .await
+    .map_err(|e| format!("Opening failed: {e}"))?
+}
+
+/// Reads a .teis project archive.
 ///
 /// Handles backward compatibility with older archive versions by
 /// gracefully handling missing optional files.
-#[tauri::command]
-pub fn open_project(path: String) -> Result<ProjectData, String> {
-    let path = PathBuf::from(&path);
+pub fn read_project(path: &str) -> Result<ProjectData, String> {
+    let path = PathBuf::from(path);
     let file = File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?;
     let mut archive =
         ZipArchive::new(file).map_err(|e| format!("Failed to read archive: {}", e))?;
@@ -602,21 +686,25 @@ mod tests {
         let path = dir.join("p.teis");
         let manifest_json = r#"{"segments":[],"is_menota":true,"spans":[]}"#;
 
-        save_project(
-            path.to_string_lossy().into_owned(),
-            "//1 maþr".into(),
-            "<TEI/>".into(),
-            "{}".into(),
-            "menota".into(),
-            None,
-            None,
-            Some(manifest_json.into()),
-            Some("<body></body>".into()),
-            Some("<TEI><text>".into()),
-            Some("</text></TEI>".into()),
-        )
+        write_atomic_with(&path, |file| {
+            write_project_archive(
+                file,
+                ProjectContents {
+                    source: "//1 maþr".into(),
+                    output: "<TEI/>".into(),
+                    confirmations_json: "{}".into(),
+                    template_id: "menota".into(),
+                    metadata_json: None,
+                    annotations_json: None,
+                    segments_json: Some(manifest_json.into()),
+                    original_body_xml: Some("<body></body>".into()),
+                    original_preamble: Some("<TEI><text>".into()),
+                    original_postamble: Some("</text></TEI>".into()),
+                },
+            )
+        })
         .unwrap();
-        let project = open_project(path.to_string_lossy().into_owned()).unwrap();
+        let project = read_project(&path.to_string_lossy()).unwrap();
 
         assert_eq!(project.source, "//1 maþr");
         assert_eq!(project.output, "<TEI/>");

@@ -317,7 +317,8 @@ fn corpus_xml_and_shorthand_read_as_the_same_tokens() {
 }
 
 /// Every file imported and saved unedited through the patcher comes back
-/// byte for byte (the importer works on the projection).
+/// byte for byte (the importer works on the projection), and a session
+/// saves the manifest it was given.
 #[test]
 fn corpus_unchanged_import_round_trips() {
     use crate::importer::tei::patching::{compiler_config_for, compute_patches, render_body, Originals};
@@ -333,6 +334,20 @@ fn corpus_unchanged_import_round_trips() {
             if doc.spans.is_none() {
                 return Err("no spans".into());
             }
+            // A session saves the manifest it was given, though it holds
+            // the segments without their copies of the XML
+            let session = crate::commands::parse::ImportedSource::new(
+                doc.clone(),
+                original.clone(),
+                import.original_preamble.clone().unwrap_or_default(),
+                import.original_postamble.clone().unwrap_or_default(),
+            );
+            let saved: serde_json::Value = serde_json::from_str(&session.manifest_json(doc.decisions.clone())?)
+                .map_err(|e| e.to_string())?;
+            if saved != serde_json::to_value(&doc).map_err(|e| e.to_string())? {
+                return Err("the saved manifest isn't the imported one".into());
+            }
+            drop(session);
             let patches = compute_patches(&doc.segments, doc.dsl_rules, &import.dsl)?;
             let (doc, tree) = {
                 let tree = gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?;
@@ -478,7 +493,7 @@ fn slim(
     mut doc: crate::importer::tei::segments::ImportedDocument,
     tree: crate::importer::tei::apply::TreeSource,
 ) -> (crate::importer::tei::segments::ImportedDocument, crate::importer::tei::apply::TreeSource) {
-    doc.drop_copies(|id| tree.segment_xml(id).is_some());
+    doc.drop_copies(|id| tree.segment_xml(id), |id| tree.segment_attributes(id));
     (doc, tree)
 }
 

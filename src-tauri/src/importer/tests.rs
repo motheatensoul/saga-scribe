@@ -1025,7 +1025,7 @@ fn imported_render(
     // As a session holds it: without the copies of the XML the tree has
     let mut doc = doc;
     if let Some(tree) = &tree {
-        doc.drop_copies(|id| tree.segment_xml(id).is_some());
+        doc.drop_copies(|id| tree.segment_xml(id), |id| tree.segment_attributes(id));
     }
     let body = render_body(&doc, Some(&original_body), tree.as_ref(), &patches, &mut compiler)?;
     Ok((original_body, body))
@@ -1519,7 +1519,7 @@ impl Session {
         let config = compiler_config_for(&doc, Originals::new(tree.as_ref()));
         let mut doc = doc;
         if let Some(tree) = &tree {
-            doc.drop_copies(|id| tree.segment_xml(id).is_some());
+            doc.drop_copies(|id| tree.segment_xml(id), |id| tree.segment_attributes(id));
         }
         let mut session = Session { doc, body, tree, patcher, config, dsl: import.dsl.clone() };
         session.compile(&import.dsl, false).unwrap();

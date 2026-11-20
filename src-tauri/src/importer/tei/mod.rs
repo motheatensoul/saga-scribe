@@ -50,6 +50,7 @@ pub mod extraction;
 pub mod patching;
 pub mod apply;
 pub mod source_map;
+pub mod words;
 mod importer;
 
 // Re-export everything from the main importer for backward compatibility

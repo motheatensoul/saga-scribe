@@ -178,19 +178,58 @@ pub const DSL_RULES: u32 = 5;
 
 impl ImportedDocument {
     /// Drops the copies of the file's XML that words and punctuation hold
-    /// (their XML and a word's attributes), for those `in_tree` says the
-    /// file's tree has: a session reads them there
-    /// (`patching::Originals`), and a manuscript's copies are tens of
-    /// megabytes.
-    pub fn drop_copies(&mut self, in_tree: impl Fn(usize) -> bool) {
+    /// (their XML, a word's attributes) where they are what the file's tree
+    /// has: `xml` and `attributes` read it there. A session reads them in the
+    /// tree (`patching::Originals`), and a manuscript's copies are tens of
+    /// megabytes. Returns the IDs of the words whose attributes were dropped
+    /// (some elements stored as words, such as notes, are saved without
+    /// theirs), for [`restore_copies`](Self::restore_copies).
+    pub fn drop_copies<'t>(
+        &mut self,
+        xml: impl Fn(usize) -> Option<&'t str>,
+        attributes: impl Fn(usize) -> Option<HashMap<String, String>>,
+    ) -> std::collections::HashSet<usize> {
+        let mut dropped_attributes = std::collections::HashSet::new();
         for segment in &mut self.segments {
             match segment {
-                Segment::Word { id, original_xml, attributes, .. } if in_tree(*id) => {
-                    *original_xml = String::new();
-                    *attributes = HashMap::new();
+                Segment::Word { id, original_xml, attributes: attrs, .. } => {
+                    if xml(*id) == Some(original_xml.as_str()) {
+                        *original_xml = String::new();
+                    }
+                    if !attrs.is_empty() && attributes(*id).as_ref() == Some(attrs) {
+                        *attrs = HashMap::new();
+                        dropped_attributes.insert(*id);
+                    }
                 }
-                Segment::Punctuation { id, original_xml, .. } if in_tree(*id) => {
+                Segment::Punctuation { id, original_xml, .. } if xml(*id) == Some(original_xml.as_str()) => {
                     *original_xml = String::new();
+                }
+                _ => {}
+            }
+        }
+        dropped_attributes
+    }
+
+    /// Puts back the copies [`drop_copies`](Self::drop_copies) dropped: the
+    /// XML (dropped where it is empty) and the attributes of `dropped_attributes`.
+    pub fn restore_copies<'t>(
+        &mut self,
+        xml: impl Fn(usize) -> Option<&'t str>,
+        attributes: impl Fn(usize) -> Option<HashMap<String, String>>,
+        dropped_attributes: &std::collections::HashSet<usize>,
+    ) {
+        for segment in &mut self.segments {
+            match segment {
+                Segment::Word { id, original_xml, attributes: attrs, .. } => {
+                    if original_xml.is_empty() {
+                        *original_xml = xml(*id).unwrap_or_default().to_string();
+                    }
+                    if dropped_attributes.contains(id) {
+                        *attrs = attributes(*id).unwrap_or_default();
+                    }
+                }
+                Segment::Punctuation { id, original_xml, .. } if original_xml.is_empty() => {
+                    *original_xml = xml(*id).unwrap_or_default().to_string();
                 }
                 _ => {}
             }
