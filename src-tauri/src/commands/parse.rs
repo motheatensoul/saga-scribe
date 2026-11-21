@@ -1,6 +1,6 @@
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
-use crate::identity::{numbers_by_key, renumbering, Guidance, Renumbering, Tracked};
+use crate::identity::{numbers_by_key, renumbering, Guidance, ParkedWord, Parking, Renumbering, ReturnedWord, Tracked};
 use crate::importer::tei::patching::{
     apply_decisions, compiler_config_for, render_body, write_lemmas, Originals, Patcher, WordRecord,
 };
@@ -128,7 +128,7 @@ pub async fn compile_dsl(
                 ("xml_bytes", xml.len().into()),
             ],
         );
-        Ok(CompileOutput { xml, revision, renumbering: renumbered, edited_words: Vec::new(), records: Vec::new() })
+        Ok(CompileOutput { xml, revision, renumbering: renumbered, parked: Vec::new(), returned: Vec::new(), edited_words: Vec::new(), records: Vec::new() })
     })
     .await
     .map_err(|e| format!("Compilation task failed: {}", e))?
@@ -274,6 +274,8 @@ pub struct ImportedSource {
     dropped_attributes: std::collections::HashSet<usize>,
     /// The key of every word of the last compile, in document order
     words: Option<Vec<WordKey>>,
+    /// Words gone in a compile, which may come back (moved)
+    parking: Parking,
 }
 
 impl ImportedSource {
@@ -320,7 +322,7 @@ impl ImportedSource {
             None => Default::default(),
         };
         timer.done("imported.load", [("tree", tree.is_some().into()), ("segments", document.segments.len().into())]);
-        Self { document, original_body_xml, preamble, postamble, patcher, tree, config, dropped_attributes, words: None }
+        Self { document, original_body_xml, preamble, postamble, patcher, tree, config, dropped_attributes, words: None, parking: Parking::default() }
     }
 }
 
@@ -488,6 +490,10 @@ pub(crate) fn compile_imported_source(
     timer.lap("compile.word_keys", [("words", words.len().into())]);
     let previous = source.words.as_ref().filter(|_| guidance.is_some());
     let renumbered = previous.and_then(|previous| renumbering(previous, &words));
+    let (parked, returned) = match previous {
+        Some(previous) => source.parking.update(previous, &words, renumbered.as_ref()),
+        None => Default::default(),
+    };
     let mut lemmas = match previous {
         Some(previous) => {
             let now = numbers_by_key(&words);
@@ -537,6 +543,8 @@ pub(crate) fn compile_imported_source(
     Ok(CompileOutput {
         revision: source.patcher.revision(),
         renumbering: renumbered,
+        parked,
+        returned,
         edited_words: body.edited_word_indices(),
         records,
         xml: format!("{}{}{}", source.preamble, body_xml, source.postamble),
@@ -556,6 +564,11 @@ pub struct CompileOutput {
     /// previous compile, its number now (`null` if deleted); absent if no
     /// word moved. Annotations stored by word number must be renumbered so.
     pub renumbering: Option<Renumbering>,
+    /// Words of the previous compile that are gone: what the editor stores
+    /// by word number for them is kept aside under their ticket
+    pub parked: Vec<ParkedWord>,
+    /// Words parked before that are back (moved), with their numbers now
+    pub returned: Vec<ReturnedWord>,
     /// Words (by number, in document order) edited in the DSL whose lemma, msa
     /// and normalized form were kept from the original and should be reviewed
     pub edited_words: Vec<u32>,
@@ -574,6 +587,10 @@ pub struct CompileReply {
     pub delta: Option<XmlDelta>,
     pub revision: u64,
     pub renumbering: Option<Renumbering>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub parked: Vec<ParkedWord>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub returned: Vec<ReturnedWord>,
     pub edited_words: Vec<u32>,
     pub records: Vec<WordRecord>,
 }
@@ -607,12 +624,14 @@ impl SentOutput {
             "compile.xml_delta",
             [("delta", delta.is_some().into()), ("insert_bytes", delta.as_ref().map_or(0, |d| d.insert.len()).into())],
         );
-        let CompileOutput { xml, revision, renumbering, edited_words, records } = output;
+        let CompileOutput { xml, revision, renumbering, parked, returned, edited_words, records } = output;
         let reply = CompileReply {
             xml: if delta.is_some() { None } else { Some(xml.clone()) },
             delta,
             revision,
             renumbering,
+            parked,
+            returned,
             edited_words,
             records,
         };
@@ -763,7 +782,7 @@ mod tests {
     #[test]
     fn test_output_is_sent_as_a_change_only_to_the_output_the_frontend_holds() {
         let sent = SentOutput::default();
-        let output = |xml: &str, revision| CompileOutput { xml: xml.into(), revision, renumbering: None, edited_words: vec![], records: vec![] };
+        let output = |xml: &str, revision| CompileOutput { xml: xml.into(), revision, renumbering: None, parked: vec![], returned: vec![], edited_words: vec![], records: vec![] };
         // Nothing held yet: whole
         let first = sent.reply(output("<w>ok</w>", 1), Some(1));
         assert_eq!((first.xml.as_deref(), first.delta), (Some("<w>ok</w>"), None));
@@ -965,6 +984,24 @@ mod imported_identity_tests {
         let mut compiler = Compiler::new().with_config(source.config.clone());
         let decisions: HashMap<usize, Decision> = decisions.iter().copied().collect();
         compile_imported_source(source, &mut compiler, dsl, Some(&guidance), &decisions, HashMap::new(), annotated).unwrap()
+    }
+
+    #[test]
+    fn test_a_word_cut_and_pasted_in_two_compiles_is_parked_and_comes_back() {
+        let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé"><me:dipl>b<ex>e</ex></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p></body></text></TEI>"#;
+        let (mut source, dsl) = open(xml);
+        assert_eq!(dsl, ".p a be c");
+        compile(&mut source, &dsl, None, &[]);
+        let cut = compile_guided(&mut source, &dsl, ".p a c", &[], &[]);
+        assert_eq!(cut.renumbering, Some(vec![Some(0), None, Some(1)]));
+        assert_eq!(cut.parked.len(), 1);
+        assert_eq!(cut.parked[0].word, 1);
+        let pasted = compile_guided(&mut source, ".p a c", ".p a c be", &[], &[]);
+        assert_eq!(pasted.returned, vec![ReturnedWord { ticket: cut.parked[0].ticket.clone(), word: 2 }]);
+        assert!(pasted.xml.contains(r#"<w lemma="bé"><me:dipl>b<ex>e</ex></me:dipl></w></p>"#), "{}", pasted.xml);
+        // Back is back: nothing is parked twice
+        let again = compile_guided(&mut source, ".p a c be", ".p a c", &[], &[]);
+        assert_eq!(again.parked.len(), 1);
     }
 
     /// The way the app goes: import (staged), load, edit, save from the

@@ -18,7 +18,7 @@
 //! a word in it is edited.
 
 use super::patching::{
-    keeps_word_data, render_insert, render_modify, token_kind, Origin, Originals, ParagraphStructure,
+    inserted_xml, keeps_word_data, render_insert, render_modify, token_kind, Origin, Originals, ParagraphStructure,
     PatchOperation, RenderedBody, TokenKind,
 };
 use super::segments::Segment;
@@ -270,6 +270,14 @@ impl Applier<'_> {
         Some(roots)
     }
 
+    /// A moved word counts as edited: it keeps its lemma and analysis.
+    fn mark_moved(&mut self, roots: &[NodeId], moved: Option<usize>) {
+        if moved.is_some() {
+            let word = roots.iter().copied().find(|&r| self.tree.element(r).is_some());
+            self.edited.extend(word);
+        }
+    }
+
     fn insert_text(&mut self, text: &str, parent: NodeId, index: usize) -> NodeId {
         let node = self.tree.insert(parent, index, NodeKind::Text(text.to_string()));
         self.created.insert(node, None);
@@ -330,11 +338,11 @@ pub(super) fn apply_to_tree(
     let mut anchor: Option<Anchor> = None;
     let mut anchor_segment: Option<usize> = None;
     // Insertions before the first segment, waiting for a position
-    let mut pending: Vec<(&str, Option<usize>)> = Vec::new();
+    let mut pending: Vec<(&str, Option<usize>, Option<usize>)> = Vec::new();
 
     for patch in patches {
         match patch {
-            PatchOperation::Insert { dsl, token } if dsl == PARAGRAPH => {
+            PatchOperation::Insert { dsl, token, .. } if dsl == PARAGRAPH => {
                 // Split the paragraph after the point found for the token before
                 let after = anchor_segment?;
                 let split = structure.split_point_after(segments, after).ok()?;
@@ -359,15 +367,16 @@ pub(super) fn apply_to_tree(
                 }
                 anchor = Some(Anchor::Start(new));
             }
-            PatchOperation::Insert { dsl, token } => match anchor {
+            PatchOperation::Insert { dsl, token, moved } => match anchor {
                 Some(at) => {
                     let (parent, index) = applier.position(at)?;
                     let newline = applier.insert_text("\n", parent, index);
-                    let xml = render_insert(dsl, compiler);
+                    let xml = inserted_xml(dsl, *moved, segments, originals, compiler);
                     let roots = applier.insert_xml(&xml, parent, index + 1, *token)?;
+                    applier.mark_moved(&roots, *moved);
                     anchor = Some(Anchor::After(roots.last().copied().unwrap_or(newline)));
                 }
-                None => pending.push((dsl, *token)),
+                None => pending.push((dsl, *token, *moved)),
             },
             PatchOperation::Keep { segment_id }
             | PatchOperation::Modify { segment_id, .. }
@@ -377,9 +386,11 @@ pub(super) fn apply_to_tree(
                     let node = applier.node(*segment_id)?;
                     let parent = applier.tree.parent(node)?;
                     let mut index = applier.tree.index_in_parent(node)?;
-                    for (dsl, token) in pending.drain(..) {
-                        let xml = render_insert(dsl, compiler);
-                        index += applier.insert_xml(&xml, parent, index, token)?.len();
+                    for (dsl, token, moved) in pending.drain(..) {
+                        let xml = inserted_xml(dsl, moved, segments, originals, compiler);
+                        let roots = applier.insert_xml(&xml, parent, index, token)?;
+                        applier.mark_moved(&roots, moved);
+                        index += roots.len();
                         applier.insert_text("\n", parent, index);
                         index += 1;
                     }
@@ -465,11 +476,12 @@ pub(super) fn apply_to_tree(
     if !pending.is_empty() {
         // Nothing to anchor to (an empty body): at the end of the body
         let body = find_body(&applier.tree)?;
-        for (dsl, token) in pending.drain(..) {
+        for (dsl, token, moved) in pending.drain(..) {
             let at = applier.tree.children(body).len();
             applier.insert_text("\n", body, at);
-            let xml = render_insert(dsl, compiler);
-            applier.insert_xml(&xml, body, at + 1, token)?;
+            let xml = inserted_xml(dsl, moved, segments, originals, compiler);
+            let roots = applier.insert_xml(&xml, body, at + 1, token)?;
+            applier.mark_moved(&roots, moved);
         }
         let at = applier.tree.children(body).len();
         applier.insert_text("\n", body, at);

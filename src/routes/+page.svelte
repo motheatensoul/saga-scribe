@@ -204,8 +204,8 @@
     }
 
     // Words inserted or deleted: everything stored by word number moves along
-    compileSession.onRenumbering = (map) => {
-        perfTimeSync("compile.renumber_annotations", () => annotationStore.renumber(map), { words: map.length });
+    compileSession.onRenumbering = (map, parked, returned) => {
+        perfTimeSync("compile.renumber_annotations", () => annotationStore.renumber(map, parked, returned), { words: map.length });
         const move = (index: number) => renumberWord(map, index) ?? -1;
         if (selectedWordIndex >= 0) selectedWordIndex = move(selectedWordIndex);
         if (lastReviewedWord >= 0) lastReviewedWord = move(lastReviewedWord);

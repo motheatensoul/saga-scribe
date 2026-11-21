@@ -72,6 +72,11 @@ pub enum PatchOperation {
         /// The edited token inserted (index into the edited DSL's tokens)
         #[serde(default)]
         token: Option<usize>,
+        /// An original word moved here (deleted where it was, the same text
+        /// inserted here, as by cut and paste): written as the file has it,
+        /// with its markup, lemma and analysis
+        #[serde(default)]
+        moved: Option<usize>,
     },
     #[serde(rename = "delete")]
     Delete { segment_id: usize },
@@ -118,6 +123,9 @@ pub struct Patcher {
     original: OriginalTokens,
     /// The original token (the first of its unit) of each segment, by ID
     token_of_segment: HashMap<usize, usize>,
+    /// Words that are one segment and one token, which can be recognised
+    /// as moved: their original token, by segment ID
+    movable: HashMap<usize, usize>,
     /// The last committed compile. Original token `i` has ID `i`; tokens
     /// added since import have IDs from the original token count on.
     state: Option<Tracked>,
@@ -132,7 +140,18 @@ impl Patcher {
             .iter()
             .flat_map(|unit| unit.segment_ids.iter().map(move |&id| (id, unit.tokens.start)))
             .collect();
-        Self { original_dsl, original, token_of_segment, state: None }
+        let words: std::collections::HashSet<usize> =
+            segments.iter().filter(|s| matches!(s, Segment::Word { .. })).map(Segment::id).collect();
+        let movable = original
+            .units
+            .iter()
+            .filter(|unit| unit.tokens.len() == 1)
+            .filter_map(|unit| match unit.segment_ids.as_slice() {
+                [id] if words.contains(id) => Some((*id, unit.tokens.start)),
+                _ => None,
+            })
+            .collect();
+        Self { original_dsl, original, token_of_segment, movable, state: None }
     }
 
     /// The revision of the last committed compile (0 before any).
@@ -196,8 +215,11 @@ impl Patcher {
             })
             .collect();
 
+        let mut known = known;
         let edits = edits_from_origin(&origin, &tokens, &self.original.tokens);
-        let patches = replace_in_place(self.original.to_segment_ops(&edits, &tokens));
+        let mut ops = self.original.to_segment_ops(&edits, &tokens);
+        let moved = self.recognise_moves(&mut ops, &mut known, carried.as_deref());
+        let patches = replace_in_place(ops, &moved);
         let state = Tracked::with_ids(previous, edited_dsl, tokens, spans, &known, original_count as u64);
         Ok((patches, state))
     }
@@ -251,6 +273,84 @@ impl Patcher {
                 }
             })
             .collect()
+    }
+
+    /// Turns a deleted word and an insertion of the same text elsewhere (cut
+    /// and paste, or identical words the comparison paired differently) into
+    /// the word moved: the insertion is the original word, with its markup
+    /// and data, and keeps its identity (`known`). Texts deleted and inserted
+    /// a different number of times are left alone, as which is which can't
+    /// be told, unless the editor's guidance (`carried`, the IDs carried
+    /// from the last compile) says which word an insertion is. The words'
+    /// deletions stay; their segment IDs are returned.
+    fn recognise_moves(
+        &self,
+        ops: &mut [PatchOperation],
+        known: &mut [Option<u64>],
+        carried: Option<&[Option<u64>]>,
+    ) -> std::collections::HashSet<usize> {
+        let mut deleted: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut inserted: HashMap<&str, Vec<usize>> = HashMap::new();
+        // Deletions by original token, for the guidance
+        let mut deletion_of: HashMap<usize, usize> = HashMap::new();
+        for (k, op) in ops.iter().enumerate() {
+            if let PatchOperation::Delete { segment_id } = op {
+                if let Some(&i) = self.movable.get(segment_id) {
+                    deletion_of.insert(i, k);
+                }
+            }
+        }
+        let mut moves: Vec<(usize, usize)> = Vec::new();
+        let mut paired = std::collections::HashSet::new();
+        // The same word, by the guidance, where its text is unchanged
+        for (k, op) in ops.iter().enumerate() {
+            let PatchOperation::Insert { dsl, token: Some(j), moved: None } = op else { continue };
+            let carried_id = carried.and_then(|ids| ids.get(*j).copied().flatten());
+            let Some(i) = carried_id.and_then(|id| usize::try_from(id).ok()) else { continue };
+            if let Some(&delete) = deletion_of.get(&i) {
+                if self.original.tokens.get(i) == Some(dsl) && paired.insert(delete) {
+                    paired.insert(k);
+                    moves.push((delete, k));
+                }
+            }
+        }
+        for (k, op) in ops.iter().enumerate() {
+            if paired.contains(&k) {
+                continue;
+            }
+            match op {
+                PatchOperation::Delete { segment_id } => {
+                    if let Some(&i) = self.movable.get(segment_id) {
+                        deleted.entry(self.original.tokens[i].as_str()).or_default().push(k);
+                    }
+                }
+                PatchOperation::Insert { dsl, token: Some(_), moved: None } => {
+                    inserted.entry(dsl.as_str()).or_default().push(k);
+                }
+                _ => {}
+            }
+        }
+        for (text, deletes) in &deleted {
+            match inserted.get(text) {
+                Some(inserts) if inserts.len() == deletes.len() => moves.extend(deletes.iter().copied().zip(inserts.iter().copied())),
+                _ => {}
+            }
+        }
+        let mut moved_away = std::collections::HashSet::new();
+        for (delete, insert) in moves {
+            let PatchOperation::Delete { segment_id } = ops[delete] else { continue };
+            if let PatchOperation::Insert { token: Some(j), moved, .. } = &mut ops[insert] {
+                *moved = Some(segment_id);
+                if let (Some(slot), Some(&i)) = (known.get_mut(*j), self.movable.get(&segment_id)) {
+                    *slot = Some(i as u64);
+                }
+                moved_away.insert(segment_id);
+            }
+        }
+        if !moved_away.is_empty() {
+            log::info!("Recognised {} moved word(s)", moved_away.len());
+        }
+        moved_away
     }
 
     /// Makes `state` the basis for the next compile.
@@ -589,6 +689,7 @@ impl OriginalTokens {
                     ops.push(PatchOperation::Insert {
                         dsl: edited[j].clone(),
                         token: Some(j),
+                        moved: None,
                     });
                     k += 1;
                     continue;
@@ -706,7 +807,8 @@ fn parse_dsl_nodes(dsl: &str) -> Result<Vec<Node>, String> {
 /// replacement in the same place (instead of deleting it and inserting the
 /// new word next to it). These are different words, so the replacement is
 /// fresh: it doesn't inherit the old word's lemma or normalized form.
-fn replace_in_place(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
+/// Words moved elsewhere (`moved`) are deleted, not paired.
+fn replace_in_place(ops: Vec<PatchOperation>, moved: &std::collections::HashSet<usize>) -> Vec<PatchOperation> {
     let mut result = Vec::with_capacity(ops.len());
     let mut deletes = Vec::new();
     let mut inserts = Vec::new();
@@ -719,13 +821,13 @@ fn replace_in_place(ops: Vec<PatchOperation>) -> Vec<PatchOperation> {
             result.push(PatchOperation::Modify { segment_id, new_dsl, token, fresh: true });
         }
         result.extend(deletes.drain(..).map(|segment_id| PatchOperation::Delete { segment_id }));
-        result.extend(inserts.drain(..).map(|(dsl, token)| PatchOperation::Insert { dsl, token }));
+        result.extend(inserts.drain(..).map(|(dsl, token)| PatchOperation::Insert { dsl, token, moved: None }));
     };
 
     for op in ops {
         match op {
-            PatchOperation::Delete { segment_id } => deletes.push(segment_id),
-            PatchOperation::Insert { dsl, token } => inserts.push((dsl, token)),
+            PatchOperation::Delete { segment_id } if !moved.contains(&segment_id) => deletes.push(segment_id),
+            PatchOperation::Insert { dsl, token, moved: None } => inserts.push((dsl, token)),
             other => {
                 flush(&mut result, &mut deletes, &mut inserts);
                 result.push(other);
@@ -924,7 +1026,7 @@ fn separate_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) ->
             out.push(patch.clone());
             continue;
         }
-        let insert = |dsl: &String| PatchOperation::Insert { dsl: dsl.clone(), token: *token };
+        let insert = |dsl: &String| PatchOperation::Insert { dsl: dsl.clone(), token: *token, moved: None };
 
         if is_paragraph {
             // The first `.p` keeps the original tag; everything else is new
@@ -1526,8 +1628,8 @@ fn reconstruct(segments: &[Segment], originals: Originals, patches: &[PatchOpera
                         out.generate("</p>\n<p>", None);
                         current_patch_idx += 1;
                     }
-                    PatchOperation::Insert { dsl, token } => {
-                        out.generate(&render_insert(dsl, compiler), *token);
+                    PatchOperation::Insert { dsl, token, moved } => {
+                        out.generate(&inserted_xml(dsl, *moved, segments, originals, compiler), *token);
                         current_patch_idx += 1;
                     }
                     PatchOperation::Keep { segment_id }
@@ -1582,16 +1684,32 @@ fn reconstruct(segments: &[Segment], originals: Originals, patches: &[PatchOpera
 
     // 2. Consume any trailing insertions
     for patch in &patches[current_patch_idx.min(patches.len())..] {
-        if let PatchOperation::Insert { dsl, token } = patch {
+        if let PatchOperation::Insert { dsl, token, moved } = patch {
             if dsl == PARAGRAPH {
                 out.generate("</p>\n<p>", None);
             } else {
-                out.generate(&render_insert(dsl, compiler), *token);
+                out.generate(&inserted_xml(dsl, *moved, segments, originals, compiler), *token);
             }
         }
     }
 
     out.finish(edited_words)
+}
+
+/// The XML of an insertion: a moved word as the file has it, anything else
+/// compiled from its DSL.
+pub(super) fn inserted_xml(
+    dsl: &str,
+    moved: Option<usize>,
+    segments: &[Segment],
+    originals: Originals,
+    compiler: &mut Compiler,
+) -> String {
+    let segment = moved.and_then(|id| segments.get(id).filter(|s| s.id() == id).or_else(|| segments.iter().find(|s| s.id() == id)));
+    match segment {
+        Some(segment) => originals.xml(segment).trim().to_string(),
+        None => render_insert(dsl, compiler),
+    }
 }
 
 fn serialize_original_segment(seg: &Segment) -> String {

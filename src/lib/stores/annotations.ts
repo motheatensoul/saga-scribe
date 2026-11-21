@@ -11,7 +11,14 @@ import type {
     AnnotationValue,
     AnnotationMetadata,
 } from "$lib/types/annotations";
-import { renumberAnnotation, renumberSet, type Renumbering } from "./renumber";
+import {
+    renumberAnnotation,
+    renumberParking,
+    type Parked,
+    type ParkedWord,
+    type Renumbering,
+    type ReturnedWord,
+} from "./renumber";
 import {
     createEmptyAnnotationSet,
     createLemmaAnnotation,
@@ -160,6 +167,8 @@ function createAnnotationStore() {
     const { subscribe, set, update } = writable<AnnotationStoreState>({
         set: createEmptyAnnotationSet(),
     });
+    /** Annotations of words gone in a compile, until they come back (see `renumber`) */
+    const parked: Parked = new Map();
 
     /**
      * Add an annotation (with optional history tracking)
@@ -288,6 +297,7 @@ function createAnnotationStore() {
     function loadSet(annotationSet: AnnotationSet): void {
         set({ set: annotationSet });
         annotationHistory.clear();
+        parked.clear();
     }
 
     /**
@@ -307,6 +317,7 @@ function createAnnotationStore() {
     function clear(): void {
         set({ set: createEmptyAnnotationSet() });
         annotationHistory.clear();
+        parked.clear();
     }
 
     // ========================================================================
@@ -475,9 +486,13 @@ function createAnnotationStore() {
         getSet,
         getLemmaWrites: getLemmaWritesNow,
         clear,
-        /** Moves every annotation (and its undo history) to its word's new number. */
-        renumber: (map: Renumbering) => {
-            update((state) => ({ set: renumberSet(state.set, map) }));
+        /**
+         * Moves every annotation (and its undo history) to its word's new
+         * number. The annotations of words that went (`gone`) are kept aside
+         * until they come back (`back`: moved, cut and pasted).
+         */
+        renumber: (map: Renumbering, gone: readonly ParkedWord[] = [], back: readonly ReturnedWord[] = []) => {
+            update((state) => ({ set: renumberParking(state.set, map, parked, gone, back) }));
             annotationHistory.renumber(map);
         },
 

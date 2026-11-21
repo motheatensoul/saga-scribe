@@ -1813,3 +1813,50 @@ fn test_edited_numeral_keeps_its_attributes_and_markup() {
         "{body}"
     );
 }
+
+const MOVABLE: &str = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
+<p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé" me:msa="xNC"><me:dipl>b<ex>e</ex></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p>
+</body></text></TEI>"#;
+const MOVED_WORD: &str = r#"<w lemma="bé" me:msa="xNC"><me:dipl>b<ex>e</ex></me:dipl></w>"#;
+
+#[test]
+fn test_a_word_cut_and_pasted_elsewhere_is_moved_with_its_markup() {
+    let mut session = Session::open(MOVABLE);
+    assert_eq!(session.dsl, ".p a be c");
+    // Cut "be " and paste it after "c"
+    let cut = TextChange { from_a: 5, to_a: 8, from_b: 5, to_b: 5 };
+    session.compile_with(".p a c", cut, false).unwrap();
+    let paste = TextChange { from_a: 6, to_a: 6, from_b: 6, to_b: 9 };
+    let xml = session.compile_with(".p a c be", paste, false).unwrap();
+    let (moved, c) = (xml.find(MOVED_WORD), xml.find(r#"lemma="sé""#));
+    assert!(moved.is_some() && moved > c, "the word, as written, after c: {xml}");
+
+    // In one compile, and without the editor's guidance too
+    for blind in [false, true] {
+        let mut session = Session::open(MOVABLE);
+        let xml = session.compile(".p a c be", blind).unwrap();
+        assert!(xml.find(MOVED_WORD) > xml.find(r#"lemma="sé""#), "blind: {blind}: {xml}");
+        // And moved back, it is the file again
+        let xml = session.compile(".p a be c", blind).unwrap();
+        assert!(MOVABLE.contains(&xml), "blind: {blind}: {xml}");
+    }
+}
+
+#[test]
+fn test_a_moved_word_keeps_its_identity() {
+    let session = Session::open(MOVABLE);
+    let (patches, state) = session.patcher.compute(".p a c be", None).unwrap();
+    assert!(patches.iter().any(|p| matches!(p, PatchOperation::Insert { moved: Some(_), .. })), "{patches:?}");
+    // "be" is still original token 2 (after .p and a)
+    assert_eq!(state.ids, vec![0, 1, 3, 2]);
+}
+
+#[test]
+fn test_words_moved_ambiguously_are_not_taken_for_moves() {
+    // Two "ok" deleted, one inserted: which one moved can't be told
+    let xml = menota_body(r#"<w lemma="ok"><me:dipl>ok</me:dipl></w> <w><me:dipl>x</me:dipl></w> <w lemma="ok"><me:dipl>ok</me:dipl></w> <w><me:dipl>y</me:dipl></w>"#);
+    let session = Session::open(&xml);
+    assert_eq!(session.dsl, ".p ok x ok y");
+    let (patches, _) = session.patcher.compute(".p x y ok", None).unwrap();
+    assert!(!patches.iter().any(|p| matches!(p, PatchOperation::Insert { moved: Some(_), .. })), "{patches:?}");
+}

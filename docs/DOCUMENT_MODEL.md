@@ -341,8 +341,16 @@ text).
      XML as the file has it, which the word panel shows. A replaced word with
      annotations of its own (other than its lemma; sent with each compile as word
      numbers) is a record too, marked as annotated; the answer doesn't remove them, as
-     they may be about the place rather than the word. Left: cut and paste isn't
-     recognised as a moved word.
+     they may be about the place rather than the word. A word deleted in one place and
+     inserted with the same text in another (cut and paste) is moved: the insertion is
+     the original word's XML, and the token keeps its identity, so its annotations follow
+     (`Patcher::recognise_moves`; done 2026-11-21). When the cut and the paste are
+     compiled apart, the word is missing from the compile between: the annotations the
+     editor keeps by word number for it are parked under its key until it comes back
+     (`identity::Parking`, `renumberParking`). Which deleted word an insertion is
+     comes from the guidance, or, without it, from there being as many of that text
+     deleted as inserted. Left: the patcher pairing tokens with tree nodes instead of
+     segments.
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
    and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,
    shorthand in `<…>`) brought that from 94 to all 288 files. Gate:

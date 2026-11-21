@@ -129,6 +129,61 @@ pub fn renumbering(previous: &[WordKey], current: &[WordKey]) -> Option<Renumber
     Some(previous.iter().map(|key| numbers.get(key).copied()).collect())
 }
 
+/// A word gone in a compile, whose data the editor keeps aside under
+/// `ticket` in case it comes back.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ParkedWord {
+    /// Its number in the previous compile
+    pub word: u32,
+    pub ticket: String,
+}
+
+/// A word parked in an earlier compile that is back (moved: cut and pasted).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ReturnedWord {
+    pub ticket: String,
+    /// Its number now
+    pub word: u32,
+}
+
+/// The words gone in some compile, by key. A word that is moved elsewhere
+/// in two compiles (cut, then pasted) keeps its key but is missing from the
+/// compile between, so what the editor stores by word number for it (its
+/// annotations) would be dropped by the renumbering; parked, it comes back.
+#[derive(Debug, Default)]
+pub struct Parking(std::collections::HashSet<WordKey>);
+
+impl Parking {
+    /// The words of `previous` that `renumbered` drops, now parked, and
+    /// the parked words that are among `current` again.
+    pub fn update(
+        &mut self,
+        previous: &[WordKey],
+        current: &[WordKey],
+        renumbered: Option<&Renumbering>,
+    ) -> (Vec<ParkedWord>, Vec<ReturnedWord>) {
+        let ticket = |key: &WordKey| format!("{}:{}", key.0, key.1);
+        let mut returned = Vec::new();
+        if !self.0.is_empty() {
+            for (n, key) in current.iter().enumerate() {
+                if self.0.remove(key) {
+                    returned.push(ReturnedWord { ticket: ticket(key), word: n as u32 });
+                }
+            }
+        }
+        let mut parked = Vec::new();
+        if let Some(map) = renumbered {
+            for (n, (key, now)) in previous.iter().zip(map).enumerate() {
+                // Words not from a token (u64::MAX) can't come back
+                if now.is_none() && key.0 != u64::MAX && self.0.insert(*key) {
+                    parked.push(ParkedWord { word: n as u32, ticket: ticket(key) });
+                }
+            }
+        }
+        (parked, returned)
+    }
+}
+
 /// Each word's number, by key (to look up what was stored under a number).
 pub fn numbers_by_key(words: &[WordKey]) -> HashMap<WordKey, u32> {
     words.iter().enumerate().map(|(n, key)| (*key, n as u32)).collect()

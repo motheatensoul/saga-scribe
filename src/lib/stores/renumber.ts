@@ -61,3 +61,61 @@ export function renumberSet(set: AnnotationSet, map: Renumbering): AnnotationSet
             .filter((annotation): annotation is Annotation => annotation !== null),
     };
 }
+
+/** A word gone in a compile, whose annotations are kept aside under `ticket`. */
+export interface ParkedWord {
+    /** Its number in the previous compile */
+    word: number;
+    ticket: string;
+}
+
+/** A parked word that is back (moved: cut, then pasted), with its number now. */
+export interface ReturnedWord {
+    ticket: string;
+    word: number;
+}
+
+/** Annotations of words gone in a compile, by ticket, until they come back. */
+export type Parked = Map<string, Annotation[]>;
+
+/**
+ * Renumbers `set` by `map`, first keeping aside in `parked` the annotations
+ * of the words that went (`gone`), and then putting back those of the words
+ * that are back (`back`), on their words' new numbers. An annotation of a
+ * span isn't kept aside: what survives of the span stays.
+ */
+export function renumberParking(
+    set: AnnotationSet,
+    map: Renumbering,
+    parked: Parked,
+    gone: readonly ParkedWord[] = [],
+    back: readonly ReturnedWord[] = [],
+): AnnotationSet {
+    if (gone.length > 0) {
+        const tickets = new Map(gone.map((g) => [g.word, g.ticket]));
+        for (const annotation of set.annotations) {
+            const target = annotation.target;
+            if (target.type === "span") continue;
+            const ticket = tickets.get(target.wordIndex);
+            if (ticket === undefined) continue;
+            const kept = parked.get(ticket) ?? [];
+            kept.push(annotation);
+            parked.set(ticket, kept);
+        }
+    }
+    const renumbered = renumberSet(set, map);
+    if (back.length === 0) return renumbered;
+    const restored: Annotation[] = [];
+    for (const { ticket, word } of back) {
+        for (const annotation of parked.get(ticket) ?? []) {
+            const target = annotation.target;
+            if (target.type === "span") continue;
+            const id = annotation.type === "lemma" && annotation.id.startsWith("lemma-") ? `lemma-${word}` : annotation.id;
+            restored.push({ ...annotation, id, target: { ...target, wordIndex: word } });
+        }
+        parked.delete(ticket);
+    }
+    if (restored.length === 0) return renumbered;
+    const ids = new Set(restored.map((a) => a.id));
+    return { ...renumbered, annotations: [...renumbered.annotations.filter((a) => !ids.has(a.id)), ...restored] };
+}

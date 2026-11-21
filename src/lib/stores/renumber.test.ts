@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renumberSet, renumberTarget, renumberWord, type Renumbering } from "$lib/stores/renumber";
+import { renumberParking, renumberSet, renumberTarget, renumberWord, type Parked, type Renumbering } from "$lib/stores/renumber";
 import { createEmptyAnnotationSet, createLemmaAnnotation } from "$lib/types/annotations";
 
 // Previous words 0..3: "x" inserted before 1, word 2 deleted
@@ -34,5 +34,22 @@ describe("renumbering", () => {
         expect(moved.annotations).toHaveLength(1);
         expect(moved.annotations[0].id).toBe("lemma-2");
         expect(moved.annotations[0].target).toEqual({ type: "word", wordIndex: 2 });
+    });
+
+    it("keeps a gone word's lemma aside until the word comes back", () => {
+        // ".p a be c": cut "be" (word 1), then paste it after "c"
+        const parked: Parked = new Map();
+        const set = createEmptyAnnotationSet();
+        set.annotations = [createLemmaAnnotation(1, "bé", "xNC"), createLemmaAnnotation(2, "sé", "xAV")];
+        const cut = renumberParking(set, [0, null, 1], parked, [{ word: 1, ticket: "2:0" }]);
+        expect(cut.annotations.map((a) => a.id)).toEqual(["lemma-1"]);
+        expect(parked.size).toBe(1);
+        const pasted = renumberParking(cut, [0, 1], parked, [], [{ ticket: "2:0", word: 2 }]);
+        expect(pasted.annotations.map((a) => [a.id, a.target])).toEqual([
+            ["lemma-1", { type: "word", wordIndex: 1 }],
+            ["lemma-2", { type: "word", wordIndex: 2 }],
+        ]);
+        expect(pasted.annotations[1].value).toEqual(set.annotations[0].value);
+        expect(parked.size).toBe(0);
     });
 });

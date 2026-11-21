@@ -268,6 +268,10 @@ export interface CompileResult {
    * are numbered by the previous compile (and sent so) until renumbered.
    */
   renumbering?: (number | null)[] | null;
+  /** Words of the previous compile that are gone: their annotations are kept aside under the ticket */
+  parked?: { word: number; ticket: string }[];
+  /** Words gone in an earlier compile that are back (moved), with their numbers now */
+  returned?: { ticket: string; word: number }[];
   /**
    * Words (by number) edited in the DSL whose lemma, analysis and normalized
    * form were kept from the original and should be reviewed

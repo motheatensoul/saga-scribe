@@ -474,6 +474,9 @@ exported:
   normalized form) is kept as it was, and no level the word did not have is added.
 - A word with a lemma or analysis that you replace with another word is marked until you
   say in the word panel whether it is the same word (see [below](#replaced-words)).
+- A word cut and pasted elsewhere is moved as the file has it, with its markup, lemma,
+  analysis and annotations. If the same word occurs several times among the words cut
+  and pasted in one go, and it isn't clear which went where, the pasted ones are new words.
 - Lemmas confirmed in Saga-Scribe are written into the words' `lemma` and `me:msa` (or
   `msa`) attributes; a changed normalized form is written into the word's `<me:norm>`.
   Removing a lemma removes these attributes.

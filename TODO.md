@@ -26,21 +26,23 @@ when it is done (and record it in CHANGELOG.md if users notice).
   words token for token (DSL rules 3 and 4, 2026-11-12), which 3b needs. The 3b gates
   (GetPut, PutGet, Locality: `corpus_edits_are_put_back_locally`) pass, and edits are
   applied to the file's tree instead of spliced into its text (2026-11-12). Replaced words
-  are marked in the shorthand and asked about in the word panel (2026-11-12). **Next in
-  3b:** the patcher pairing tokens with tree nodes instead of segments; the rest of the
-  records (listed in the design under 3b: moved words). It comes before the
-  shorthand redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
+  are marked in the shorthand and asked about in the word panel (2026-11-12); a word cut
+  and pasted elsewhere is moved with its XML (2026-11-21). **Next in 3b:** the patcher
+  pairing tokens with tree nodes instead of segments. It comes before the shorthand
+  redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).
 - **Text outside words in documents without `<w>`** is still split at punctuation by the
   shorthand (`Hello,` is one segment, two tokens); in documents with `<w>` such loose text
   is escaped like a word.
-- **Without the editor's guidance, the patcher can move words.** Comparing whole
+- **Without the editor's guidance, the patcher can move tokens.** Comparing whole
   documents, it may pair a run of identical tokens (e.g. `[...5]`) differently, delete
-  words and insert them again as new ones, which loses their markup. The app always sends
-  guidance, but the patcher falls back to comparing when guidance doesn't fit. Step 3b's
-  replaced records cover a word paired with another; a word deleted and inserted again
-  is not asked about.
+  them and insert them again as new ones, which loses their markup. The app always sends
+  guidance, but the patcher falls back to comparing when guidance doesn't fit. Words
+  deleted and inserted again with the same text are recognised as moved
+  (`Patcher::recognise_moves`) when it is clear which is which (as many deleted as
+  inserted, or the guidance says); gaps, punctuation and breaks aren't, and neither is a
+  moved word that is also edited before the next compile.
 - **A session's tree is large**: about 240 MB for Njáls saga (16 MB, 1.8M nodes) at 112
   bytes a node (was 200), plus each text node's own string and each element's list of
   children. Text could be read from the file's text where it has no references.
