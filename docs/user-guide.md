@@ -33,8 +33,8 @@ The window is divided into three parts:
   their icons (hover over one for its name), and groups that don't fit move to a second
   row.
 - **Editor** (left): the transcription, written in the shorthand described below. Its header
-  has the buttons that act on the text: undo and redo, search and replace, and the entity
-  browser (**ꝥ**).
+  has the buttons that act on the text: undo and redo, **Show entities as characters**
+  (**þ**), search and replace, and the entity browser (**ꝥ**).
 - **Preview** (right): the compiled document, shown as reading text, through an XSLT
   stylesheet, or as XML.
 
@@ -241,6 +241,17 @@ characters, displayed in the Junicode font.
 
 - Search by name or description, or choose a category.
 - Click **Insert entity** to insert `:name:` at the cursor.
+
+### Entities shown as characters
+
+With **Show entities as characters** (**þ** in the editor header) switched on, the editor
+shows each known entity as its character, in Junicode on a faint background, so that `:thorn:`
+reads as þ. Where the cursor touches or enters one, its `:name:` is shown again for editing.
+**Backspace** and **Delete** next to a character shown this way delete the whole entity.
+The text itself still holds `:name:`: search and replace, copying and the compiled XML all
+work with the names. Unknown entities are always shown as written, and marked with a
+warning. Switch the button off to see every entity as `:name:`. The setting is kept
+between sessions; it is on by default.
 
 ### Diplomatic forms
 

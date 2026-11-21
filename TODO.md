@@ -121,15 +121,8 @@ when it is done (and record it in CHANGELOG.md if users notice).
   - **Supplied text with markup.** `<…>` and `[...3<ab>]` take shorthand content (done,
     DSL rules 4). Left: `.supplied{…}` is still how supplied text spanning several words
     is written (`<a b>` is one token); retiring it needs `<…>` to hold several words.
-  - **Entities shown as characters.** A visible toggle in the editor header, next to
-    undo/redo, chooses between two modes. In one, a well-formed, known `:name:` is shown as its glyph, and the source
-    reappears when the text cursor (not the mouse) enters or touches it. In the other,
-    the source is always shown. Glyphs are set in Junicode at regular weight, with
-    `font-size-adjust` to match the monospace x-height, and a faint background or
-    underline marks them, so they look different from characters typed directly. Unknown
-    entities stay as source and get a warning. Backspace deletes a whole entity, and
-    search and copy work on the source. Only the visible ranges are decorated (a
-    ViewPlugin), so typing stays fast. Possibly also: Junicode as an optional editor font.
+  - **Junicode as an optional editor font** (entities are shown as characters since
+    0.8.0, set in Junicode).
   - **Cost of the breaking changes:** `syntax.rs`, `tokens.ts`, the grammar, the DSL
     corpus, the help dialog and the user guide change together. The `.teis` format
     version goes up, and older DSL is rewritten when loaded. `DSL_RULES` goes up for

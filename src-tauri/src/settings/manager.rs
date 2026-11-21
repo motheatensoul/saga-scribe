@@ -42,6 +42,9 @@ pub struct Settings {
     /// Currently selected XSLT stylesheet ID (default: "default")
     #[serde(default = "default_active_stylesheet_id")]
     pub active_stylesheet_id: String,
+    /// Whether the editor shows known entities as their characters (default: true)
+    #[serde(default = "default_show_entity_glyphs")]
+    pub show_entity_glyphs: bool,
 }
 
 fn default_font_size() -> u32 {
@@ -64,6 +67,10 @@ fn default_active_stylesheet_id() -> String {
     "default".to_string()
 }
 
+fn default_show_entity_glyphs() -> bool {
+    true
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -73,6 +80,7 @@ impl Default for Settings {
             preview_delay: default_preview_delay(),
             active_template_id: None,
             active_stylesheet_id: default_active_stylesheet_id(),
+            show_entity_glyphs: default_show_entity_glyphs(),
         }
     }
 }

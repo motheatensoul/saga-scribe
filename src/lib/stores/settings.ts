@@ -14,6 +14,8 @@ export interface Settings {
   previewDelay: number;
   activeTemplateId: string | null;
   activeStylesheetId: string;
+  /** The editor shows known entities as their characters */
+  showEntityGlyphs: boolean;
 }
 
 const defaultSettings: Settings = {
@@ -23,6 +25,7 @@ const defaultSettings: Settings = {
   previewDelay: 300,
   activeTemplateId: null,
   activeStylesheetId: "default",
+  showEntityGlyphs: true,
 };
 
 let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -117,6 +120,8 @@ function createSettingsStore() {
           activeTemplateId: loaded.activeTemplateId,
           activeStylesheetId:
             loaded.activeStylesheetId ?? defaultSettings.activeStylesheetId,
+          showEntityGlyphs:
+            loaded.showEntityGlyphs ?? defaultSettings.showEntityGlyphs,
         };
         set(settings);
         await applyTheme(settings.theme);

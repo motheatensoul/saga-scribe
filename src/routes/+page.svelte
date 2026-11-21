@@ -1030,6 +1030,17 @@
                             >
                                 <Redo class="size-3/4" aria-hidden="true" />
                             </button>
+                            <button
+                                class="btn btn-ghost btn-xs xl:btn-sm text-xs xl:text-sm"
+                                class:btn-active={$settings.showEntityGlyphs}
+                                title="Show entities as characters"
+                                aria-label="Show entities as characters"
+                                aria-pressed={$settings.showEntityGlyphs}
+                                onclick={() =>
+                                    settings.update({ showEntityGlyphs: !$settings.showEntityGlyphs })}
+                            >
+                                <span class="font-['Junicode']" aria-hidden="true">þ</span>
+                            </button>
                             <div
                                 class="divider divider-horizontal mx-0 h-4 self-center"
                             ></div>
@@ -1054,6 +1065,7 @@
                     </div>
                     <Editor
                         bind:this={editorComponent}
+                        showGlyphs={$settings.showEntityGlyphs}
                         onchanges={(changes) => compileSession.record(changes)}
                         onchange={handleEditorChange}
                     />

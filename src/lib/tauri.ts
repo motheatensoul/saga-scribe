@@ -9,6 +9,7 @@ export interface Settings {
   previewDelay: number;
   activeTemplateId: string | null;
   activeStylesheetId: string;
+  showEntityGlyphs: boolean;
 }
 
 export async function loadSettings(): Promise<Settings> {

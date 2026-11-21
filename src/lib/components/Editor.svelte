@@ -1,7 +1,7 @@
 <script lang="ts">
     import { onMount, onDestroy } from 'svelte';
     import { EditorView, keymap, lineNumbers, highlightActiveLineGutter, type Command, type KeyBinding } from '@codemirror/view';
-    import { EditorState, type ChangeSet } from '@codemirror/state';
+    import { Compartment, EditorState, type ChangeSet } from '@codemirror/state';
     import { defaultKeymap, history, historyKeymap, undo, redo } from '@codemirror/commands';
     import { search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen } from '@codemirror/search';
     import { foldGutter, foldKeymap } from '@codemirror/language';
@@ -13,18 +13,26 @@
     import { importedStore } from '$lib/stores/imported.svelte';
     import { daisyExtensions } from '$lib/editor/theme';
     import { markEdit } from '$lib/editor/typing';
+    import { entityGlyphs, entityGlyphState, setEntityGlyphs } from '$lib/editor/entityGlyphs';
+    import { entityStore } from '$lib/stores/entities';
 
     let {
         onchange,
         onchanges,
+        showGlyphs = true,
     }: {
         onchange?: (content: string) => void;
         /** Every edit's exact changes, before `onchange` */
         onchanges?: (changes: ChangeSet) => void;
+        /** Known entities are shown as their characters (the source where the cursor is) */
+        showGlyphs?: boolean;
     } = $props();
 
     let container: HTMLDivElement;
     let view: EditorView;
+
+    /** Showing entities as characters, switched by `showGlyphs` */
+    const glyphMode = new Compartment();
 
     const undoCommand = undo as unknown as Command;
     const redoCommand = redo as unknown as Command;
@@ -54,6 +62,8 @@
                 teiDslFolding,
                 teiLinter,
                 wordRecordMarks,
+                entityGlyphState,
+                glyphMode.of(showGlyphs ? entityGlyphs : []),
                 lintGutter(),
                 daisyExtensions,
                 EditorView.updateListener.of((update) => {
@@ -82,6 +92,20 @@
         const compiled = importedStore.recordsDsl;
         if (!view || view.state.doc.toString() !== compiled) return;
         view.dispatch({ effects: setRecordMarks.of(openRecordRanges(records, compiled.length)) });
+    });
+
+    // The characters of the known entities, custom ones included
+    $effect(() => {
+        const known: Record<string, string> = {};
+        for (const [name, entity] of Object.entries($entityStore.entities)) {
+            if (entity.char) known[name] = entity.char;
+        }
+        view?.dispatch({ effects: setEntityGlyphs.of(known) });
+    });
+
+    $effect(() => {
+        const shown = showGlyphs;
+        view?.dispatch({ effects: glyphMode.reconfigure(shown ? entityGlyphs : []) });
     });
 
     onDestroy(() => {
