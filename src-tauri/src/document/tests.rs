@@ -317,8 +317,7 @@ fn corpus_xml_and_shorthand_read_as_the_same_tokens() {
 }
 
 /// Every file imported and saved unedited through the patcher comes back
-/// byte for byte (the importer works on the projection), and a session
-/// saves the manifest it was given.
+/// byte for byte (the importer works on the projection).
 #[test]
 fn corpus_unchanged_import_round_trips() {
     use crate::importer::tei::patching::{compiler_config_for, compute_patches, render_body, Originals};
@@ -334,20 +333,6 @@ fn corpus_unchanged_import_round_trips() {
             if doc.spans.is_none() {
                 return Err("no spans".into());
             }
-            // A session saves the manifest it was given, though it holds
-            // the segments without their copies of the XML
-            let session = crate::commands::parse::ImportedSource::new(
-                doc.clone(),
-                original.clone(),
-                import.original_preamble.clone().unwrap_or_default(),
-                import.original_postamble.clone().unwrap_or_default(),
-            );
-            let saved: serde_json::Value = serde_json::from_str(&session.manifest_json(doc.decisions.clone())?)
-                .map_err(|e| e.to_string())?;
-            if saved != serde_json::to_value(&doc).map_err(|e| e.to_string())? {
-                return Err("the saved manifest isn't the imported one".into());
-            }
-            drop(session);
             let patches = compute_patches(&doc.segments, doc.dsl_rules, &import.dsl)?;
             let (doc, tree) = {
                 let tree = gate_tree(&import.original_preamble, &original, &import.original_postamble, &doc)?;
@@ -831,5 +816,84 @@ fn corpus_older_projects_are_brought_onto_the_tree() {
             }
         }
     }
+    assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
+}
+
+/// Gate of step 6 (`.teis` 2.0): in every file, every 40th word edited,
+/// the project saved (the file as written, its profile and open records) and
+/// opened again: the shorthand is as stored, the file the same, and the
+/// records still open are back, on the same words.
+#[test]
+fn corpus_saved_projects_open_as_they_were() {
+    use crate::commands::parse::ImportedSession;
+    let files = corpus_files();
+    let mut failures = Vec::new();
+    let dir = std::env::temp_dir().join(format!("saga-scribe-gate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a temporary directory");
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let result = (|| -> Result<(), String> {
+            let session = ImportedSession::default();
+            let reply = crate::commands::import::stage(crate::importer::tei::parse(&source)?, &session)?;
+            session.load(reply.imported.map(|s| s.handle))?;
+            let dsl = reply.dsl;
+            let (tokens, spans) = crate::identity::spanned_dsl_tokens(&dsl)?;
+            let mut edited = dsl.clone();
+            for (k, span) in spans.iter().enumerate().rev() {
+                if k % 40 == 20 && tokens[k].chars().all(char::is_alphabetic) {
+                    edited.insert(span.end, 'x');
+                }
+            }
+            let first = session.with_current_mut(|s| s.compile_plainly(&edited))?.ok_or("not loaded")??;
+            let project = dir.join(format!("{name}.teis"));
+            let fields = crate::commands::file::ProjectFields {
+                source: edited.clone(),
+                output: first.xml.clone(),
+                confirmations_json: "{}".into(),
+                template_id: "menota".into(),
+                metadata_json: None,
+                annotations_json: None,
+            };
+            crate::commands::file::save_project_at(&session, &project, fields, Some("{}".into()))?;
+            let mut opened = crate::commands::file::read_project(&project.to_string_lossy())?;
+            std::fs::remove_file(&project).ok();
+            let (staged, rewritten) = crate::commands::file::stage_project(&mut opened, &session)?;
+            if rewritten > 0 || opened.source != edited {
+                return Err(format!("the shorthand changed ({rewritten} places)"));
+            }
+            session.load(staged.map(|s| s.handle))?;
+            let again = session.with_current_mut(|s| s.compile_plainly(&opened.source))?.ok_or("not loaded")??;
+            if again.xml != first.xml {
+                return Err("the file isn't the same".into());
+            }
+            let words = |records: &[crate::importer::tei::patching::WordRecord]| -> Vec<(Option<usize>, String)> {
+                records.iter().map(|r| (r.word, r.was.clone())).collect()
+            };
+            let (before, after) = (words(&first.records), words(&again.records));
+            if before != after {
+                let at = before.iter().zip(&after).position(|(a, b)| a != b).unwrap_or(before.len().min(after.len()));
+                let only_before: Vec<_> = before.iter().filter(|x| !after.contains(x)).take(5).collect();
+                let only_after: Vec<_> = after.iter().filter(|x| !before.contains(x)).take(5).collect();
+                eprintln!("  only before {only_before:?}, only after {only_after:?}");
+                return Err(format!(
+                    "{} records before, {} after; at {at}: {:?} became {:?}",
+                    before.len(),
+                    after.len(),
+                    before.get(at),
+                    after.get(at)
+                ));
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => eprintln!("ok      {name}"),
+            Err(e) => {
+                eprintln!("FAILED  {name}: {e}");
+                failures.push(name);
+            }
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
 }

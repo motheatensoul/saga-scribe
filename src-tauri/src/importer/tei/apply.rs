@@ -156,6 +156,22 @@ impl TreeSource {
         Some(element.attributes.iter().map(|a| (a.name.clone(), a.value.clone())).collect())
     }
 
+    /// Where each `<w>` element of the body starts, relative to the body:
+    /// the words as the previews count them.
+    pub fn word_offsets(&self) -> Vec<usize> {
+        self.words.iter().map(|&w| w - self.body_start).collect()
+    }
+
+    /// The file's tree.
+    pub fn tree(&self) -> &Tree {
+        &self.tree
+    }
+
+    /// The segment that is the element `node`, if any.
+    pub fn segment_of(&self, node: NodeId) -> Option<usize> {
+        self.places.iter().position(|place| matches!(place, Some(Place::Node(n)) if *n == node))
+    }
+
     /// The element segment `id` is (a word, punctuation, a break), as read
     /// from the file.
     pub fn segment_element(&self, id: usize) -> Option<&Element> {

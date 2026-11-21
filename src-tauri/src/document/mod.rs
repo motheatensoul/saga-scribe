@@ -15,6 +15,7 @@
 //!   output with libxml2 again and compares it with the tree: use it for
 //!   anything that is saved.
 
+pub mod anchor;
 mod merge;
 pub mod profile;
 mod project;

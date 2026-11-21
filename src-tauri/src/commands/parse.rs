@@ -2,7 +2,7 @@ use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
 use crate::identity::{numbers_by_key, renumbering, Guidance, ParkedWord, Parking, Renumbering, ReturnedWord, Tracked};
 use crate::importer::tei::patching::{
-    apply_decisions, compiler_config_for, render_body, write_lemmas, Originals, Patcher, WordRecord,
+    apply_decisions, compiler_config_for, render_body, write_lemmas, Originals, Patcher, SavedRecord, WordRecord,
 };
 use crate::importer::tei::apply::TreeSource;
 use crate::importer::tei::segments::{Decision, ImportedDocument};
@@ -288,38 +288,82 @@ pub struct ImportedSource {
     tree: Option<TreeSource>,
     /// Compiler settings matching the file's encoding
     config: CompilerConfig,
-    /// The words whose attributes were dropped (see `ImportedDocument::drop_copies`)
-    dropped_attributes: std::collections::HashSet<usize>,
     /// The key of every word of the last compile, in document order
     words: Option<Vec<WordKey>>,
     /// Words gone in a compile, which may come back (moved)
     parking: Parking,
+    /// Records still open when the project was saved, for words of the
+    /// file as saved: (segment ID, original token, record)
+    saved: Vec<(usize, u64, SavedRecord)>,
+    /// The last compile's records, for saving
+    last_records: Vec<WordRecord>,
 }
 
 impl ImportedSource {
-    /// The manifest as saved in a project (`segments.json`), with `decisions`:
-    /// the segments with their copies of the file's XML, as they were read.
-    ///
-    /// # Errors
-    ///
-    /// If it can't be serialized.
-    pub fn manifest_json(&self, decisions: HashMap<usize, Decision>) -> Result<String, String> {
-        let mut document = self.document.clone();
-        if let Some(tree) = &self.tree {
-            document.restore_copies(
-                |id| tree.segment_xml(id),
-                |id| tree.segment_attributes(id),
-                &self.dropped_attributes,
-            );
-        }
-        document.decisions = decisions;
-        serde_json::to_string(&document).map_err(|e| format!("Failed to serialize the imported document: {e}"))
+    /// Compiles `dsl` without guidance or answers, as the first compile
+    /// after loading does (for tests that go through saving).
+    #[cfg(test)]
+    pub(crate) fn compile_plainly(&mut self, dsl: &str) -> Result<CompileOutput, String> {
+        let mut compiler = Compiler::new().with_config(self.config.clone());
+        compile_imported_source(self, &mut compiler, dsl, None, &HashMap::new(), HashMap::new(), &[])
     }
 
-    /// The original file's body, and what comes before and after it.
-    pub fn original_parts(&self) -> (&str, &str, &str) {
-        (&self.original_body_xml, &self.preamble, &self.postamble)
+    /// The profile, for saving (`profile.json`).
+    pub fn profile(&self) -> Option<&crate::document::profile::Profile> {
+        self.document.profile.as_ref()
     }
+
+    /// The last compile's records still open (no answer in `decisions`),
+    /// as saved with `output`, the file that compile wrote: each by its
+    /// word's place and fingerprint there. Records without a word (not a
+    /// `<w>`) aren't saved.
+    pub fn open_records(&self, output: &str, decisions: &HashMap<usize, Decision>) -> Result<Vec<SavedRecord>, String> {
+        use crate::document::anchor::{body_words, fingerprint};
+        let open: Vec<&WordRecord> = self.last_records.iter().filter(|r| !decisions.contains_key(&r.key)).collect();
+        if open.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tree = crate::document::Tree::parse(output)?;
+        let words = body_words(&tree);
+        Ok(open
+            .into_iter()
+            .filter_map(|r| {
+                let n = r.word?;
+                Some(SavedRecord {
+                    word: n,
+                    fingerprint: fingerprint(&tree, *words.get(n)?),
+                    suggestion: r.suggestion,
+                    was: r.was.clone(),
+                    xml: r.xml.clone(),
+                    lemma: r.lemma.clone(),
+                    msa: r.msa.clone(),
+                    stale_levels: r.stale_levels.clone(),
+                })
+            })
+            .collect())
+    }
+
+    /// Takes the records saved with the file this session was opened from
+    /// (`.teis` 2.0), finding each word by its place and fingerprint.
+    /// Returns how many words weren't found (the file was changed outside
+    /// the app); their records are dropped.
+    pub fn restore_records(&mut self, saved: Vec<SavedRecord>) -> usize {
+        use crate::document::anchor::{body_words, find_word};
+        let Some(tree) = &self.tree else { return saved.len() };
+        let words = body_words(tree.tree());
+        let mut lost = 0;
+        for record in saved {
+            let found = find_word(tree.tree(), &words, record.word, &record.fingerprint)
+                .and_then(|n| tree.segment_of(words[n]))
+                .and_then(|segment| Some((segment, self.patcher.token_of(segment)? as u64)));
+            match found {
+                Some((segment, token)) => self.saved.push((segment, token, record)),
+                None => lost += 1,
+            }
+        }
+        lost
+    }
+
 
     /// Reads the file into its tree and prepares the patcher, so the first
     /// edit doesn't wait for either (a large manuscript takes a second).
@@ -349,12 +393,11 @@ impl ImportedSource {
         let config = compiler_config_for(&document, Originals::new(tree.as_ref()));
         let patcher = Patcher::new(&document.segments, document.dsl_rules);
         // The tree has the file's XML; the segments' copies of it go
-        let dropped_attributes = match &tree {
-            Some(tree) => document.drop_copies(|id| tree.segment_xml(id), |id| tree.segment_attributes(id)),
-            None => Default::default(),
-        };
+        if let Some(tree) = &tree {
+            document.drop_copies(|id| tree.segment_xml(id), |id| tree.segment_attributes(id));
+        }
         timer.done("imported.load", [("tree", tree.is_some().into()), ("segments", document.segments.len().into())]);
-        Self { document, original_body_xml, preamble, postamble, patcher, tree, config, dropped_attributes, words: None, parking: Parking::default() }
+        Self { document, original_body_xml, preamble, postamble, patcher, tree, config, words: None, parking: Parking::default(), saved: Vec::new(), last_records: Vec::new() }
     }
 }
 
@@ -580,6 +623,43 @@ pub(crate) fn compile_imported_source(
             }
         }
     }
+    // Records still open when the project was saved: their words are the
+    // file's (as saved) now
+    for (key, token, saved) in &source.saved {
+        if let Some(record) = records.iter_mut().find(|r| r.key == *key) {
+            record.was.clone_from(&saved.was);
+            record.xml.clone_from(&saved.xml);
+            record.lemma.clone_from(&saved.lemma);
+            record.msa.clone_from(&saved.msa);
+            for level in &saved.stale_levels {
+                if !record.stale_levels.contains(level) {
+                    record.stale_levels.push(level.clone());
+                }
+            }
+            continue;
+        }
+        // A deleted word isn't asked about
+        let Some(j) = state.ids.iter().position(|id| id == token) else { continue };
+        let utf16 = |offset: usize| state.dsl.get(..offset).map_or(0, |text| text.encode_utf16().count());
+        records.push(WordRecord {
+            key: *key,
+            suggestion: saved.suggestion,
+            decision: decisions.get(key).copied(),
+            word: None,
+            token: Some(*token),
+            from: utf16(state.spans[j].start),
+            to: utf16(state.spans[j].end),
+            was: saved.was.clone(),
+            xml: saved.xml.clone(),
+            lemma: saved.lemma.clone(),
+            msa: saved.msa.clone(),
+            annotated: false,
+            stale_levels: saved.stale_levels.clone(),
+        });
+    }
+    if !source.saved.is_empty() {
+        records.sort_by_key(|r| r.from);
+    }
     WordRecord::number(&mut records, &words);
     if !annotated.is_empty() {
         let annotated: HashSet<usize> = annotated
@@ -611,6 +691,7 @@ pub(crate) fn compile_imported_source(
     // Only a successful compile becomes the basis for the next one
     source.patcher.commit(state);
     source.words = Some(words);
+    source.last_records.clone_from(&records);
 
     // Combine with preamble (everything before body) and postamble (everything after)
     Ok(CompileOutput {
@@ -1077,9 +1158,34 @@ mod imported_identity_tests {
         assert_eq!(again.parked.len(), 1);
     }
 
+    /// Saves the current document of `session` as a project and opens it
+    /// again (staged and loaded), as the app does; returns the reopened
+    /// shorthand and how many places of it were rewritten.
+    fn save_and_reopen(session: &ImportedSession, dsl: &str, xml: &str, decisions: &str) -> (String, usize, StagedDocument) {
+        let dir = std::env::temp_dir().join(format!("saga-scribe-session-{}-{}", std::process::id(), xml.len()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.teis");
+        let fields = crate::commands::file::ProjectFields {
+            source: dsl.to_string(),
+            output: xml.to_string(),
+            confirmations_json: "{}".into(),
+            template_id: "menota".into(),
+            metadata_json: None,
+            annotations_json: None,
+        };
+        crate::commands::file::save_project_at(session, &path, fields, Some(decisions.to_string())).unwrap();
+        let mut project = crate::commands::file::read_project(&path.to_string_lossy()).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(project.manifest.version, "2.0");
+        let (reopened, rewritten) = crate::commands::file::stage_project(&mut project, session).unwrap();
+        let reopened = reopened.unwrap();
+        session.load(Some(reopened.handle)).unwrap();
+        (project.source, rewritten, reopened)
+    }
+
     /// The way the app goes: import (staged), load, edit, save from the
-    /// session, open again (staged), load, and the edit and the answer for
-    /// the replaced word come back.
+    /// session (the file as it now is, `.teis` 2.0), open again, and the
+    /// edit and the answer for the replaced word are in the file.
     #[test]
     fn test_imported_project_is_saved_from_the_session_and_opened_again() {
         let compile_in = |session: &ImportedSession, from: &str, dsl: &str, decisions: &[(usize, Decision)]| {
@@ -1098,53 +1204,52 @@ mod imported_identity_tests {
         let before = compile_in(&session, &edited, &edited, &[(key, Decision::Different)]);
         assert!(!before.xml.contains(r#"lemma="ok""#), "{}", before.xml);
 
-        let dir = std::env::temp_dir().join(format!("saga-scribe-session-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("p.teis");
-        let fields = crate::commands::file::ProjectFields {
-            source: edited.clone(),
-            output: before.xml.clone(),
-            confirmations_json: "{}".into(),
-            template_id: "menota".into(),
-            metadata_json: None,
-            annotations_json: None,
-        };
-        let decisions = format!(r#"{{"{key}":"different"}}"#);
-        crate::commands::file::save_project_at(&session, &path, fields, Some(decisions)).unwrap();
-
-        let mut project = crate::commands::file::read_project(&path.to_string_lossy()).unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
-        let (reopened, rewritten) = crate::commands::file::stage_project(&mut project, &session).unwrap();
-        let reopened = reopened.unwrap();
-        assert_eq!((rewritten, project.source.as_str()), (0, edited.as_str()));
-        assert_eq!(reopened.decisions.get(&key), Some(&Decision::Different));
-        session.load(Some(reopened.handle)).unwrap();
+        let (source, rewritten, reopened) = save_and_reopen(&session, &edited, &before.xml, &format!(r#"{{"{key}":"different"}}"#));
+        assert_eq!((rewritten, source.as_str()), (0, edited.as_str()));
+        // Answered: in the file, nothing left to ask
+        assert!(reopened.decisions.is_empty());
         let after = session
             .with_current_mut(|source| {
                 let mut compiler = Compiler::new().with_config(source.config.clone());
-                let decisions: HashMap<usize, Decision> = reopened.decisions.clone();
-                compile_imported_source(source, &mut compiler, &edited, None, &decisions, HashMap::new(), &[]).unwrap()
+                compile_imported_source(source, &mut compiler, &edited, None, &HashMap::new(), HashMap::new(), &[]).unwrap()
             })
             .unwrap()
             .unwrap();
         assert_eq!(after.xml, before.xml);
+        assert!(after.records.is_empty(), "{:?}", after.records);
     }
 
+    /// A replaced word not yet decided when the project is saved is still
+    /// asked about when it is opened again, found by its place and
+    /// fingerprint in the saved file.
     #[test]
-    fn test_saved_manifest_is_the_imported_one() {
-        let import = crate::importer::tei::parse(TWO_OKS).unwrap();
-        let document = import.imported_document.unwrap();
-        let decisions: HashMap<usize, Decision> = [(1, Decision::Same)].into_iter().collect();
-        let mut expected = document.clone();
-        expected.decisions = decisions.clone();
-        let source = ImportedSource::new(
-            document,
-            import.original_body_xml.unwrap(),
-            import.original_preamble.unwrap_or_default(),
-            import.original_postamble.unwrap_or_default(),
-        );
-        let saved: serde_json::Value = serde_json::from_str(&source.manifest_json(decisions).unwrap()).unwrap();
-        assert_eq!(saved, serde_json::to_value(&expected).unwrap());
+    fn test_an_open_record_is_saved_and_comes_back() {
+        let session = ImportedSession::default();
+        let reply = crate::commands::import::stage(crate::importer::tei::parse(TWO_OKS).unwrap(), &session).unwrap();
+        session.load(Some(reply.imported.unwrap().handle)).unwrap();
+        let dsl = reply.dsl;
+        let compile_in = |session: &ImportedSession, from: &str, dsl: &str| {
+            session.with_current_mut(|source| compile_decided(source, from, dsl, &[])).unwrap().unwrap()
+        };
+        compile_in(&session, &dsl, &dsl);
+        let edited = dsl.replacen("ok", "aok", 1);
+        let open = compile_in(&session, &dsl, &edited);
+        let [record] = open.records.as_slice() else { panic!("{:?}", open.records) };
+        assert_eq!((record.was.as_str(), record.decision), ("ok", None));
+
+        let (source, _, reopened) = save_and_reopen(&session, &edited, &open.xml, "{}");
+        assert!(reopened.decisions.is_empty());
+        let after = session
+            .with_current_mut(|s| {
+                let mut compiler = Compiler::new().with_config(s.config.clone());
+                compile_imported_source(s, &mut compiler, &source, None, &HashMap::new(), HashMap::new(), &[]).unwrap()
+            })
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.xml, open.xml);
+        let [back] = after.records.as_slice() else { panic!("{:?}", after.records) };
+        assert_eq!((back.was.as_str(), back.lemma.as_deref(), back.word, back.suggestion), ("ok", Some("ok"), Some(0), record.suggestion));
+        assert_eq!(back.xml, record.xml);
     }
 
     #[test]

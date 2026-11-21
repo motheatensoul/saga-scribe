@@ -51,11 +51,18 @@ A typical session:
 Work is saved as a project file with the extension `.teis`. It is a ZIP archive containing:
 
 - the transcription in shorthand (`source.dsl`);
-- the compiled TEI-XML (`output.xml`);
+- the compiled TEI-XML (`output.xml`), or for an imported TEI file, the file as it now is
+  (`document.xml`), with how it encodes its transcription (`profile.json`) and the
+  replaced words still to be decided (`records.json`);
 - confirmed lemmas and analyses, word by word;
 - annotations;
-- manuscript metadata;
-- for imported TEI files, the original XML, so that it can be written back unchanged.
+- manuscript metadata.
+
+For an imported file, `document.xml` is the file with your edits: what you didn't edit is
+in it exactly as in the file you imported. When the project is opened, the shorthand is
+compared with that file, and any place where it doesn't read as the file is rewritten from
+it (the log says how many). Projects saved with Saga-Scribe 0.8 can't be opened with
+earlier versions.
 
 **Open** (**Ctrl+O**) opens a project, or a plain shorthand file (`.dsl` or `.txt`).
 **Save** (**Ctrl+S**) saves the project; the first save asks for a location. Projects saved

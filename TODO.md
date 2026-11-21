@@ -33,8 +33,10 @@ when it is done (and record it in CHANGELOG.md if users notice).
   and confirmed on import, and new words get the file's levels (2026-11-21). Pinned normalized forms are kept
   and marked when an edit may have outdated them. `//n` shows one lineation. Next in
   4: the profile's abbreviation and punctuation encoding in the compiler, resetting a
-  pinned level; then steps 5 and 6 (the word panel on the
-  typed layer, the file format without `segments.json`). Corpus gates: `scripts/fetch-menota-corpus.sh`, then
+  pinned level; imported documents are saved as
+  `.teis` 2.0 (`document.xml`, step 6). Next: step 5 (the word panel on the typed layer);
+  in 6, new documents as trees from their template, and annotations anchored by
+  fingerprint. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).
 - **Text outside words in documents without `<w>`** is still split at punctuation by the

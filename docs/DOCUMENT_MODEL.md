@@ -389,7 +389,17 @@ text).
    are derived (step 5).
 5. **Word panel** on the typed layer.
 6. **New documents and the file format.** The same path for new documents; the new
-   `.teis` version, converting older ones.
+   `.teis` version, converting older ones. Done for imported documents (`.teis` 2.0,
+   2026-11-21): a project holds `document.xml` (the file as last written), `profile.json`
+   and `records.json` (the records still open, each by its word's place in
+   `document.xml` and a fingerprint, `document/anchor.rs`), next to `source.dsl` and the
+   annotations; `segments.json`, `output.xml` and the split original are gone for them.
+   Opening reads `document.xml` as an import with the saved profile, keeps the stored
+   shorthand where it reads as the file (`keep_as_written`) and finds the records' words
+   again. Projects of 1.x are opened as before and saved as 2.0. Not yet: new documents
+   as trees created from their template (they still save `source.dsl` and
+   `output.xml`), and anchoring the annotations by fingerprint (they are still by word
+   number, which `document.xml` keeps).
 7. **Shorthand redesign** on top (abbreviations, supplied text with markup, short form
    for normalized punctuation): only the projection and the parser change.
 

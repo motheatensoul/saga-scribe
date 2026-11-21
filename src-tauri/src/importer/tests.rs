@@ -1955,3 +1955,15 @@ fn test_only_one_lineation_is_shown_and_older_projects_lose_the_other() {
     assert_eq!(on_tree.document.dsl_rules, DSL_RULES);
     assert_eq!(crate::importer::tei::patching::dsl_tokens(&on_tree.dsl).unwrap(), crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap());
 }
+
+#[test]
+fn test_stored_shorthand_is_kept_where_it_reads_as_the_file() {
+    use crate::importer::tei::patching::keep_as_written;
+    let projected = ".p a b c\n//2 d";
+    // Layout kept
+    assert_eq!(keep_as_written(".p a  b\n c //2   d", projected), (".p a  b\n c //2   d".to_string(), 0));
+    // The XML wins where they differ
+    assert_eq!(keep_as_written(".p a  bx\n c //2   d", projected), (".p a  b\n c //2   d".to_string(), 1));
+    assert_eq!(keep_as_written(".p a  b //2 d", projected), (".p a  b c //2 d".to_string(), 1));
+    assert_eq!(keep_as_written(".p a  b c e //2 d", projected), (".p a  b c  //2 d".to_string(), 1));
+}

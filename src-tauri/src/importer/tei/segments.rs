@@ -218,31 +218,6 @@ impl ImportedDocument {
         dropped_attributes
     }
 
-    /// Puts back the copies [`drop_copies`](Self::drop_copies) dropped: the
-    /// XML (dropped where it is empty) and the attributes of `dropped_attributes`.
-    pub fn restore_copies<'t>(
-        &mut self,
-        xml: impl Fn(usize) -> Option<&'t str>,
-        attributes: impl Fn(usize) -> Option<HashMap<String, String>>,
-        dropped_attributes: &std::collections::HashSet<usize>,
-    ) {
-        for segment in &mut self.segments {
-            match segment {
-                Segment::Word { id, original_xml, attributes: attrs, .. } => {
-                    if original_xml.is_empty() {
-                        *original_xml = xml(*id).unwrap_or_default().to_string();
-                    }
-                    if dropped_attributes.contains(id) {
-                        *attrs = attributes(*id).unwrap_or_default();
-                    }
-                }
-                Segment::Punctuation { id, original_xml, .. } if original_xml.is_empty() => {
-                    *original_xml = xml(*id).unwrap_or_default().to_string();
-                }
-                _ => {}
-            }
-        }
-    }
 
     /// Parses a manifest as stored in segments.json.
     ///

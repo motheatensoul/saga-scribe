@@ -33,6 +33,7 @@
 //! | 1.6 | Paragraph start tags are `paragraph` segments (`.p` in the DSL); spans cover all tags |
 //! | 1.7 | `\` escapes a character and `#…#` is a numeral; older shorthand is escaped when opened |
 //! | 1.8 | segments.json holds the answers for replaced and deleted words (`decisions`) |
+//! | 2.0 | An imported document is saved as the file now is (`document.xml`) with `profile.json` and `records.json` (open records by place and fingerprint); no `segments.json`, `output.xml` or split original for it |
 //!
 //! All writes are atomic: data is written to a temporary file next to the target
 //! and renamed over it, so a crash mid-save never leaves a truncated file.
@@ -197,6 +198,16 @@ pub struct ProjectData {
     /// XML content after `</body>` element (v1.4+)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_postamble: Option<String>,
+    /// An imported document as it was saved (2.0, `document.xml`): the file
+    /// the session works on, kept in the backend
+    #[serde(skip)]
+    pub document_xml: Option<String>,
+    /// Its profile (2.0, `profile.json`)
+    #[serde(skip)]
+    pub profile: Option<crate::document::profile::Profile>,
+    /// Its records still open when saved (2.0, `records.json`)
+    #[serde(skip)]
+    pub saved_records: Vec<crate::importer::tei::patching::SavedRecord>,
 }
 
 /// Saves a project to a .teis archive file.
@@ -256,23 +267,24 @@ pub(crate) fn save_project_at(
     decisions_json: Option<String>,
 ) -> Result<(), String> {
     let ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json } = fields;
+    // An imported document is saved as the file now is (`document.xml`),
+    // with its profile and the records still open (`.teis` 2.0)
     let imported = match decisions_json {
         Some(json) => {
             let decisions: HashMap<usize, Decision> =
                 serde_json::from_str(&json).map_err(|e| format!("Failed to read the answers for replaced words: {e}"))?;
-            let parts = session.with_current(|document| {
-                let (body, preamble, postamble) = document.original_parts();
-                document
-                    .manifest_json(decisions)
-                    .map(|manifest| (manifest, body.to_string(), preamble.to_string(), postamble.to_string()))
+            let parts = session.with_current(|document| -> Result<(String, String), String> {
+                let profile = serde_json::to_string_pretty(&document.profile()).map_err(|e| e.to_string())?;
+                let records = serde_json::to_string(&document.open_records(&output, &decisions)?).map_err(|e| e.to_string())?;
+                Ok((profile, records))
             })?;
             Some(parts.ok_or("No imported document is loaded")??)
         }
         None => None,
     };
-    let (segments_json, original_body_xml, original_preamble, original_postamble) = match imported {
-        Some((manifest, body, preamble, postamble)) => (Some(manifest), Some(body), Some(preamble), Some(postamble)),
-        None => (None, None, None, None),
+    let (document_xml, profile_json, records_json, output) = match imported {
+        Some((profile, records)) => (Some(output), Some(profile), Some(records), None),
+        None => (None, None, None, Some(output)),
     };
     write_atomic_with(path, |file| {
         write_project_archive(
@@ -284,23 +296,31 @@ pub(crate) fn save_project_at(
                 template_id,
                 metadata_json,
                 annotations_json,
-                segments_json,
-                original_body_xml,
-                original_preamble,
-                original_postamble,
+                document_xml,
+                profile_json,
+                records_json,
+                ..Default::default()
             },
         )
     })
 }
 
 /// Everything written into a project archive.
+#[derive(Default)]
 struct ProjectContents {
     source: String,
-    output: String,
+    /// The compiled TEI-XML of a new document (`output.xml`)
+    output: Option<String>,
     confirmations_json: String,
     template_id: String,
     metadata_json: Option<String>,
     annotations_json: Option<String>,
+    /// An imported document: the file as it now is, its profile and the
+    /// records still open (2.0)
+    document_xml: Option<String>,
+    profile_json: Option<String>,
+    records_json: Option<String>,
+    /// The parts of formats before 2.0, which only tests still write
     segments_json: Option<String>,
     original_body_xml: Option<String>,
     original_preamble: Option<String>,
@@ -315,6 +335,9 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
         template_id,
         metadata_json,
         annotations_json,
+        document_xml,
+        profile_json,
+        records_json,
         segments_json,
         original_body_xml,
         original_preamble,
@@ -331,11 +354,22 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     zip.write_all(source.as_bytes())
         .map_err(|e| format!("Failed to write source.dsl: {}", e))?;
 
-    // Write output.xml
-    zip.start_file("output.xml", options)
-        .map_err(|e| format!("Failed to start output.xml: {}", e))?;
-    zip.write_all(output.as_bytes())
-        .map_err(|e| format!("Failed to write output.xml: {}", e))?;
+    let mut put = |name: &str, content: &str| -> Result<(), String> {
+        zip.start_file(name, options).map_err(|e| format!("Failed to start {name}: {e}"))?;
+        zip.write_all(content.as_bytes()).map_err(|e| format!("Failed to write {name}: {e}"))
+    };
+    if let Some(output) = &output {
+        put("output.xml", output)?;
+    }
+    if let Some(document) = &document_xml {
+        put("document.xml", document)?;
+    }
+    if let Some(profile) = &profile_json {
+        put("profile.json", profile)?;
+    }
+    if let Some(records) = &records_json {
+        put("records.json", records)?;
+    }
 
     // Write confirmations.json (backward compat for older app versions)
     zip.start_file("confirmations.json", options)
@@ -393,7 +427,7 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     // Create and write manifest.json
     let now = chrono_lite_now();
     let manifest = ProjectManifest {
-        version: "1.8".to_string(),
+        version: "2.0".to_string(),
         template_id,
         created: now.clone(),
         modified: now,
@@ -452,6 +486,9 @@ pub async fn open_project(path: String, session: State<'_, ImportedSession>) -> 
 /// [`onto_tree`](crate::importer::tei::onto_tree)). Returns the staged
 /// document and how many places were rewritten.
 pub(crate) fn stage_project(project: &mut ProjectData, session: &ImportedSession) -> Result<(Option<StagedDocument>, usize), String> {
+    if let Some(xml) = project.document_xml.take() {
+        return stage_saved_document(project, &xml, session);
+    }
     let preamble = project.original_preamble.take().unwrap_or_default();
     let postamble = project.original_postamble.take().unwrap_or_default();
     let (Some(stored), Some(body)) = (project.imported_document.take(), project.original_body_xml.take()) else {
@@ -471,6 +508,36 @@ pub(crate) fn stage_project(project: &mut ProjectData, session: &ImportedSession
     Ok((Some(session.stage(source)?), rewritten))
 }
 
+/// Stages an imported document saved as its file (2.0): the file is read as
+/// when it was imported, with its saved profile; the stored shorthand is kept
+/// where it reads as the file ([`keep_as_written`]), and the open records
+/// find their words again. Returns the staged document and how many places of
+/// the shorthand were rewritten.
+///
+/// [`keep_as_written`]: crate::importer::tei::patching::keep_as_written
+fn stage_saved_document(project: &mut ProjectData, xml: &str, session: &ImportedSession) -> Result<(Option<StagedDocument>, usize), String> {
+    let profile = project.profile.take();
+    let line_edition = profile.as_ref().map(|p| p.line_edition.clone());
+    let import = crate::importer::tei::parse_with(xml, line_edition)?;
+    let mut document = import.imported_document.ok_or("The saved document has no body")?;
+    if profile.is_some() {
+        document.profile = profile;
+    }
+    let (dsl, rewritten) = crate::importer::tei::patching::keep_as_written(&project.source, &import.dsl);
+    project.source = dsl;
+    let mut source = ImportedSource::new(
+        document,
+        import.original_body_xml.unwrap_or_default(),
+        import.original_preamble.unwrap_or_default(),
+        import.original_postamble.unwrap_or_default(),
+    );
+    let lost = source.restore_records(std::mem::take(&mut project.saved_records));
+    if lost > 0 {
+        log::warn!("{lost} replaced word(s) still to be decided couldn't be found in the saved file");
+    }
+    Ok((Some(session.stage(source)?), rewritten))
+}
+
 /// Reads a .teis project archive.
 ///
 /// Handles backward compatibility with older archive versions by
@@ -484,8 +551,19 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
     // Read source.dsl
     let mut source = read_zip_file(&mut archive, "source.dsl")?;
 
-    // Read output.xml
-    let output = read_zip_file(&mut archive, "output.xml")?;
+    // An imported document, saved as the file was (2.0)
+    let document_xml = read_zip_file(&mut archive, "document.xml").ok();
+    let profile = read_zip_file(&mut archive, "profile.json").ok().and_then(|json| serde_json::from_str(&json).ok());
+    let saved_records = match read_zip_file(&mut archive, "records.json") {
+        Ok(json) => serde_json::from_str(&json).map_err(|e| format!("Failed to parse records.json: {e}"))?,
+        Err(_) => Vec::new(),
+    };
+
+    // Read output.xml (an imported document's is the saved file)
+    let output = match read_zip_file(&mut archive, "output.xml") {
+        Ok(output) => output,
+        Err(e) => document_xml.clone().ok_or(e)?,
+    };
 
     // Read confirmations.json (always present for backward compat)
     let confirmations_str = read_zip_file(&mut archive, "confirmations.json")?;
@@ -557,6 +635,9 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
         original_body_xml,
         original_preamble,
         original_postamble,
+        document_xml,
+        profile,
+        saved_records,
     })
 }
 
@@ -724,7 +805,7 @@ mod tests {
                 file,
                 ProjectContents {
                     source: "//1 maþr".into(),
-                    output: "<TEI/>".into(),
+                    output: Some("<TEI/>".into()),
                     confirmations_json: "{}".into(),
                     template_id: "menota".into(),
                     metadata_json: None,
@@ -733,6 +814,7 @@ mod tests {
                     original_body_xml: Some("<body></body>".into()),
                     original_preamble: Some("<TEI><text>".into()),
                     original_postamble: Some("</text></TEI>".into()),
+                    ..Default::default()
                 },
             )
         })
@@ -741,7 +823,7 @@ mod tests {
 
         assert_eq!(project.source, "//1 maþr");
         assert_eq!(project.output, "<TEI/>");
-        assert_eq!(project.manifest.version, "1.8");
+        assert_eq!(project.manifest.version, "2.0");
         assert_eq!(project.manifest.template_id, "menota");
         assert!(project.imported_document.unwrap().is_menota);
         assert_eq!(project.original_body_xml.as_deref(), Some("<body></body>"));

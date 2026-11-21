@@ -154,6 +154,11 @@ impl Patcher {
         Self { original_dsl, original, token_of_segment, movable, state: None }
     }
 
+    /// The original token of segment `id` (the first of its unit).
+    pub fn token_of(&self, id: usize) -> Option<usize> {
+        self.token_of_segment.get(&id).copied()
+    }
+
     /// The revision of the last committed compile (0 before any).
     pub fn revision(&self) -> u64 {
         self.state.as_ref().map_or(0, |state| state.revision)
@@ -598,6 +603,85 @@ pub fn rewrite_unedited(
     Some((out, replacements.len()))
 }
 
+/// The shorthand `stored` (saved with a project) with the places where it
+/// doesn't read as `projected` (the saved file projected now) rewritten from
+/// the projection: the XML wins, the rest keeps its layout
+/// (`docs/DOCUMENT_MODEL.md`, "Keeping the shorthand as written"). Also
+/// returns how many places were rewritten. If `stored` doesn't parse, the
+/// projection.
+pub fn keep_as_written(stored: &str, projected: &str) -> (String, usize) {
+    let (Ok((a, a_spans)), Ok((b, b_spans))) = (spanned_dsl_tokens(stored), spanned_dsl_tokens(projected)) else {
+        return (projected.to_string(), 1);
+    };
+    if a == b {
+        return (stored.to_string(), 0);
+    }
+    let x: Vec<&str> = a.iter().map(String::as_str).collect();
+    let y: Vec<&str> = b.iter().map(String::as_str).collect();
+    let mut edits = Vec::with_capacity(x.len().max(y.len()));
+    diff_range(&x, &y, 0, 0, &mut edits);
+    // Runs of changes: the stored tokens they take out, the projected ones they put in
+    /// The stored tokens a run takes out, the projected ones it puts in, and
+    /// where it goes if it takes none out
+    type Run = (Option<std::ops::Range<usize>>, Option<std::ops::Range<usize>>, usize);
+    let mut runs: Vec<Run> = Vec::new();
+    let (mut old, mut new): (Option<std::ops::Range<usize>>, Option<std::ops::Range<usize>>) = (None, None);
+    let widen = |r: &mut Option<std::ops::Range<usize>>, i: usize| {
+        *r = Some(match r.take() {
+            Some(r) => r.start.min(i)..r.end.max(i + 1),
+            None => i..i + 1,
+        });
+    };
+    // Where a run without stored tokens goes: after this stored token
+    let mut after: usize = 0;
+    let mut last_kept: Option<usize> = None;
+    for edit in edits.iter().chain([&Edit::Keep(usize::MAX)]) {
+        match *edit {
+            Edit::Keep(i) => {
+                if old.is_some() || new.is_some() {
+                    runs.push((old.take(), new.take(), after));
+                }
+                if i != usize::MAX {
+                    last_kept = Some(i);
+                }
+            }
+            Edit::Delete(i) => widen(&mut old, i),
+            Edit::Insert(j) => widen(&mut new, j),
+            Edit::Replace(i, j) => {
+                widen(&mut old, i);
+                widen(&mut new, j);
+            }
+        }
+        if old.is_none() && new.is_none() {
+            after = last_kept.map_or(0, |i| a_spans[i].end);
+        }
+    }
+    let mut pieces: Vec<(std::ops::Range<usize>, String)> = runs
+        .into_iter()
+        .map(|(old, new, after)| {
+            let text = new.map_or(String::new(), |r| projected[b_spans[r.start].start..b_spans[r.end - 1].end].to_string());
+            match old {
+                Some(r) => (a_spans[r.start].start..a_spans[r.end - 1].end, text),
+                None => (after..after, format!(" {text}")),
+            }
+        })
+        .collect();
+    pieces.sort_by_key(|(r, _)| r.start);
+    let count = pieces.len();
+    let mut out = String::with_capacity(stored.len());
+    let mut from = 0;
+    for (range, text) in pieces {
+        if range.start < from {
+            return (projected.to_string(), count);
+        }
+        out.push_str(&stored[from..range.start]);
+        out.push_str(&text);
+        from = range.end;
+    }
+    out.push_str(&stored[from..]);
+    (out, count)
+}
+
 /// Applies the editor's answers to `patches`: a replaced word that is the
 /// same word keeps its data, another word loses it, whatever the patcher
 /// suggested.
@@ -660,6 +744,26 @@ pub struct WordRecord {
     /// The word's levels that couldn't follow the edit and were kept as
     /// they were (a curated normalized form): they may be out of date
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stale_levels: Vec<String>,
+}
+
+/// An open record as a project saves it (`.teis` 2.0, `records.json`): the
+/// file it is saved with has the suggested answer written, and the record
+/// refers to its word there by place and fingerprint
+/// ([`crate::document::anchor`]).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavedRecord {
+    /// The word's number in the saved file (the n-th `<w>` of the body)
+    pub word: usize,
+    pub fingerprint: String,
+    pub suggestion: Decision,
+    /// The old word's shorthand and XML, its lemma and analysis
+    pub was: String,
+    pub xml: String,
+    pub lemma: Option<String>,
+    pub msa: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stale_levels: Vec<String>,
 }
 
@@ -1117,6 +1221,12 @@ pub fn render_body(
 
     if let Some(body) = original_body {
         if unchanged {
+            // The words are the tree's: scanning the text would also count
+            // a `<w` in a comment
+            if let Some(tree) = tree {
+                let words = tree.word_offsets().into_iter().map(|w| (w, Origin::Source(w))).collect();
+                return Ok(RenderedBody { xml: body.to_string(), edited_words: Vec::new(), words, stale: Vec::new() });
+            }
             let mut out = Output::with_capacity(body.len());
             out.push(body, Origin::Source(0));
             return Ok(out.finish(Vec::new()));
