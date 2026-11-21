@@ -1922,3 +1922,36 @@ fn test_a_plain_word_in_a_file_with_levels_is_edited() {
     let (_, body) = imported_roundtrip(&xml, |d| d.replace("dernest", "dernestt")).unwrap();
     assert!(body.contains("<w>dernestt</w>"), "{body}");
 }
+
+#[test]
+fn test_only_one_lineation_is_shown_and_older_projects_lose_the_other() {
+    use crate::importer::tei::onto_tree;
+    use crate::importer::tei::segments::DSL_RULES;
+    // A DN charter: the manuscript's lines and the printed edition's
+    let xml = menota_body(
+        r#"<lb ed="ms" n="1"/><w><me:dipl>a</me:dipl></w> <lb ed="DN" n="7"/><w><me:dipl>b</me:dipl></w> <w><me:dipl>c<lb ed="DN" n="8"/>d</me:dipl></w> <lb ed="ms" n="2"/><w><me:dipl>e</me:dipl></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    let profile = import.imported_document.as_ref().unwrap().profile.clone().unwrap();
+    assert_eq!(profile.line_edition.as_deref(), Some("ms"));
+    assert_eq!(import.dsl, ".p \n//1 a b cd\n//2 e");
+    // Unedited, the file comes back as it was; edited around the hidden breaks too
+    let (original, body) = imported_roundtrip(&xml, |d| d.to_string()).unwrap();
+    assert_eq!(body, original);
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace(" b ", " bb ").replace("cd", "cdd")).unwrap();
+    assert!(body.contains(r#"<lb ed="DN" n="7"/><w><me:dipl>bb</me:dipl></w>"#), "{body}");
+    assert!(body.contains(r#"<me:dipl>c<lb ed="DN" n="8"/>dd</me:dipl>"#), "{body}");
+    assert_ne!(body, original);
+    // The other lineation can be chosen
+    let dn = crate::importer::tei::parse_with(&xml, Some(Some("DN".into()))).unwrap();
+    assert_eq!(dn.dsl, ".p a\n//7 b c~//8d e");
+
+    // A project imported before, showing all line breaks, loses the other's
+    let before = crate::importer::tei::parse_with(&xml, Some(None)).unwrap();
+    let mut stored = before.imported_document.unwrap();
+    (stored.dsl_rules, stored.profile) = (5, None);
+    let (pre, body, post) = (before.original_preamble.unwrap(), before.original_body_xml.unwrap(), before.original_postamble.unwrap());
+    let on_tree = onto_tree(&stored, &before.dsl, &pre, &body, &post).unwrap();
+    assert_eq!(on_tree.document.dsl_rules, DSL_RULES);
+    assert_eq!(crate::importer::tei::patching::dsl_tokens(&on_tree.dsl).unwrap(), crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap());
+}

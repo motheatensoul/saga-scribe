@@ -193,8 +193,8 @@ export interface ImportResult {
  * Import a file and convert it to DSL format, also extracting metadata.
  * The backend runs this on a separate async task to avoid blocking the UI.
  */
-export async function importFile(path: string): Promise<ImportResult> {
-  return invoke("import_file", { path });
+export async function importFile(path: string, lineEdition?: string): Promise<ImportResult> {
+  return invoke("import_file", { path, lineEdition });
 }
 
 export async function listTemplates(): Promise<Template[]> {

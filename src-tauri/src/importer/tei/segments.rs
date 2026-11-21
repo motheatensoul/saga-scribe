@@ -179,7 +179,10 @@ fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
 /// - 5: `-{…}-`, `+{…}+` and `?{…}?` have shorthand content too (entities,
 ///   gaps and breaks in them used to compile as text): characters that would
 ///   read as shorthand in their text are escaped, as in `<…>`.
-pub const DSL_RULES: u32 = 5;
+/// - 6: in a file with several lineations (`<lb ed="ms">` and `<lb ed="DN">`),
+///   `//n` shows only the line breaks of one of them (the profile's
+///   `line_edition`); the others are kept as structure.
+pub const DSL_RULES: u32 = 6;
 
 impl ImportedDocument {
     /// Drops the copies of the file's XML that words and punctuation hold

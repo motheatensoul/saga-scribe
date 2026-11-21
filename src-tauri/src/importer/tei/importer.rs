@@ -20,7 +20,7 @@ use crate::metadata::{
     Availability, DateRange, History, Language, Metadata, MsContents, MsIdentifier, Person,
     PhysDesc, PublicationStmt, RespStmt, TitleStmt,
 };
-use crate::document::{find_body as find_tree_body, project_body, Tree};
+use crate::document::{find_body as find_tree_body, project_body, project_body_with, Tree};
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::{ImportedDocument, Segment, SourceSpans, DSL_RULES};
 use libxml::tree::{Document, Node, NodeType};
@@ -70,6 +70,14 @@ pub struct ImportResult {
 /// - No root element found
 /// - No `<body>` element found
 pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
+    parse_with(xml_content, None)
+}
+
+/// [`parse`], with the lineation the shorthand shows chosen (`Some`; a
+/// file with several has one inferred otherwise, see [`Profile`]).
+///
+/// [`Profile`]: crate::document::profile::Profile
+pub fn parse_with(xml_content: &str, line_edition: Option<Option<String>>) -> Result<ImportResult, String> {
     let doc = parse_document(xml_content)?;
 
     let root = doc
@@ -90,8 +98,11 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
     // text so unedited content can be emitted byte-for-byte
     let tree = Tree::from_document(&doc, xml_content);
     let tree_body = find_tree_body(&tree).ok_or("No <body> element found in XML")?;
-    let projection = project_body(&tree, tree_body);
-    let profile = crate::document::profile::infer(&tree, tree_body);
+    let mut profile = crate::document::profile::infer(&tree, tree_body);
+    if let Some(chosen) = line_edition {
+        profile.line_edition = chosen.filter(|ed| profile.counts.line_editions.contains_key(ed));
+    }
+    let projection = project_body_with(&tree, tree_body, profile.line_edition.as_deref());
     let segments = projection.segments;
     let spans = projection.spans;
 
@@ -173,6 +184,10 @@ pub fn recompute_spans(
     same.then_some(spans)
 }
 
+/// In [`onto_tree`]'s map of old segments to fresh ones: a segment that the
+/// shorthand doesn't show any more.
+const NOT_SHOWN: usize = usize::MAX;
+
 /// A saved imported document on its file's tree (step 3b of
 /// `docs/DOCUMENT_MODEL.md`): the segments projected afresh from the file,
 /// and the stored shorthand with its unedited words as the projection
@@ -203,30 +218,62 @@ pub fn onto_tree(stored: &ImportedDocument, dsl: &str, preamble: &str, body: &st
     if tree.span(tree_body)?.start != preamble.len() {
         return None;
     }
-    let projection = project_body(&tree, tree_body);
+    let profile = stored.profile.clone().unwrap_or_else(|| crate::document::profile::infer(&tree, tree_body));
+    let projection = project_body_with(&tree, tree_body, profile.line_edition.as_deref());
     let fresh_spans = projection.spans?;
     let stored_spans = stored.spans.as_ref()?;
 
-    // Old segment → fresh segment, by kind and place in the file
+    // Old segment → fresh segment, by kind and place in the file; a line
+    // break the shorthand no longer shows (another lineation) is structure
+    // now, at the same place
     let kind = |s: &Segment| std::mem::discriminant(s);
     let by_place: std::collections::HashMap<_, usize> = projection
         .segments
         .iter()
         .filter_map(|s| Some(((kind(s), (*fresh_spans.get(s.id())?)?), s.id())))
         .collect();
+    let structural = std::mem::discriminant(&Segment::Structural { id: 0, xml: String::new() });
+    // Where the fresh segments the shorthand shows are, in order
+    let mut shown: Vec<(usize, usize)> = projection
+        .segments
+        .iter()
+        .filter(|s| !matches!(s, Segment::Structural { .. } | Segment::Whitespace { .. } | Segment::HandShift { .. }))
+        .filter_map(|s| *fresh_spans.get(s.id())?)
+        .collect();
+    shown.sort_unstable();
+    let overlaps_shown = |(start, end): (usize, usize)| {
+        let i = shown.partition_point(|&(_, e)| e <= start);
+        shown.get(i).is_some_and(|&(s, _)| s < end)
+    };
     let fresh_id: std::collections::HashMap<usize, usize> = stored
         .segments
         .iter()
-        .filter_map(|s| Some((s.id(), *by_place.get(&(kind(s), (*stored_spans.get(s.id())?)?))?)))
+        .filter_map(|s| {
+            let place = (*stored_spans.get(s.id())?)?;
+            let hidden = || matches!(s, Segment::LineBreak { .. }).then(|| by_place.get(&(structural, place))).flatten();
+            match by_place.get(&(kind(s), place)).or_else(hidden) {
+                Some(&id) => Some((s.id(), id)),
+                // Shown before, but nothing of it is now (supplied text that
+                // held only another lineation's line break): it goes
+                None if !matches!(s, Segment::Structural { .. } | Segment::Whitespace { .. }) && !overlaps_shown(place) => {
+                    Some((s.id(), NOT_SHOWN))
+                }
+                None => None,
+            }
+        })
         .collect();
 
     let document = ImportedDocument {
         segments: projection.segments,
         is_menota: stored.is_menota,
         spans: Some(fresh_spans),
-        profile: Some(stored.profile.clone().unwrap_or_else(|| crate::document::profile::infer(&tree, tree_body))),
+        profile: Some(profile),
         dsl_rules: DSL_RULES,
-        decisions: stored.decisions.iter().filter_map(|(id, d)| Some((*fresh_id.get(id)?, *d))).collect(),
+        decisions: stored
+            .decisions
+            .iter()
+            .filter_map(|(id, d)| Some((*fresh_id.get(id).filter(|&&f| f != NOT_SHOWN)?, *d)))
+            .collect(),
     };
     let fresh_dsl = segments_to_dsl(&document.segments, DSL_RULES);
     let unchanged = segments_to_dsl(&stored.segments, stored.dsl_rules) == fresh_dsl

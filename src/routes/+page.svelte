@@ -820,8 +820,15 @@
             ],
         });
         if (!path) return;
+        await importPath(path as string);
+    }
 
-        const pathStr = path as string;
+    /** The file imported last, for importing it again with another lineation */
+    let lastImportPath: string | null = null;
+
+    /** Imports the file at `pathStr`; `lineEdition` chooses the lineation `//n` shows ("" for all) */
+    async function importPath(pathStr: string, lineEdition?: string) {
+        lastImportPath = pathStr;
         isImporting = true;
 
         // Yield to let browser paint spinner before starting work
@@ -829,7 +836,7 @@
         await new Promise((resolve) => setTimeout(resolve, 16));
 
         try {
-            const result = await importFile(pathStr);
+            const result = await importFile(pathStr, lineEdition);
 
             // Clear history and annotations
             annotationHistory.clear();
@@ -1096,8 +1103,13 @@
 
     <ImportProfileDialog
         bind:profile={importProfile}
-        onconfirm={async (levels, choice) => {
+        onconfirm={async (levels, choice, lineEdition) => {
             try {
+                if (lineEdition !== undefined && lastImportPath) {
+                    // Another lineation: the shorthand changes, so the file is imported again
+                    await importPath(lastImportPath, lineEdition);
+                    importProfile = null;
+                }
                 await setImportedLevels(levels, choice);
                 errorStore.info("Import", `New words get the levels: ${levels.join(", ") || "none"}`);
                 await compileNow();

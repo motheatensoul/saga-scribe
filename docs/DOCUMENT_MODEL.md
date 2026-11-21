@@ -380,8 +380,11 @@ text).
    one that isn't is pinned, kept, and if the edit changes the derived form to something
    else, the word becomes a record with `stale_levels` (asked about in the word panel, as
    decided). A diplomatic level the merge can't carry an edit into is reported the same
-   way (`MergedWord::kept_levels`). Not yet: the choice of lineation for `//n` (the
-   shorthand still shows all), the abbreviation and punctuation encoding in the compiler,
+   way (`MergedWord::kept_levels`). The lineation `//n` stands for is the profile's
+   `line_edition` (the manuscript's, `ms`, by default; chosen in the import dialog, which
+   imports again): line breaks of the others are projected as structure (DSL rules 6,
+   `project_body_with`), and an older project's tokens for them are dropped when it is
+   brought onto the tree. Not yet: the abbreviation and punctuation encoding in the compiler,
    resetting a pinned level to its derivation, and showing in the word panel which levels
    are derived (step 5).
 5. **Word panel** on the typed layer.

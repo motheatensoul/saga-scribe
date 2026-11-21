@@ -22,7 +22,7 @@ mod tree;
 mod write;
 
 pub use merge::{as_different_word, merge_word_edit};
-pub use project::{find_body, project_body};
+pub use project::{find_body, project_body, project_body_with};
 pub use tree::{Element, NodeId, NodeKind, Tree};
 #[cfg(test)]
 pub use tree::node_data_size;

@@ -460,6 +460,12 @@ are written with the levels ticked under **Levels**: change them if the file's r
 wrong, then **Confirm**. Words already in the file are not changed. The choice is saved
 with the project.
 
+Some files number their lines in more than one way, such as a charter with the
+manuscript's lines (`<lb ed="ms">`) and those of a printed edition (`<lb ed="DN">`). The
+shorthand then shows the line breaks of one of them as `//n`, the manuscript's if there is
+one; the others are kept in the file as they are. **Lineations** in the same dialog
+chooses another one, or all of them; changing it imports the file again.
+
 A file that isn't well-formed XML (an unclosed element, say) is still imported, as the XML
 parser repairs it, but the [log](#logs-and-reporting-problems) shows a warning with the parser's first error and
 its line. Check the text around that line: the repair may have moved or dropped markup

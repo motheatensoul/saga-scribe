@@ -9,8 +9,11 @@
     }: {
         /** The profile to confirm; the dialog is open while it is set */
         profile?: Profile | null;
-        /** Called with the levels and `<choice>` setting if they were changed */
-        onconfirm?: (levels: Level[], choice: boolean) => void;
+        /**
+         * Called if something was changed: the levels and `<choice>` setting,
+         * and the lineation `//n` shows if that changed ("" for all of them)
+         */
+        onconfirm?: (levels: Level[], choice: boolean, lineEdition?: string) => void;
     } = $props();
 
     const LEVELS: { level: Level; label: string; element: string }[] = [
@@ -21,6 +24,7 @@
 
     let chosen = $state<Record<Level, boolean>>({ facs: false, dipl: false, norm: false });
     let choice = $state(false);
+    let lineEdition = $state("");
 
     // Start from the profile each time the dialog opens
     $effect(() => {
@@ -31,6 +35,7 @@
                 norm: profile.levels.includes("norm"),
             };
             choice = profile.choice;
+            lineEdition = profile.lineEdition ?? "";
         }
     });
 
@@ -55,9 +60,12 @@
 
     function close() {
         if (!profile) return;
+        const editionChanged = lineEdition !== (profile.lineEdition ?? "");
         const changed =
-            chosenLevels.join() !== profile.levels.join() || (chosenLevels.length > 1 && choice) !== profile.choice;
-        if (changed) onconfirm?.(chosenLevels, choice);
+            editionChanged ||
+            chosenLevels.join() !== profile.levels.join() ||
+            (chosenLevels.length > 1 && choice) !== profile.choice;
+        if (changed) onconfirm?.(chosenLevels, choice, editionChanged ? lineEdition : undefined);
         profile = null;
     }
 
@@ -150,15 +158,30 @@
                             </code>
                             <span class="text-base-content/80">({profile.counts.pc} pc, {profile.counts.mePunct} me:punct)</span>
                         </dd>
-                        {#if editions.length > 1}
-                            <dt class="font-medium">Line breaks</dt>
-                            <dd>
-                                {editions.map(([ed, n]) => `${ed}: ${n}`).join(", ")}. The shorthand shows the
-                                line breaks of all of them as <code class="font-mono text-xs">//n</code>.
-                            </dd>
-                        {/if}
                     </dl>
                 </section>
+
+                {#if editions.length > 1}
+                    <section>
+                        <h3 class="text-lg font-semibold mb-2 text-primary">Lineations</h3>
+                        <p class="mb-2">
+                            The file numbers its lines in more than one way:
+                            {editions.map(([ed, n]) => `${ed} (${n} line breaks)`).join(", ")}.
+                        </p>
+                        <label for="import-profile-lineation" class="font-medium block mb-1">
+                            <code class="font-mono text-xs">//n</code> in the shorthand shows
+                        </label>
+                        <select id="import-profile-lineation" class="select select-bordered select-sm w-full max-w-xs" bind:value={lineEdition}>
+                            {#each editions as [ed] (ed)}
+                                <option value={ed}>the line breaks of {ed}</option>
+                            {/each}
+                            <option value="">all line breaks</option>
+                        </select>
+                        <p class="mt-1 text-base-content/80">
+                            The others are kept as they are. Changing this imports the file again.
+                        </p>
+                    </section>
+                {/if}
 
                 {#if hidden.length > 0}
                     <section>

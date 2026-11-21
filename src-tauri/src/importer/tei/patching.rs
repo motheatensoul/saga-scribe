@@ -519,17 +519,21 @@ pub fn rewrite_unedited(
     let mut broken = vec![false; m + n];
     let mut covered = vec![false; m + n];
     for (segment, olds) in &old_of {
-        let freshes = fresh_id.get(segment).and_then(|s| fresh_of.get(s));
+        let fresh = fresh_id.get(segment);
+        let freshes = fresh.and_then(|s| fresh_of.get(s));
         for &o in olds {
             covered[o] = true;
-            match freshes {
-                Some(freshes) => {
+            match (fresh, freshes) {
+                (_, Some(freshes)) => {
                     for &f in freshes {
                         covered[m + f] = true;
                         union(&mut parent, o, m + f);
                     }
                 }
-                None => broken[o] = true,
+                // The segment is still there, but no longer shown (a line
+                // break of another lineation): the token goes
+                (Some(_), None) => {}
+                (None, None) => broken[o] = true,
             }
         }
     }
@@ -556,7 +560,14 @@ pub fn rewrite_unedited(
 
     let mut replacements: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
     for (olds, freshes, broken) in groups.values() {
-        if *broken || olds.is_empty() || freshes.is_empty() {
+        if *broken || olds.is_empty() {
+            continue;
+        }
+        if freshes.is_empty() {
+            // No longer shown: removed with the space after it, if unedited
+            let Some(&j) = (olds.len() == 1).then(|| kept_at.get(&olds[0])).flatten() else { continue };
+            let after = dsl[spans[j].end..].len() - dsl[spans[j].end..].trim_start_matches([' ', '\t']).len();
+            replacements.push((spans[j].start..spans[j].end + after, ""));
             continue;
         }
         // Every old token unedited, and next to each other in `dsl`

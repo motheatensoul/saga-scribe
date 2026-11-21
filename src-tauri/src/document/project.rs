@@ -147,6 +147,13 @@ pub fn find_body(tree: &Tree) -> Option<NodeId> {
 
 /// Projects the element `body` (the TEI `<body>`) to segments.
 pub fn project_body(tree: &Tree, body: NodeId) -> Projection {
+    project_body_with(tree, body, None)
+}
+
+/// [`project_body`], showing only the line breaks of `line_edition` (and
+/// those without an edition) when there is one: the others are kept as
+/// structure the shorthand doesn't show (DSL rules 6).
+pub fn project_body_with(tree: &Tree, body: NodeId, line_edition: Option<&str>) -> Projection {
     let mut next = vec![None; tree.capacity()];
     let mut prev = vec![None; tree.capacity()];
     for id in tree.descendants(body) {
@@ -165,6 +172,7 @@ pub fn project_body(tree: &Tree, body: NodeId) -> Projection {
         prev,
         body_start,
         has_words,
+        line_edition: line_edition.map(str::to_string),
         segments: Vec::new(),
         nodes: Vec::new(),
         spans: Vec::new(),
@@ -182,6 +190,9 @@ struct Projector<'a> {
     body_start: Option<usize>,
     /// Whether the body's text is in `<w>` elements
     has_words: bool,
+    /// In a file with several lineations, the one the shorthand shows
+    /// (`<lb ed="…">`); the others' line breaks are kept as structure
+    line_edition: Option<String>,
     segments: Vec<Segment>,
     nodes: Vec<Option<NodeId>>,
     spans: Vec<Option<(usize, usize)>>,
@@ -259,6 +270,12 @@ impl Projector<'_> {
         Some((span.start - start, span.end - start))
     }
 
+    /// A line break of another lineation than the one the shorthand shows.
+    fn is_hidden_break(&self, id: NodeId) -> bool {
+        let Some(shown) = self.line_edition.as_deref() else { return false };
+        self.tree.element(id).and_then(|e| e.attribute("ed")).is_some_and(|ed| ed != shown)
+    }
+
     fn element_span(&self, id: NodeId) -> Option<(usize, usize)> {
         self.relative(self.tree.span(id)?)
     }
@@ -302,6 +319,7 @@ impl Projector<'_> {
                         };
                         self.push(segment, Some(id), self.element_span(id));
                     }
+                    "lb" if self.is_hidden_break(id) => self.emit_structural(id),
                     "lb" | "pb" | "handShift" => {
                         let id_ = self.next_id();
                         let attributes = self.attributes(id);
@@ -882,6 +900,7 @@ impl Projector<'_> {
                         }
                         out.push_str(&self.gap_dsl(c, supplied.as_deref()));
                     }
+                    "lb" if self.is_hidden_break(c) => {}
                     "lb" => {
                         *lb = true;
                         out.push_str("~//");

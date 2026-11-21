@@ -32,14 +32,18 @@ pub struct ImportReply {
 /// This command is async, which means Tauri executes it on a separate async task
 /// (not the main thread), preventing UI blocking. The actual file I/O and parsing
 /// runs on a blocking thread pool via spawn_blocking.
-#[tauri::command(async)]
-pub async fn import_file(path: String, session: State<'_, ImportedSession>) -> Result<ImportReply, String> {
+///
+/// `line_edition` chooses the lineation `//n` shows in a file with several
+/// (`""` for all of them); without it, one is inferred.
+#[tauri::command(async, rename_all = "camelCase")]
+pub async fn import_file(path: String, line_edition: Option<String>, session: State<'_, ImportedSession>) -> Result<ImportReply, String> {
     let session = session.inner().clone();
     // spawn_blocking moves the CPU-bound work to a thread pool,
     // while the async command itself runs off the main thread
     tauri::async_runtime::spawn_blocking(move || {
         let timer = crate::perf::timer();
-        let result = import_from_path(&path, &session);
+        let line_edition = line_edition.map(|ed| (!ed.is_empty()).then_some(ed));
+        let result = import_from_path(&path, line_edition, &session);
         timer.done("import_file", [("ok", result.is_ok().into())]);
         result
     })
@@ -48,9 +52,9 @@ pub async fn import_file(path: String, session: State<'_, ImportedSession>) -> R
 }
 
 /// Imports the file at `path` and stages it in `session`.
-fn import_from_path(path: &str, session: &ImportedSession) -> Result<ImportReply, String> {
+fn import_from_path(path: &str, line_edition: Option<Option<String>>, session: &ImportedSession) -> Result<ImportReply, String> {
     let (content, extension) = read_import(path)?;
-    let mut reply = stage(import_content(&content, &extension)?, session)?;
+    let mut reply = stage(import_content(&content, &extension, line_edition)?, session)?;
     if is_xml(&extension) {
         reply.not_well_formed = crate::xml::check_well_formed(&content).err();
     }
@@ -94,9 +98,9 @@ fn is_xml(extension: &str) -> bool {
     matches!(extension, "xml" | "tei")
 }
 
-fn import_content(content: &str, extension: &str) -> Result<ImportResult, String> {
+fn import_content(content: &str, extension: &str, line_edition: Option<Option<String>>) -> Result<ImportResult, String> {
     if is_xml(extension) {
-        return tei::parse(content);
+        return tei::parse_with(content, line_edition);
     }
     // Plain text files - return as DSL with no metadata or segments
     Ok(ImportResult {
@@ -122,12 +126,12 @@ mod tests {
         fs::write(&path, "<TEI><text><body><p><w>ok</w> <w>broken</p></body></text></TEI>").unwrap();
         let session = ImportedSession::default();
 
-        let reply = import_from_path(path.to_str().unwrap(), &session).unwrap();
+        let reply = import_from_path(path.to_str().unwrap(), None, &session).unwrap();
         assert!(reply.dsl.contains("ok"));
         assert!(reply.not_well_formed.is_some());
 
         fs::write(&path, "<TEI><text><body><p><w>ok</w></p></body></text></TEI>").unwrap();
-        let reply = import_from_path(path.to_str().unwrap(), &session).unwrap();
+        let reply = import_from_path(path.to_str().unwrap(), None, &session).unwrap();
         assert_eq!(reply.not_well_formed, None);
         fs::remove_dir_all(&dir).ok();
     }

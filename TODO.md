@@ -31,8 +31,8 @@ when it is done (and record it in CHANGELOG.md if users notice).
   its file afresh, and projects saved with older import rules are brought onto the
   current ones (2026-11-21), which finishes 3b. The profile of step 4 is inferred
   and confirmed on import, and new words get the file's levels (2026-11-21). Pinned normalized forms are kept
-  and marked when an edit may have outdated them. Next in 4: the lineation `//n` stands
-  for, the profile's abbreviation and punctuation encoding in the compiler, resetting a
+  and marked when an edit may have outdated them. `//n` shows one lineation. Next in
+  4: the profile's abbreviation and punctuation encoding in the compiler, resetting a
   pinned level; then steps 5 and 6 (the word panel on the
   typed layer, the file format without `segments.json`). Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
@@ -100,8 +100,6 @@ when it is done (and record it in CHANGELOG.md if users notice).
       supplied `V` is gone, the gap became `<gap reason="illegible"/>`, and the word got a
       `<me:norm>` level the file doesn't have. Restorations spread over several words and
       lines (`rendition="first|middle|last"`, NRA fragments) need the same.
-  - Files with two lineations (`<lb ed="ms">` and `<lb ed="O.A.Johnsen">`) show both as
-    `//n`, so the line numbers in the DSL interleave.
 
   Planned so far:
   - **Abbreviations as `{mark=expansion}`, with a store** (decided; not implemented yet,
