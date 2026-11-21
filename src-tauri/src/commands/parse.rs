@@ -114,10 +114,11 @@ pub async fn compile_dsl(
             compiler = compiler.with_dictionary(dict);
         }
 
+        let pending = std::mem::take(&mut *session.1.lock().map_err(|_| "Compile state is poisoned")?);
         let mut state = session.0.lock().map_err(|_| "Compile state is poisoned")?;
         timer.lap("compile.wait_for_session", []);
         let (body, revision, renumbered) =
-            compile_tracking_words(compiler, &input, guidance.as_ref(), &mut state)?;
+            compile_tracking_words_with(compiler, &input, guidance.as_ref(), &mut state, pending)?;
 
         let xml = format!("{}\n{}\n{}", template_header, body, template_footer);
         total.done(
@@ -137,14 +138,144 @@ pub async fn compile_dsl(
 }
 
 /// The last native-mode compile: which token and word is which, so the next
-/// compile can tell where words went.
+/// compile can tell where words went. Also the words whose XML was set in the
+/// word panel waiting for the first compile of a project being opened.
 #[derive(Default, Clone)]
-pub struct NativeSession(Arc<Mutex<Option<NativeState>>>);
+pub struct NativeSession(Arc<Mutex<Option<NativeState>>>, Arc<Mutex<Vec<SavedOverride>>>);
 
 pub struct NativeState {
     tracked: Tracked,
     /// The key of every word, in document order
     words: Vec<WordKey>,
+    /// Words whose XML was set in the word panel (new documents): the
+    /// compiled word is replaced by it, and later edits are merged into it
+    overrides: HashMap<WordKey, NativeOverride>,
+    /// The last compiled body (with the overrides), and where each `<w>`
+    /// in it starts
+    body: String,
+    word_offsets: Vec<usize>,
+}
+
+/// A word of a new document whose XML was set in the word panel: its XML,
+/// and the compiled word it was set against (`None` until the next compile).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NativeOverride {
+    pub xml: String,
+    pub compiled: Option<String>,
+}
+
+/// An override as a project saves it (`overrides.json`): by word number.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SavedOverride {
+    pub word: usize,
+    #[serde(flatten)]
+    pub word_override: NativeOverride,
+}
+
+impl NativeSession {
+    /// The XML of word `word` (as the previews number them) as the last
+    /// compile wrote it.
+    pub fn word_xml(&self, word: usize) -> Result<String, String> {
+        let state = self.0.lock().map_err(|_| "Compile state is poisoned")?;
+        let state = state.as_ref().ok_or("Nothing is compiled yet")?;
+        let at = *state.word_offsets.get(word).ok_or("There is no such word")?;
+        element_at(&state.body, at).map(str::to_string).ok_or_else(|| "The word's XML can't be read".into())
+    }
+
+    /// Sets the XML of word `word` to `xml` (one well-formed `<w>`): the
+    /// compile puts it in place of the compiled word from now on, and merges
+    /// later edits of the word into it. Returns the word's shorthand, for the
+    /// editor to put in place of the word's (the next compile takes the XML).
+    pub fn set_word_xml(&self, word: usize, xml: &str) -> Result<WordXmlChange, String> {
+        if !xml.trim_start().starts_with("<w") {
+            return Err("The XML must be a single <w> element".into());
+        }
+        let dsl = crate::document::word_dsl(xml, None)?;
+        let mut state = self.0.lock().map_err(|_| "Compile state is poisoned")?;
+        let state = state.as_mut().ok_or("Nothing is compiled yet")?;
+        let key = *state.words.get(word).ok_or("There is no such word")?;
+        let j = state.tracked.ids.iter().position(|&id| id == key.0).ok_or("The word isn't in the shorthand")?;
+        let utf16 = |offset: usize| state.tracked.dsl.get(..offset).map_or(0, |text| text.encode_utf16().count());
+        let (from, to) = (utf16(state.tracked.spans[j].start), utf16(state.tracked.spans[j].end));
+        state.overrides.insert(key, NativeOverride { xml: xml.trim().to_string(), compiled: None });
+        let tree = crate::document::Tree::parse(&format!(
+            r#"<x xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0">{xml}</x>"#
+        ))?;
+        let element = tree.root_element().and_then(|r| tree.children(r).iter().find_map(|&c| tree.element(c)).cloned());
+        let attribute = |name: &str| element.as_ref().and_then(|e| e.attribute(name)).map(str::to_string);
+        Ok(WordXmlChange { from, to, dsl, lemma: attribute("lemma"), msa: attribute("me:msa").or_else(|| attribute("msa")) })
+    }
+
+    /// The overrides of the last compile, for saving.
+    pub fn saved_overrides(&self) -> Vec<SavedOverride> {
+        let Ok(state) = self.0.lock() else { return Vec::new() };
+        let Some(state) = state.as_ref() else { return Vec::new() };
+        let mut saved: Vec<SavedOverride> = state
+            .words
+            .iter()
+            .enumerate()
+            .filter_map(|(n, key)| Some(SavedOverride { word: n, word_override: state.overrides.get(key)?.clone() }))
+            .collect();
+        saved.sort_by_key(|s| s.word);
+        saved
+    }
+
+    /// Overrides of a project being opened, applied by its first compile.
+    pub fn restore(&self, saved: Vec<SavedOverride>) {
+        if let Ok(mut pending) = self.1.lock() {
+            *pending = saved;
+        }
+    }
+}
+
+/// Where each `<w>` element of `xml` starts (comments skipped).
+fn word_starts(xml: &str) -> Vec<usize> {
+    let mut starts = Vec::new();
+    let mut i = 0;
+    while let Some(lt) = xml[i..].find('<').map(|k| k + i) {
+        let rest = &xml[lt..];
+        if rest.starts_with("<!--") {
+            i = lt + rest.find("-->").map_or(rest.len(), |e| e + 3);
+            continue;
+        }
+        if rest.starts_with("<w") && rest[2..].starts_with(|c: char| c == '>' || c == '/' || c.is_whitespace()) {
+            starts.push(lt);
+        }
+        i = lt + 1;
+    }
+    starts
+}
+
+/// Puts the overridden words into `body` (compiled, with `words` as its
+/// words' keys): a word compiled as when its XML was set gets that XML; one
+/// edited since gets the edit merged into it, with the attributes the
+/// compiler changed (a lemma, `ana`). Overrides of words no longer there go.
+fn apply_overrides(body: &mut String, words: &[WordKey], overrides: &mut HashMap<WordKey, NativeOverride>) {
+    if overrides.is_empty() {
+        return;
+    }
+    let offsets = word_starts(body);
+    let index: HashMap<WordKey, usize> = words.iter().enumerate().map(|(n, k)| (*k, n)).collect();
+    overrides.retain(|key, _| index.contains_key(key));
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for (key, word) in overrides.iter_mut() {
+        let Some(&at) = offsets.get(index[key]) else { continue };
+        let Some(compiled) = element_at(body, at) else { continue };
+        let xml = match &word.compiled {
+            Some(previous) if previous != compiled => {
+                let merged = crate::document::merge_word_edit(&word.xml, previous, compiled).map_or_else(|| compiled.to_string(), |m| m.xml);
+                crate::document::with_compiled_attributes(&merged, previous, compiled).unwrap_or(merged)
+            }
+            _ => word.xml.clone(),
+        };
+        edits.push((at, compiled.len(), xml.clone()));
+        word.compiled = Some(compiled.to_string());
+        word.xml = xml;
+    }
+    edits.sort_unstable_by_key(|(at, _, _)| std::cmp::Reverse(*at));
+    for (at, len, xml) in edits {
+        body.replace_range(at..at + len, &xml);
+    }
 }
 
 /// Compiles `input`, keeping track of which word is which (see
@@ -152,11 +283,24 @@ pub struct NativeState {
 /// numbered by the previous compile in `state` and follow their words.
 /// Without `guidance` the document is taken to be new: no previous compile.
 /// Returns the body, its revision and the renumbering of the previous words.
+#[cfg(test)]
 pub(crate) fn compile_tracking_words(
     compiler: Compiler,
     input: &str,
     guidance: Option<&Guidance>,
     state: &mut Option<NativeState>,
+) -> Result<(String, u64, Option<Renumbering>), String> {
+    compile_tracking_words_with(compiler, input, guidance, state, Vec::new())
+}
+
+/// [`compile_tracking_words`], with the overrides of a project being opened
+/// (`pending`, by word number) taken on by this compile.
+pub(crate) fn compile_tracking_words_with(
+    compiler: Compiler,
+    input: &str,
+    guidance: Option<&Guidance>,
+    state: &mut Option<NativeState>,
+    pending: Vec<SavedOverride>,
 ) -> Result<(String, u64, Option<Renumbering>), String> {
     let mut timer = perf::timer();
     let previous = state.as_ref().filter(|_| guidance.is_some());
@@ -165,13 +309,26 @@ pub(crate) fn compile_tracking_words(
     let mut compiler = compiler.with_word_identity(tracked.ids.clone(), previous_numbers);
     timer.lap("compile.track_words", []);
 
-    let body = compiler.compile(input)?;
+    let mut body = compiler.compile(input)?;
     let words = compiler.word_keys().to_vec();
     timer.lap("compile.compile", [("words", words.len().into())]);
     let renumbered = previous.and_then(|p| renumbering(&p.words, &words));
+    // Words whose XML was set: kept through guided compiles, taken from the
+    // project when it is opened
+    let mut overrides = match state.take().filter(|_| guidance.is_some()) {
+        Some(previous) => previous.overrides,
+        None => HashMap::new(),
+    };
+    for saved in pending {
+        if let Some(key) = words.get(saved.word) {
+            overrides.insert(*key, saved.word_override);
+        }
+    }
+    apply_overrides(&mut body, &words, &mut overrides);
+    let word_offsets = word_starts(&body);
     timer.done("compile.renumber", []);
     let revision = tracked.revision;
-    *state = Some(NativeState { tracked, words });
+    *state = Some(NativeState { tracked, words, overrides, body: body.clone(), word_offsets });
     Ok((body, revision, renumbered))
 }
 
@@ -536,6 +693,28 @@ pub async fn set_imported_word_xml(session: State<'_, ImportedSession>, word: us
     let mut slots = session.0.lock().map_err(|_| "Imported document state is poisoned")?;
     let source = slots.current.as_mut().ok_or("No imported document is loaded")?;
     source.set_word_xml(word, &xml)
+}
+
+/// The XML of word `word` of the new document, as the last compile wrote it
+/// (the word panel's XML tab).
+///
+/// # Errors
+///
+/// If nothing was compiled yet or there is no such word.
+#[tauri::command(async)]
+pub async fn native_word_xml(session: State<'_, NativeSession>, word: usize) -> Result<String, String> {
+    session.word_xml(word)
+}
+
+/// Sets the XML of word `word` of the new document (the word panel's XML
+/// tab); see [`NativeSession::set_word_xml`].
+///
+/// # Errors
+///
+/// If the XML isn't one well-formed `<w>`, or there is no such word.
+#[tauri::command(async)]
+pub async fn set_native_word_xml(session: State<'_, NativeSession>, word: usize, xml: String) -> Result<WordXmlChange, String> {
+    session.set_word_xml(word, &xml)
 }
 
 /// Compile an imported document using the patching system for round-trip fidelity.
@@ -1762,5 +1941,58 @@ mod word_xml_tests {
         assert!(source.set_word_xml(9, "<w>ok</w>").is_err());
         // Nothing changed
         assert!(source.compile_plainly(&dsl).unwrap().xml.contains("<!-- <w>not a word</w> -->"));
+    }
+}
+
+#[cfg(test)]
+mod native_override_tests {
+    use super::*;
+
+    fn compile(session: &NativeSession, dsl: &str, change: Option<(usize, usize, usize, usize)>, notes: bool) -> String {
+        let mut annotations = AnnotationSet::new();
+        if notes {
+            annotations.annotations.push(
+                serde_json::from_value(serde_json::json!({
+                    "id": "n", "type": "note", "target": {"type": "word", "wordIndex": 1},
+                    "value": {"kind": "note", "text": "a note"}
+                }))
+                .unwrap(),
+            );
+        }
+        let config = CompilerConfig { word_wrap: true, multi_level: true, ..Default::default() };
+        let compiler = Compiler::new().with_config(config).with_annotations(&annotations);
+        let pending = std::mem::take(&mut *session.1.lock().unwrap());
+        let mut state = session.0.lock().unwrap();
+        let guidance = change.map(|(from_a, to_a, from_b, to_b)| Guidance {
+            base_revision: state.as_ref().map_or(0, |s| s.tracked.revision),
+            changes: vec![crate::identity::TextChange { from_a, to_a, from_b, to_b }],
+        });
+        compile_tracking_words_with(compiler, dsl, guidance.as_ref(), &mut state, pending).unwrap().0
+    }
+
+    #[test]
+    fn a_new_documents_word_keeps_the_xml_set_for_it() {
+        let session = NativeSession::default();
+        let body = compile(&session, "ok maþr vas", None, false);
+        let compiled = session.word_xml(1).unwrap();
+        assert!(body.contains(&compiled) && compiled.contains("<me:dipl>maþr</me:dipl>"), "{compiled}");
+        // Markup the shorthand doesn't show, set in the word panel
+        let xml = compiled.replace("<me:dipl>maþr</me:dipl>", "<me:dipl>ma<hi rend=\"red\">þ</hi>r</me:dipl>");
+        let change = session.set_word_xml(1, &xml).unwrap();
+        assert_eq!((change.from, change.to), (3, 7));
+        let body = compile(&session, "ok maþr vas", Some((3, 7, 3, 7)), false);
+        assert!(body.contains("ma<hi rend=\"red\">þ</hi>r</me:dipl>"), "{body}");
+        // Edited in the shorthand: the edit is merged into it, and an
+        // annotation added since is written into it too
+        let body = compile(&session, "ok maþrr vas", Some((7, 7, 7, 8)), true);
+        assert!(body.contains("ma<hi rend=\"red\">þ</hi>rr</me:dipl>"), "{body}");
+        assert!(body.contains("a note"), "{body}");
+        // Saved and opened again: the first compile takes it back
+        let saved = session.saved_overrides();
+        assert_eq!(saved.len(), 1);
+        let reopened = NativeSession::default();
+        reopened.restore(saved);
+        let again = compile(&reopened, "ok maþrr vas", None, true);
+        assert_eq!(again, body);
     }
 }

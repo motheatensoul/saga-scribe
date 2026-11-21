@@ -125,6 +125,53 @@ pub fn as_different_word(word_xml: &str, new_compiled: &str) -> Option<String> {
     word.node_xml(w).ok()
 }
 
+/// `word_xml` with what the compiler writes from annotations changed as it
+/// changed from `old_compiled` to `new_compiled`: start-tag attributes (a
+/// lemma, an analysis, `ana`) and the word's notes; its other attributes and
+/// content stay. `None` if the fragments can't be read.
+pub fn with_compiled_attributes(word_xml: &str, old_compiled: &str, new_compiled: &str) -> Option<String> {
+    let (mut word, w) = parse_word(word_xml)?;
+    let (old, old_w) = parse_word(old_compiled)?;
+    let (new, new_w) = parse_word(new_compiled)?;
+    let attributes = |tree: &Tree, id: NodeId| -> Vec<(String, String)> {
+        tree.element(id).map(|e| e.attributes.iter().map(|a| (a.name.clone(), a.value.clone())).collect()).unwrap_or_default()
+    };
+    let (before, after) = (attributes(&old, old_w), attributes(&new, new_w));
+    let value = |list: &[(String, String)], name: &str| list.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+    let mut names: Vec<&String> = before.iter().chain(after.iter()).map(|(n, _)| n).collect();
+    names.dedup();
+    for name in names {
+        let (was, now) = (value(&before, name), value(&after, name));
+        if was != now {
+            word.set_attribute(w, name, now.as_deref()).ok()?;
+        }
+    }
+    // Notes the compiler writes into the word (from annotations) likewise:
+    // the old compiled ones go, the new ones come
+    let notes = |tree: &Tree, id: NodeId| -> Vec<(NodeId, String)> {
+        tree.children(id)
+            .iter()
+            .filter(|&&c| tree.element(c).is_some_and(|e| local(&e.name) == "note"))
+            .filter_map(|&c| Some((c, tree.node_xml(c).ok()?)))
+            .collect()
+    };
+    let (old_notes, new_notes) = (notes(&old, old_w), notes(&new, new_w));
+    if old_notes.iter().map(|(_, x)| x).ne(new_notes.iter().map(|(_, x)| x)) {
+        for (id, xml) in notes(&word, w) {
+            if old_notes.iter().any(|(_, x)| *x == xml) {
+                word.remove(id);
+            }
+        }
+        for (id, xml) in &new_notes {
+            if !notes(&word, w).iter().any(|(_, x)| x == xml) {
+                let at = word.children(w).len();
+                word.graft(&new, *id, w, at);
+            }
+        }
+    }
+    word.node_xml(w).ok()
+}
+
 /// The name of a word's own content when it has no levels.
 const CONTENT: &str = "content";
 

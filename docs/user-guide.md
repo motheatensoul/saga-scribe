@@ -58,7 +58,14 @@ Work is saved as a project file with the extension `.teis`. It is a ZIP archive 
 - annotations, with a fingerprint of each annotated word (`anchors.json`), so that if the
   file was changed outside Saga-Scribe they are found on their words again, and those whose
   words are gone are left out with a warning in the log;
-- manuscript metadata.
+- manuscript metadata;
+- for a new document, the words whose XML was set in the word panel's **XML** tab
+  (`overrides.json`).
+
+A new document's XML is compiled from the shorthand, with lemmas, notes and other
+annotations written into it, so the exported file is a complete edition. A word whose XML
+you set in the word panel's **XML** tab keeps it: later edits of the word in the shorthand
+are merged into it, and lemmas and annotations changed later are written into it too.
 
 For an imported file, `document.xml` is the file with your edits: what you didn't edit is
 in it exactly as in the file you imported. When the project is opened, the shorthand is
@@ -514,7 +521,8 @@ exported:
   anything the shorthand and the other tabs don't cover. **Apply** sets the word in the
   file and puts its shorthand in the editor; the XML must be a single, well-formed element
   of the same kind (a `<w>` stays a `<w>`). A word added in the shorthand can be edited
-  this way once the project has been saved and opened again.
+  this way once the project has been saved and opened again. (In a new document, any word
+  can be: see [Projects and files](#projects-and-files).)
 - A paragraph can be split by adding `.p` and joined by removing one. A split has to fall
   between elements such as sentences (`<s>`), not inside one.
 - If the shorthand contains an error, the document is not saved or exported, rather than

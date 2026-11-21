@@ -17,27 +17,21 @@ when it is done (and record it in CHANGELOG.md if users notice).
 
 ## Document model
 
-- **Edits lose markup the shorthand can't show** (`<ex>` in dipl-only files, `<supplied>`
-  inside a level, gap attributes, comments, levels the file doesn't have; numbers in the
-  survey below). The plan is a new document model with the XML as the only truth, views
-  as lenses, and a project profile for transcription levels: `docs/DOCUMENT_MODEL.md`
-  (design agreed 2026-11-11). Done: steps 1, 2 and 3a (an edited word keeps the markup
-  the shorthand doesn't show), and the shorthand of all 288 Menota files reads as their
-  words token for token (DSL rules 3 and 4, 2026-11-12), which 3b needs. The 3b gates
-  (GetPut, PutGet, Locality: `corpus_edits_are_put_back_locally`) pass, and edits are
-  applied to the file's tree instead of spliced into its text (2026-11-12). Replaced words
-  are marked in the shorthand and asked about in the word panel (2026-11-12); a word cut
-  and pasted elsewhere is moved with its XML (2026-11-21). Opening a project projects
-  its file afresh, and projects saved with older import rules are brought onto the
-  current ones (2026-11-21), which finishes 3b. The profile of step 4 is inferred
-  and confirmed on import, and new words get the file's levels (2026-11-21). Pinned normalized forms are kept
-  and marked when an edit may have outdated them. `//n` shows one lineation. Next in
-  4: the profile's abbreviation and punctuation encoding in the compiler, resetting a
-  pinned level; imported documents are saved as
-  `.teis` 2.0 (`document.xml`, step 6). The word panel's XML tab edits a
-  word's XML (step 5 started). Next: in 5, levels, ranges and attributes in their own
-  controls, and resetting a pinned level;
-  in 6, new documents as trees from their template. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
+- **Document model** (`docs/DOCUMENT_MODEL.md`, design agreed 2026-11-11): the XML is the
+  only truth, views are lenses, and a project profile describes the transcription levels.
+  Done: steps 1 to 3 (the tree, the projection, edits merged into words and applied to the
+  tree, replaced and moved words, older projects brought onto the current rules), step 4
+  (the profile, confirmed on import; pinned normalized forms; one lineation for `//n`),
+  step 6 (`.teis` 2.0: imported documents saved as `document.xml` with their profile, open
+  records and annotation anchors; new documents keep words set in the XML tab), and the
+  word panel's XML tab of step 5 (all 2026-11-21). Left:
+  - step 4: the profile's abbreviation and punctuation encoding in the compiler (with
+    the abbreviation notation, step 7);
+  - step 5: levels, ranges and attributes in their own controls in the word panel, and
+    resetting a pinned level to its derivation (needs the normalizer outside a compile);
+  - a word typed in the shorthand of an imported file can only get its XML set after
+    the project is saved and opened again.
+  Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).
 - **Text outside words in documents without `<w>`** is still split at punctuation by the

@@ -33,13 +33,13 @@
 //! | 1.6 | Paragraph start tags are `paragraph` segments (`.p` in the DSL); spans cover all tags |
 //! | 1.7 | `\` escapes a character and `#…#` is a numeral; older shorthand is escaped when opened |
 //! | 1.8 | segments.json holds the answers for replaced and deleted words (`decisions`) |
-//! | 2.0 | An imported document is saved as the file now is (`document.xml`) with `profile.json` and `records.json` (open records by place and fingerprint); no `segments.json`, `output.xml` or split original for it. `anchors.json`: the annotated words' fingerprints, by word number |
+//! | 2.0 | `overrides.json`: a new document's words whose XML was set in the word panel. An imported document is saved as the file now is (`document.xml`) with `profile.json` and `records.json` (open records by place and fingerprint); no `segments.json`, `output.xml` or split original for it. `anchors.json`: the annotated words' fingerprints, by word number |
 //!
 //! All writes are atomic: data is written to a temporary file next to the target
 //! and renamed over it, so a crash mid-save never leaves a truncated file.
 
 use crate::annotations::AnnotationSet;
-use crate::commands::parse::{ImportedSession, ImportedSource, StagedDocument};
+use crate::commands::parse::{ImportedSession, ImportedSource, NativeSession, SavedOverride, StagedDocument};
 use crate::importer::tei::recompute_spans;
 use crate::importer::tei::segments::{Decision, ImportedDocument, Segment};
 use crate::metadata::Metadata;
@@ -208,6 +208,10 @@ pub struct ProjectData {
     /// Its records still open when saved (2.0, `records.json`)
     #[serde(skip)]
     pub saved_records: Vec<crate::importer::tei::patching::SavedRecord>,
+    /// A new document's words whose XML was set in the word panel (2.0,
+    /// `overrides.json`)
+    #[serde(skip)]
+    pub overrides: Vec<SavedOverride>,
     /// Annotations dropped because their words couldn't be found again in
     /// the saved file (2.0, `anchors.json`)
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -230,6 +234,7 @@ pub struct ProjectData {
 #[allow(clippy::too_many_arguments)]
 pub async fn save_project(
     session: State<'_, ImportedSession>,
+    native: State<'_, NativeSession>,
     path: String,
     source: String,
     output: String,
@@ -241,10 +246,12 @@ pub async fn save_project(
 ) -> Result<Option<String>, String> {
     let session = session.inner().clone();
     let fields = ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json };
+    // A new document's words whose XML was set in the word panel
+    let overrides = if decisions_json.is_none() { native.saved_overrides() } else { Vec::new() };
     tauri::async_runtime::spawn_blocking(move || {
         let timer = crate::perf::timer();
         let not_well_formed = crate::xml::check_well_formed(&fields.output).err();
-        let result = save_project_at(&session, Path::new(&path), fields, decisions_json);
+        let result = save_project_with(&session, Path::new(&path), fields, decisions_json, overrides);
         timer.done("save_project", [("ok", result.is_ok().into()), ("well_formed", not_well_formed.is_none().into())]);
         result.map(|()| not_well_formed)
     })
@@ -264,11 +271,24 @@ pub(crate) struct ProjectFields {
 }
 
 /// Saves a project at `path` (see [`save_project`]).
+#[cfg(test)]
 pub(crate) fn save_project_at(
     session: &ImportedSession,
     path: &Path,
     fields: ProjectFields,
     decisions_json: Option<String>,
+) -> Result<(), String> {
+    save_project_with(session, path, fields, decisions_json, Vec::new())
+}
+
+/// [`save_project_at`], with a new document's words whose XML was set in
+/// the word panel (`overrides.json`).
+pub(crate) fn save_project_with(
+    session: &ImportedSession,
+    path: &Path,
+    fields: ProjectFields,
+    decisions_json: Option<String>,
+    overrides: Vec<SavedOverride>,
 ) -> Result<(), String> {
     let ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json } = fields;
     // An imported document is saved as the file now is (`document.xml`),
@@ -295,6 +315,10 @@ pub(crate) fn save_project_at(
         }
         _ => None,
     };
+    let overrides_json = match overrides.is_empty() {
+        true => None,
+        false => Some(serde_json::to_string(&overrides).map_err(|e| e.to_string())?),
+    };
     let (document_xml, profile_json, records_json, output) = match imported {
         Some((profile, records)) => (Some(output), Some(profile), Some(records), None),
         None => (None, None, None, Some(output)),
@@ -313,6 +337,7 @@ pub(crate) fn save_project_at(
                 profile_json,
                 records_json,
                 anchors_json,
+                overrides_json,
                 ..Default::default()
             },
         )
@@ -336,6 +361,8 @@ struct ProjectContents {
     records_json: Option<String>,
     /// The fingerprints of the annotated words, by word number (2.0)
     anchors_json: Option<String>,
+    /// A new document's words whose XML was set in the word panel (2.0)
+    overrides_json: Option<String>,
     /// The parts of formats before 2.0, which only tests still write
     segments_json: Option<String>,
     original_body_xml: Option<String>,
@@ -355,6 +382,7 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
         profile_json,
         records_json,
         anchors_json,
+        overrides_json,
         segments_json,
         original_body_xml,
         original_preamble,
@@ -389,6 +417,9 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     }
     if let Some(anchors) = &anchors_json {
         put("anchors.json", anchors)?;
+    }
+    if let Some(overrides) = &overrides_json {
+        put("overrides.json", overrides)?;
     }
 
     // Write confirmations.json (backward compat for older app versions)
@@ -487,11 +518,18 @@ fn is_zero(n: &usize) -> bool {
 /// Opens a .teis project archive and loads all contained data; an imported
 /// document is read into its tree and staged.
 #[tauri::command(async)]
-pub async fn open_project(path: String, session: State<'_, ImportedSession>) -> Result<OpenedProject, String> {
+pub async fn open_project(
+    path: String,
+    session: State<'_, ImportedSession>,
+    native: State<'_, NativeSession>,
+) -> Result<OpenedProject, String> {
     let session = session.inner().clone();
+    let native = native.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let timer = crate::perf::timer();
         let mut project = read_project(&path)?;
+        // A new document's words set in the word panel: its first compile takes them
+        native.restore(std::mem::take(&mut project.overrides));
         let (imported, rewritten) = stage_project(&mut project, &session)?;
         timer.done("open_project", [("imported", imported.is_some().into()), ("rewritten", rewritten.into())]);
         Ok(OpenedProject { project, imported, rewritten })
@@ -574,6 +612,10 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
     // An imported document, saved as the file was (2.0)
     let document_xml = read_zip_file(&mut archive, "document.xml").ok();
     let profile = read_zip_file(&mut archive, "profile.json").ok().and_then(|json| serde_json::from_str(&json).ok());
+    let overrides = match read_zip_file(&mut archive, "overrides.json") {
+        Ok(json) => serde_json::from_str(&json).map_err(|e| format!("Failed to parse overrides.json: {e}"))?,
+        Err(_) => Vec::new(),
+    };
     let saved_records = match read_zip_file(&mut archive, "records.json") {
         Ok(json) => serde_json::from_str(&json).map_err(|e| format!("Failed to parse records.json: {e}"))?,
         Err(_) => Vec::new(),
@@ -671,6 +713,7 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
         document_xml,
         profile,
         saved_records,
+        overrides,
         unplaced_annotations,
     })
 }

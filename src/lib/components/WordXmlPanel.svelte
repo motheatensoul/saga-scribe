@@ -1,11 +1,20 @@
 <script lang="ts">
-    import { importedWordXml, setImportedWordXml, type WordXmlChange } from "$lib/tauri";
+    import {
+        importedWordXml,
+        nativeWordXml,
+        setImportedWordXml,
+        setNativeWordXml,
+        type WordXmlChange,
+    } from "$lib/tauri";
 
     let {
         wordIndex,
+        imported = true,
         onapplied,
     }: {
         wordIndex: number;
+        /** An imported file's word (otherwise a new document's) */
+        imported?: boolean;
         /** The word's XML was set: put its shorthand in the editor */
         onapplied?: (change: WordXmlChange) => void;
     } = $props();
@@ -18,7 +27,7 @@
     $effect(() => {
         const word = wordIndex;
         error = null;
-        importedWordXml(word)
+        (imported ? importedWordXml : nativeWordXml)(word)
             .then((text) => {
                 xml = text;
                 original = text;
@@ -51,7 +60,7 @@
         busy = true;
         error = null;
         try {
-            const change = await setImportedWordXml(wordIndex, xml);
+            const change = await (imported ? setImportedWordXml : setNativeWordXml)(wordIndex, xml);
             original = xml;
             onapplied?.(change);
         } catch (e) {

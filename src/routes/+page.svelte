@@ -369,6 +369,8 @@
             sessionLemmaStore.unconfirmWithHistory(word, true, true);
         }
         editorComponent?.replaceRange(change.from, change.to, change.dsl);
+        // Compile even if the shorthand reads as before (only hidden markup changed)
+        void compileNow();
         errorStore.info("Word", `Set the XML of word #${word}`);
     }
 
@@ -1270,21 +1272,19 @@
                     >
                         Annotate
                     </button>
-                    {#if importedStore.isImportedMode}
-                        <button
-                            type="button"
-                            id="word-tab-xml"
-                            class="tab"
-                            class:tab-active={wordPanelTab === "xml"}
-                            role="tab"
-                            aria-selected={wordPanelTab === "xml"}
-                            aria-controls="word-panel-xml"
-                            tabindex={wordPanelTab === "xml" ? 0 : -1}
-                            onclick={() => wordPanelTab = "xml"}
-                        >
-                            XML
-                        </button>
-                    {/if}
+                    <button
+                        type="button"
+                        id="word-tab-xml"
+                        class="tab"
+                        class:tab-active={wordPanelTab === "xml"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "xml"}
+                        aria-controls="word-panel-xml"
+                        tabindex={wordPanelTab === "xml" ? 0 : -1}
+                        onclick={() => wordPanelTab = "xml"}
+                    >
+                        XML
+                    </button>
                 </div>
                 <!-- Tab content -->
                 <div class="p-4">
@@ -1321,18 +1321,20 @@
                             onFindMatchingWords={findMatchingWords}
                         />
                     </div>
-                    {#if importedStore.isImportedMode}
-                        <div
-                            id="word-panel-xml"
-                            role="tabpanel"
-                            aria-labelledby="word-tab-xml"
-                            class:hidden={wordPanelTab !== "xml"}
-                        >
-                            {#if wordPanelTab === "xml"}
-                                <WordXmlPanel wordIndex={selectedWordIndex} onapplied={handleWordXmlApplied} />
-                            {/if}
-                        </div>
-                    {/if}
+                    <div
+                        id="word-panel-xml"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-xml"
+                        class:hidden={wordPanelTab !== "xml"}
+                    >
+                        {#if wordPanelTab === "xml"}
+                            <WordXmlPanel
+                                wordIndex={selectedWordIndex}
+                                imported={importedStore.isImportedMode}
+                                onapplied={handleWordXmlApplied}
+                            />
+                        {/if}
+                    </div>
                 </div>
             </div>
         </div>

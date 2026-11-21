@@ -147,6 +147,16 @@ export async function setImportedWordXml(word: number, xml: string): Promise<Wor
   return invoke("set_imported_word_xml", { word, xml });
 }
 
+/** The XML of word `word` of the new document, as the last compile wrote it. */
+export async function nativeWordXml(word: number): Promise<string> {
+  return invoke("native_word_xml", { word });
+}
+
+/** Sets the XML of word `word` of the new document: compiles put it in place of the compiled word. */
+export async function setNativeWordXml(word: number, xml: string): Promise<WordXmlChange> {
+  return invoke("set_native_word_xml", { word, xml });
+}
+
 /** Sets the levels new words of the current imported document get (after the editor confirmed them). */
 export async function setImportedLevels(levels: Level[], choice: boolean): Promise<Profile> {
   return invoke("set_imported_levels", { levels, choice });

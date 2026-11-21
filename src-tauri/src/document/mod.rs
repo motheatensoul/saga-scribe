@@ -22,7 +22,7 @@ mod project;
 mod tree;
 mod write;
 
-pub use merge::{as_different_word, merge_word_edit};
+pub use merge::{as_different_word, merge_word_edit, with_compiled_attributes};
 pub use project::{find_body, project_body, project_body_with, word_dsl};
 pub use tree::{Element, NodeId, NodeKind, Tree};
 #[cfg(test)]

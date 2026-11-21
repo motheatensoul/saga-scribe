@@ -402,9 +402,13 @@ text).
    annotations; `segments.json`, `output.xml` and the split original are gone for them.
    Opening reads `document.xml` as an import with the saved profile, keeps the stored
    shorthand where it reads as the file (`keep_as_written`) and finds the records' words
-   again. Projects of 1.x are opened as before and saved as 2.0. Not yet: new documents
-   as trees created from their template (they still save `source.dsl` and
-   `output.xml`). Annotations are kept by word number with each annotated word's
+   again. Projects of 1.x are opened as before and saved as 2.0. New documents (decided
+   2026-11-21: the XML must be a usable edition, so annotations stay compiled into it):
+   their XML is still compiled from the shorthand with lemmas, notes and other
+   annotations, and a word whose XML is set in the word panel is kept as an override
+   (`NativeSession`, `overrides.json`): the compiled word is replaced by it, later edits
+   are merged into it (`merge_word_edit`), and the attributes and notes the compiler
+   writes from annotations follow (`with_compiled_attributes`). Annotations are kept by word number with each annotated word's
    fingerprint in `anchors.json` (for new documents too); on opening, a word that isn't at
    its number is looked for nearby, and annotations whose word is gone are left out and
    counted.
