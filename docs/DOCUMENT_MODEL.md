@@ -294,7 +294,9 @@ A new format version of the `.teis` holds:
 - `document.xml`: the current XML, the truth;
 - `profile.json`: levels and encoding choices;
 - `source.dsl`: the shorthand as written (a cache, checked on load as above);
-- data that isn't part of the edition: annotations kept in the project only, unconfirmed
+- data that isn't part of the edition: annotations on spans (the others are written into
+  the XML, decided 2026-11-21: the exported file is the edition, and the project's XML is
+  the same as the export), unconfirmed
   suggestions, view settings.
 
 `segments.json`, `output.xml` and the split original XML go away. New documents are trees

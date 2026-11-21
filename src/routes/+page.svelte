@@ -162,11 +162,19 @@
             return perfTime(
                 "compile.roundtrip",
                 () =>
-                    importedStore.compile(content, () => ({
-                        ...entityOptions,
-                        lemmaMappingsJson: lemmaMappingsJson(),
-                        annotatedWords: annotatedWords(annotationStore.getSet()),
-                    })),
+                    importedStore.compile(content, () => {
+                        const annotationSet = annotationStore.getSet();
+                        const words = annotatedWords(annotationSet);
+                        // Notes and other annotations go into the file, as in a new
+                        // document (lemmas go separately, as mappings)
+                        const others = annotationSet.annotations.filter((a) => a.type !== "lemma");
+                        return {
+                            ...entityOptions,
+                            lemmaMappingsJson: lemmaMappingsJson(),
+                            annotatedWords: words,
+                            annotationsJson: others.length > 0 ? JSON.stringify({ ...annotationSet, annotations: others }) : undefined,
+                        };
+                    }),
                 { mode: "imported", dsl_chars: content.length },
             );
         }

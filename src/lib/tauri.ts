@@ -291,6 +291,8 @@ export interface CompileImportedOptions {
   lemmaMappingsJson?: string;
   /** Words (by number) with annotations other than lemmas, which replaced words report */
   annotatedWords?: number[];
+  /** All annotations, whose notes and attributes are written into the file's words */
+  annotationsJson?: string;
 }
 
 /**
@@ -369,6 +371,7 @@ export async function compileImported(
     guidance: guidance ?? null,
     decisions: decisions ?? null,
     annotatedWords: options?.annotatedWords?.length ? options.annotatedWords : null,
+    annotationsJson: options?.annotationsJson ?? null,
     xmlBase: xmlBase ?? null,
   });
 }

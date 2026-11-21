@@ -472,6 +472,78 @@ pub struct WordXmlChange {
     pub msa: Option<String>,
 }
 
+/// Writes what the annotations of `set` (numbered by the previous compile's
+/// `previous` words, or by `words` without one) add to words into `body`
+/// (whose words are `words`): attributes, notes, `<c>` for characters.
+fn write_annotations(
+    body: &mut crate::importer::tei::patching::RenderedBody,
+    set: &AnnotationSet,
+    words: &[WordKey],
+    previous: Option<&Vec<WordKey>>,
+    config: &CompilerConfig,
+) {
+    use crate::annotations::{AnnotationTarget, AnnotationType};
+    let annotated: HashSet<u32> = set
+        .annotations
+        .iter()
+        .filter(|a| a.annotation_type != AnnotationType::Lemma)
+        .filter_map(|a| match &a.target {
+            AnnotationTarget::Word { word_index } | AnnotationTarget::Character { word_index, .. } => Some(*word_index),
+            AnnotationTarget::Span { .. } => None,
+        })
+        .collect();
+    if annotated.is_empty() {
+        return;
+    }
+    let compiler = Compiler::new().with_config(config.clone()).with_annotations(set);
+    let previous_numbers = previous.map(|p| numbers_by_key(p));
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    for (n, key) in words.iter().enumerate() {
+        let number = match &previous_numbers {
+            Some(numbers) => match numbers.get(key) {
+                Some(&p) => p,
+                None => continue,
+            },
+            None => n as u32,
+        };
+        if !annotated.contains(&number) {
+            continue;
+        }
+        let Some(&(at, _)) = body.words.get(n) else { continue };
+        let Some(xml) = element_at(&body.xml, at) else { continue };
+        let (attributes, notes) = compiler.annotation_markup(number);
+        let chars = |text: &str| compiler.with_character_tags(text, number);
+        if let Some(marked) = crate::document::with_annotation_markup(xml, &attributes, &notes, &chars) {
+            if marked != xml {
+                replacements.push((at, xml.len(), marked));
+            }
+        }
+    }
+    // Back to front; then the offsets after each replacement move by its change
+    replacements.sort_unstable_by_key(|(at, _, _)| *at);
+    for (at, len, xml) in replacements.iter().rev() {
+        body.xml.replace_range(*at..*at + *len, xml);
+    }
+    // What the replacements up to each one add, for looking up
+    let mut added = Vec::with_capacity(replacements.len());
+    let mut total = 0isize;
+    for (_, len, xml) in &replacements {
+        total += xml.len() as isize - *len as isize;
+        added.push(total);
+    }
+    let shift = |offset: usize| -> usize {
+        let before = replacements.partition_point(|(at, _, _)| *at < offset);
+        let moved = before.checked_sub(1).map_or(0, |i| added[i]);
+        (offset as isize + moved) as usize
+    };
+    for (offset, _) in body.words.iter_mut() {
+        *offset = shift(*offset);
+    }
+    for offset in body.edited_words.iter_mut() {
+        *offset = shift(*offset);
+    }
+}
+
 /// The element that starts at `at` in `xml` (a `<w>`), as written.
 fn element_at(xml: &str, at: usize) -> Option<&str> {
     let rest = xml.get(at..)?;
@@ -511,7 +583,7 @@ impl ImportedSource {
     #[cfg(test)]
     pub(crate) fn compile_plainly(&mut self, dsl: &str) -> Result<CompileOutput, String> {
         let mut compiler = Compiler::new().with_config(self.config.clone());
-        compile_imported_source(self, &mut compiler, dsl, None, &HashMap::new(), HashMap::new(), &[])
+        compile_imported_source(self, &mut compiler, dsl, None, &HashMap::new(), HashMap::new(), &[], None)
     }
 
     /// The XML of word `word` (as the previews number them) as the last
@@ -740,6 +812,7 @@ pub async fn compile_imported(
     guidance: Option<Guidance>,
     decisions: Option<HashMap<usize, Decision>>,
     annotated_words: Option<Vec<u32>>,
+    annotations_json: Option<String>,
     xml_base: Option<u64>,
     sent: State<'_, SentOutput>,
 ) -> Result<CompileReply, String> {
@@ -802,8 +875,13 @@ pub async fn compile_imported(
 
         let decisions = decisions.unwrap_or_default();
         let annotated = annotated_words.unwrap_or_default();
+        // Notes and other annotations, written into their words
+        let annotations: Option<AnnotationSet> = match annotations_json {
+            Some(json) => Some(serde_json::from_str(&json).map_err(|e| format!("Failed to parse annotations: {e}"))?),
+            None => None,
+        };
         let output =
-            compile_imported_source(source, &mut compiler, &edited_dsl, guidance.as_ref(), &decisions, lemmas, &annotated)?;
+            compile_imported_source(source, &mut compiler, &edited_dsl, guidance.as_ref(), &decisions, lemmas, &annotated, annotations.as_ref())?;
         total.done(
             "compile_imported",
             [
@@ -825,6 +903,7 @@ pub async fn compile_imported(
 /// which word is which, and writes confirmed `lemmas` (numbered by the
 /// previous compile) into the words. `annotated` are the words (numbered
 /// likewise) with annotations other than lemmas, which replaced words report.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_imported_source(
     source: &mut ImportedSource,
     compiler: &mut Compiler,
@@ -833,6 +912,7 @@ pub(crate) fn compile_imported_source(
     decisions: &HashMap<usize, Decision>,
     lemmas: HashMap<u32, LemmaMapping>,
     annotated: &[u32],
+    annotations: Option<&AnnotationSet>,
 ) -> Result<CompileOutput, String> {
     // Compute patches between original segments and edited DSL, using the
     // editor's changes to keep track of which word is which
@@ -975,6 +1055,13 @@ pub(crate) fn compile_imported_source(
         }
     }
     timer.lap("compile.renumber", []);
+    // Annotations (other than lemmas) into their words, as a new document
+    // has them: the exported file is the edition
+    let mut body = body;
+    if let Some(set) = annotations {
+        write_annotations(&mut body, set, &words, previous, &source.config);
+        timer.lap("compile.write_annotations", [("annotations", set.annotations.len().into())]);
+    }
     let (body_xml, word_offsets) = write_lemmas_placed(&body, &lemmas, source.document.is_menota);
     timer.lap("compile.write_lemmas", [("lemmas", lemmas.len().into())]);
 
@@ -1399,7 +1486,7 @@ mod imported_identity_tests {
                 (*n, mapping)
             })
             .collect();
-        compile_imported_source(source, &mut compiler, dsl, guidance.as_ref(), &HashMap::new(), lemmas, &[]).unwrap()
+        compile_imported_source(source, &mut compiler, dsl, guidance.as_ref(), &HashMap::new(), lemmas, &[], None).unwrap()
     }
 
     /// Compiles `dsl` as an edit of `from` (guided), with `decisions`.
@@ -1429,7 +1516,7 @@ mod imported_identity_tests {
         let guidance = Guidance { base_revision: source.patcher.revision(), changes: vec![change] };
         let mut compiler = Compiler::new().with_config(source.config.clone());
         let decisions: HashMap<usize, Decision> = decisions.iter().copied().collect();
-        compile_imported_source(source, &mut compiler, dsl, Some(&guidance), &decisions, HashMap::new(), annotated).unwrap()
+        compile_imported_source(source, &mut compiler, dsl, Some(&guidance), &decisions, HashMap::new(), annotated, None).unwrap()
     }
 
     #[test]
@@ -1503,7 +1590,7 @@ mod imported_identity_tests {
         let after = session
             .with_current_mut(|source| {
                 let mut compiler = Compiler::new().with_config(source.config.clone());
-                compile_imported_source(source, &mut compiler, &edited, None, &HashMap::new(), HashMap::new(), &[]).unwrap()
+                compile_imported_source(source, &mut compiler, &edited, None, &HashMap::new(), HashMap::new(), &[], None).unwrap()
             })
             .unwrap()
             .unwrap();
@@ -1534,7 +1621,7 @@ mod imported_identity_tests {
         let after = session
             .with_current_mut(|s| {
                 let mut compiler = Compiler::new().with_config(s.config.clone());
-                compile_imported_source(s, &mut compiler, &source, None, &HashMap::new(), HashMap::new(), &[]).unwrap()
+                compile_imported_source(s, &mut compiler, &source, None, &HashMap::new(), HashMap::new(), &[], None).unwrap()
             })
             .unwrap()
             .unwrap();
@@ -1692,13 +1779,13 @@ mod imported_identity_tests {
             changes: vec![TextChange { from_a: at, to_a: at + 2, from_b: at, to_b: at + 2 }],
         };
         let old = HashMap::from([(0, LemmaMapping { lemma: "ok".into(), msa: "xCC".into(), normalized: None })]);
-        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), old, &[]).unwrap();
+        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), old, &[], None).unwrap();
         assert_eq!((out.records[0].suggestion, out.records[0].word), (Decision::Different, Some(0)));
         assert!(!out.xml.contains("lemma=\"ok\""), "{}", out.xml);
         // A lemma chosen for the new word is written
         let new = HashMap::from([(0, LemmaMapping { lemma: "þá".into(), msa: "xAV".into(), normalized: None })]);
         let guidance = Guidance { base_revision: source.patcher.revision(), changes: vec![] };
-        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), new, &[]).unwrap();
+        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), new, &[], None).unwrap();
         assert!(out.xml.contains(r#"<w lemma="þá" me:msa="xAV">"#), "{}", out.xml);
     }
 
@@ -1923,7 +2010,7 @@ mod word_xml_tests {
             base_revision: source.patcher.revision(),
             changes: vec![crate::identity::TextChange { from_a: change.from, to_a: change.to, from_b: change.from, to_b: change.from + change.dsl.encode_utf16().count() }],
         };
-        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), HashMap::new(), &[]).unwrap();
+        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), HashMap::new(), &[], None).unwrap();
         assert!(out.xml.contains(r#"<w lemma="maðr" me:msa="xNC"><me:dipl>ma<ex>n</ex>nr</me:dipl></w>"#), "{}", out.xml);
         // Everything else as it was; the word keeps its number
         assert_eq!(out.xml.replace(r#" me:msa="xNC""#, "").replace("</ex>nr<", "</ex>n<"), first.xml);
@@ -1994,5 +2081,44 @@ mod native_override_tests {
         reopened.restore(saved);
         let again = compile(&reopened, "ok maþrr vas", None, true);
         assert_eq!(again, body);
+    }
+}
+
+#[cfg(test)]
+mod imported_annotation_tests {
+    use super::*;
+
+    #[test]
+    fn notes_and_annotations_are_written_into_an_imported_file() {
+        let xml = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
+<p><w lemma="ok"><me:dipl>ok</me:dipl></w> <w><me:dipl>maþr</me:dipl></w> <w><me:dipl>vas</me:dipl></w></p>
+</body></text></TEI>"#;
+        let import = crate::importer::tei::parse(xml).unwrap();
+        let mut source = ImportedSource::new(
+            import.imported_document.unwrap(),
+            import.original_body_xml.unwrap(),
+            import.original_preamble.unwrap_or_default(),
+            import.original_postamble.unwrap_or_default(),
+        );
+        let annotations: AnnotationSet = serde_json::from_value(serde_json::json!({
+            "version": "1.0",
+            "annotations": [
+                {"id": "n1", "type": "note", "target": {"type": "word", "wordIndex": 1}, "value": {"kind": "note", "text": "a note"}},
+                {"id": "s1", "type": "semantic", "target": {"type": "word", "wordIndex": 1}, "value": {"kind": "semantic", "category": "person"}}
+            ]
+        }))
+        .unwrap();
+        let mut compiler = Compiler::new().with_config(source.config.clone());
+        let out = compile_imported_source(&mut source, &mut compiler, &import.dsl, None, &HashMap::new(), HashMap::new(), &[], Some(&annotations)).unwrap();
+        assert!(out.xml.contains(r##"<w ana="#person"><me:dipl>maþr</me:dipl><note>a note</note></w>"##), "{}", out.xml);
+        // The other words, and without annotations the file, as they were
+        assert!(out.xml.contains(r#"<w lemma="ok"><me:dipl>ok</me:dipl></w> "#), "{}", out.xml);
+        let mut compiler = Compiler::new().with_config(source.config.clone());
+        let plain = compile_imported_source(&mut source, &mut compiler, &import.dsl, None, &HashMap::new(), HashMap::new(), &[], None).unwrap();
+        assert_eq!(plain.xml, xml);
+        // The word panel reads the word with them
+        let mut compiler = Compiler::new().with_config(source.config.clone());
+        compile_imported_source(&mut source, &mut compiler, &import.dsl, None, &HashMap::new(), HashMap::new(), &[], Some(&annotations)).unwrap();
+        assert!(source.word_xml(1).unwrap().contains("<note>a note</note>"));
     }
 }

@@ -172,6 +172,50 @@ pub fn with_compiled_attributes(word_xml: &str, old_compiled: &str, new_compiled
     word.node_xml(w).ok()
 }
 
+/// `word_xml` with what a word's annotations add written into it: the
+/// attributes in `attributes` (as in a start tag, ` ana="#x"`) set, the
+/// `<note>` elements of `notes` added at its end, and its main level's text
+/// (facsimile if it has one; its own text, without levels) as `chars` makes it (`<c>` elements
+/// for character annotations). `None` if the fragments can't be read.
+pub fn with_annotation_markup(word_xml: &str, attributes: &str, notes: &str, chars: &dyn Fn(&str) -> String) -> Option<String> {
+    let (mut word, w) = parse_word(word_xml)?;
+    if !attributes.trim().is_empty() {
+        let (tag, t) = parse_word(&format!("<w{attributes}/>"))?;
+        for attribute in tag.element(t)?.attributes.clone() {
+            word.set_attribute(w, &attribute.name, Some(&attribute.value)).ok()?;
+        }
+    }
+    // The text character annotations are counted in
+    // (the main level: facs, otherwise the first; before the notes go in)
+    let level = levels(&word, w).first().map(|(_, id)| *id);
+    if let Some(level) = level {
+        let inner: String = word.children(level).iter().filter_map(|&c| word.node_xml(c).ok()).collect();
+        let marked = chars(&inner);
+        if marked != inner {
+            let (fragment, f) = parse_word(&format!("<w>{marked}</w>"))?;
+            for child in word.children(level).to_vec() {
+                word.remove(child);
+            }
+            for (i, &child) in fragment.children(f).iter().enumerate() {
+                word.graft(&fragment, child, level, i);
+            }
+        }
+    }
+    if !notes.trim().is_empty() {
+        let (fragment, f) = parse_word(&format!("<w>{notes}</w>"))?;
+        let present: Vec<String> = word.children(w).iter().filter_map(|&c| word.node_xml(c).ok()).collect();
+        for &note in fragment.children(f) {
+            // A note already in the word (set in the word panel) isn't added again
+            if fragment.node_xml(note).is_ok_and(|xml| present.contains(&xml)) {
+                continue;
+            }
+            let at = word.children(w).len();
+            word.graft(&fragment, note, w, at);
+        }
+    }
+    word.node_xml(w).ok()
+}
+
 /// The name of a word's own content when it has no levels.
 const CONTENT: &str = "content";
 

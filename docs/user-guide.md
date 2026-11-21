@@ -443,8 +443,11 @@ An annotation can cover several words: with the panel open, Shift-click another 
 extend the span. A single-word annotation can be applied to every occurrence of the same
 form at once ("Apply to all").
 
-Annotations are saved in the project. For imported TEI files, see
-[Importing existing files](#importing-existing-files).
+Annotations are saved in the project and written into the XML, in new documents and
+imported TEI files alike, so the exported file (the same as the one in the project) holds
+everything: notes as `<note>` in their word, categories and observations as attributes
+(`ana`, `cert`), character annotations as `<c>`. Annotations on a span of several words
+stay in the project only.
 
 ## Validation
 
@@ -514,8 +517,8 @@ exported:
 - Lemmas confirmed in Saga-Scribe are written into the words' `lemma` and `me:msa` (or
   `msa`) attributes; a changed normalized form is written into the word's `<me:norm>`.
   Removing a lemma removes these attributes.
-- Notes and other annotations are kept in the project only, since they would add markup the
-  file does not have.
+- Notes and other annotations are written into their words, as in a new document (see
+  [Annotations](#annotations)); a word without annotations stays as the file has it.
 - The word panel's **XML** tab shows a word as the file has it: its levels, attributes and
   the markup in it (such as `<ex>` or `<hi>`), and its XML, which can be edited there for
   anything the shorthand and the other tabs don't cover. **Apply** sets the word in the

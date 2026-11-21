@@ -760,6 +760,20 @@ impl<'a> Compiler<'a> {
         attrs
     }
 
+    /// What the annotations of word `word_index` add to it (other than its
+    /// lemma): attributes (`ana`, `cert`, …) as written in a start tag, and
+    /// `<note>` elements. Character annotations go into its text with
+    /// [`with_character_tags`](Self::with_character_tags).
+    pub fn annotation_markup(&self, word_index: u32) -> (String, String) {
+        (self.get_annotation_attributes(word_index), self.get_note_elements(word_index))
+    }
+
+    /// `xml` (a word's facsimile text, as XML) with `<c>` elements for the
+    /// character annotations of word `word_index`.
+    pub fn with_character_tags(&self, xml: &str, word_index: u32) -> String {
+        self.inject_character_tags(xml, word_index)
+    }
+
     /// Get note annotations as TEI <note> elements
     fn get_note_elements(&self, word_index: u32) -> String {
         use crate::annotations::{AnnotationType, AnnotationValue};
