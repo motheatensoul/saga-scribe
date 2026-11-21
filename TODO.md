@@ -134,4 +134,9 @@ when it is done (and record it in CHANGELOG.md if users notice).
 
 ## Distribution
 
+- **glib 0.18 (RUSTSEC-2024-0429)**: `cargo audit` warns about unsoundness in
+  `glib::VariantStrIter` (fixed in glib 0.20). Tauri 2 (as of 2.12.7: wry, tao, muda,
+  webkit2gtk 2.0) and our own Linux code use the GTK 3 bindings, whose last release is
+  0.18, so it can't be updated until Tauri moves to GTK 4. Saga-Scribe doesn't use
+  `VariantStrIter`.
 - **Flatpak remote**: As mentioned in the documentation, flathub distribution, if desired, would require the flatpak manifest and all related files to be untouched by agents. Given the rather specialized use-case for the app (almost 0 usage to someone not working with manuscripts, so basically worthless to genpop), setting up a flatpak remote on the server would probably be best for ensuring updates.
