@@ -1,119 +1,130 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>app.sagascribe.Sagascribe</id>
-  <name>Saga Scribe</name>
-  <summary>Transcribe manuscripts into TEI-XML from a readable shorthand</summary>
-  <metadata_license>CC0-1.0</metadata_license>
-  <project_license>GPL-3.0-or-later</project_license>
+    <id>app.sagascribe.Sagascribe</id>
+    <name>Saga-Scribe</name>
+    <summary>Easier manuscript transcription for TEI-XML</summary>
+    <metadata_license>CC0-1.0</metadata_license>
+    <project_license>GPL-3.0-or-later</project_license>
 
-  <description>
-    <p>
-      Saga Scribe is a desktop application for transcribing manuscripts into TEI-XML, intended
-      for textual scholars preparing digital editions. Transcriptions are entered in a
-      plain-text shorthand, from which the application generates the corresponding TEI markup,
-      including the MENOTA transcription levels.
-    </p>
-    <ul>
-      <li>Line-by-line shorthand for line and page breaks, abbreviations, gaps, supplied text, deletions and additions</li>
-      <li>Preview of the reading text, the XML, or the output of an XSLT stylesheet, updated while typing</li>
-      <li>Lemmatization with the Dictionary of Old Norse Prose (ONP) and MENOTA morphological analysis</li>
-      <li>Notes, semantic and paleographic annotations on words and characters</li>
-      <li>MENOTA facsimile, diplomatic and normalized levels; MENOTA/MUFI characters in the Junicode font</li>
-      <li>Editing of existing TEI-XML files, leaving unedited parts unchanged</li>
-      <li>Validation against TEI P5 and MENOTA P5</li>
-      <li>Export to TEI-XML, HTML and PDF</li>
-    </ul>
-  </description>
-
-  <launchable type="desktop-id">app.sagascribe.Sagascribe.desktop</launchable>
-
-  <url type="homepage">https://github.com/motheatensoul/saga-scribe</url>
-  <url type="bugtracker">https://github.com/motheatensoul/saga-scribe/issues</url>
-
-  <developer id="app.sagascribe">
-    <name>Saga Scribe Contributors</name>
-  </developer>
-
-  <provides>
-    <binary>saga-scribe</binary>
-  </provides>
-
-  <content_rating type="oars-1.1" />
-
-  <recommends>
-    <control>keyboard</control>
-    <control>pointing</control>
-  </recommends>
-
-  <requires>
-    <display_length compare="ge">800</display_length>
-  </requires>
-
-  <categories>
-    <category>Office</category>
-    <category>TextEditor</category>
-    <category>Education</category>
-  </categories>
-
-  <keywords>
-    <keyword>TEI</keyword>
-    <keyword>XML</keyword>
-    <keyword>transcription</keyword>
-    <keyword>manuscript</keyword>
-    <keyword>MENOTA</keyword>
-    <keyword>Old Norse</keyword>
-    <keyword>medieval</keyword>
-    <keyword>paleography</keyword>
-  </keywords>
-
-  <releases>
-    <release version="0.7.0" date="2026-10-31">
-      <description>
-        <p>Lemmas that stay on their words, lemmas written into imported files, and smooth typing in large manuscripts.</p>
+    <description>
+        <p>
+            Saga-Scribe is an specialised text editor aimed at textual scholars looking to create
+            digital scholarly editions
+            in TEI-XML, with specialised support for Old Norse through first-class support for the
+            MENOTA sub-standard
+            and assisted lemmatization and morpho-syntactic analysis through ONP headwords.
+            Transcription and encoding are kept seperate by compiling a shorthand designed for
+            uninterrupted reading and fast
+            writing into losslessly into TEI-XML, based on user-configurable templates. Support for
+            non-Old Norse editions is currently limited.
+        </p>
+        <heading>Features</heading>
         <ul>
-          <li>Lemmas and annotations follow their words when words are inserted or deleted</li>
-          <li>Confirmed lemmas are written into imported TEI files; lemmas from the file leave it unchanged</li>
-          <li>Normalized forms can be set without a lemma, and lemmas can be edited or removed</li>
-          <li>Typing stays responsive in large manuscripts; previews update after a pause in typing</li>
-          <li>Editor highlighting matches the compiler exactly</li>
-          <li>The window shows the theme and a loading indicator while the app starts</li>
+            <li>Human-readible for shorthand for fast transcription and easier proofreading.</li>
+            <li>Support for in-line entity rendering (MUFI and standard Unicode only at the moment).</li>
+            <li>Continously updated rendered preview of the XML output, with built-in support for
+                custom XSLT (default included).</li>
+            <li>Simple point-and-click interface for annotating words within the rendered text
+                interface.</li>
+            <li>Suggestion for MSA based on existing lemmata in the corpus, with ability to export
+                and compile lemmata-dictionaries.</li>
+            <li>Export to pdf, xml and html.</li>
         </ul>
-      </description>
-    </release>
-    <release version="0.6.1" date="2026-10-29">
-      <description>
-        <p>Faster XSLT preview: after an edit, only the changed pages are rendered again.</p>
-      </description>
-    </release>
-    <release version="0.6.0" date="2026-10-29">
-      <description>
-        <p>Safer round-trip editing of imported files, paragraphs, and typeset PDFs.</p>
-        <ul>
-          <li>Imported files are written back byte for byte; only what you edit changes</li>
-          <li>Editing an imported word keeps its lemma, analysis and normalized form, and marks it for review</li>
-          <li>Paragraphs can be split and joined with .p</li>
-          <li>Mid-word line breaks (~//) are kept in the XML and shown in the preview</li>
-          <li>PDF export with page margins and page numbers, saved straight to a file</li>
-          <li>Faster previews: only the edited part of the text is re-rendered</li>
-          <li>Syntax errors are underlined where they occur</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.5.0" date="2026-01-29">
-      <description>
-        <p>Imported mode for editing existing TEI-XML files, manuscript metadata, annotations and custom entities.</p>
-      </description>
-    </release>
-  </releases>
+    </description>
 
-  <screenshots>
-    <screenshot type="default">
-      <caption>Transcription in shorthand, with the reading text of an imported MENOTA file</caption>
-      <image>https://raw.githubusercontent.com/motheatensoul/saga-scribe/main/docs/screenshots/transcription.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Lemmatizing a word with the Dictionary of Old Norse Prose</caption>
-      <image>https://raw.githubusercontent.com/motheatensoul/saga-scribe/main/docs/screenshots/lemmatization.png</image>
-    </screenshot>
-  </screenshots>
+    <launchable type="desktop-id">app.sagascribe.Sagascribe.desktop</launchable>
+    <screenshots>
+        <screenshot type="default" environment="plasma:dark">
+            <caption>Main transcription interface showing imported HolmPerg 34 4to</caption>
+            <image type="source">
+                https://github.com/motheatensoul/saga-scribe/blob/main/docs/screenshots/transcription.webp</image>
+        </screenshot>
+        <screenshot environment="plasma:dark">
+            <caption>Word annotation panel</caption>
+            <image>
+                https://github.com/motheatensoul/saga-scribe/blob/main/docs/screenshots/lemmatization.webp</image>
+        </screenshot>
+    </screenshots>
+
+    <url type="homepage">https://sagascribe.app</url>
+    <url type="help">https://docs.sagascribe.app</url>
+    <url type="vcs-browser">https://github.com/motheatensoul/saga-scribe</url>
+    <url type="bugtracker">https://github.com/motheatensoul/saga-scribe/issues</url>
+    <url type="contribute">https://github.com/motheatensoul/saga-scribe/blob/main/CONTRIBUTING.md</url>
+
+    <developer id="app.sagascribe">
+        <name>Saga Scribe Contributors</name>
+        <url>https://github.com/motheatensoul/saga-scribe/graphs/contributors</url>
+    </developer>
+
+    <provides>
+        <binary>saga-scribe</binary> <!-- freedesktop documentation does not exactly specify how to
+        treat the binary of a flatpak, since saga-scribe is the internal binary inside the flatpak
+        env, but isn't available in the users PATH with the way flatpak currently works.-->
+    </provides>
+
+    <content_rating type="oars-1.1" /> <!-- based on the oars web generator -->
+
+    <recommends>
+        <control>keyboard</control>
+        <control>pointing</control>
+        <memory>8096</memory> <!-- Mostly as a recommendation for opening and editing large XML
+        files, actual RAM consumption is ~2-3 gigs for 200+ page manuscript files but a machine
+        below 8 gigs will struggle to run this. -->
+        <internet>always</internet> <!-- an actual internet connection is highly advantageous as it
+        allows the user to fetch headwords from the onp ELEXIS api, but thats not a hard
+        requirement. -->
+    </recommends>
+
+    <requires>
+        <display_length compare="ge">800</display_length>
+    </requires>
+    <releases>
+        <release version="0.7.0" date="2026-10-31" type="stable">
+            <url>https://github.com/motheatensoul/saga-scribe/releases/tag/v0.7.0</url>
+            <description>
+                <p>
+                    Lemmata can be confirmed to add them to words from imported files
+                    (previously always pinned to imported value).
+                    Normalized forms (for Menota multi-level transcription) can now be edited
+                    without `me:msa` present.
+                    Major performance improvements, especially in larger documents.
+                    Lemma redo, undo, and remove now function properly.
+                </p>
+            </description>
+        </release>
+        <release version="0.6.1" date="2026-10-29" type="stable">
+            <url>https://github.com/motheatensoul/saga-scribe/releases/tag/v0.6.1</url>
+            <description>
+                <p>
+                    Shorthand expansion and performance improvements. Bump to project file type, old
+                    files might break. Various fixes.
+                </p>
+            </description>
+        </release>
+        <release version="0.5.0" date="2026-01-29" type="stable">
+            <url>https://github.com/motheatensoul/saga-scribe/releases/tag/v0.5.0</url>
+            <description>
+                <p>
+                    Improvements to XLST and text rendering. Various editor UI improvements.
+                </p>
+            </description>
+        </release>
+        <release version="0.3.0" date="2026-01-11" type="stable">
+            <url>https://github.com/motheatensoul/saga-scribe/releases/tag/v0.3.0</url>
+            <description>
+                <p>
+                    Added support for RelaxNG schema validation, and a template editor UI.
+                </p>
+            </description>
+        </release>
+        <release version="0.1.0" date="2026-01-09">
+            <url>https://github.com/motheatensoul/saga-scribe/releases/tag/v0.1.0</url>
+            <description>
+                <p>
+                    Initial release.
+                </p>
+            </description>
+        </release>
+    </releases>
 </component>

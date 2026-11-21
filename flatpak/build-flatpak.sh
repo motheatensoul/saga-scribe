@@ -1,15 +1,10 @@
-#!/bin/bash
-# Build the Saga Scribe Flatpak locally, the way CI does: the frontend is
-# built here with Bun, the app itself inside the GNOME SDK.
-#
-# Usage: ./flatpak/build-flatpak.sh
-#
-# Prerequisites: flatpak-builder, and the Flathub remote. The GNOME 51
-# runtime/SDK and the Rust and LLVM SDK extensions (branch 26.08) are
-# installed from Flathub as needed.
+#!/bin/env bash
+# script for building the flatpak locally, needs flatpak with the flathub remote (should be enabled by default on most distros) and flatpak-builder.
+# flathub is needed to grab the gnome runtime+sdk and llvm sdk, if you can get them from somewhere else that would be fine too
 
 set -e
 
+# absolute script dir rather than /bin/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT_ROOT/flatpak-build"
