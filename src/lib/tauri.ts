@@ -128,6 +128,25 @@ export interface Profile {
   };
 }
 
+/** A word whose XML was set in the word panel: its shorthand now, for `from..to` of the editor (UTF-16) */
+export interface WordXmlChange {
+  from: number;
+  to: number;
+  dsl: string;
+  lemma?: string | null;
+  msa?: string | null;
+}
+
+/** The XML of word `word` of the current imported document, as the last compile wrote it. */
+export async function importedWordXml(word: number): Promise<string> {
+  return invoke("imported_word_xml", { word });
+}
+
+/** Sets the XML of word `word` of the current imported document (the word panel's XML tab). */
+export async function setImportedWordXml(word: number, xml: string): Promise<WordXmlChange> {
+  return invoke("set_imported_word_xml", { word, xml });
+}
+
 /** Sets the levels new words of the current imported document get (after the editor confirmed them). */
 export async function setImportedLevels(levels: Level[], choice: boolean): Promise<Profile> {
   return invoke("set_imported_levels", { levels, choice });

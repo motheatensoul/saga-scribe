@@ -9,6 +9,7 @@
     import TemplateEditor from "$lib/components/TemplateEditor.svelte";
     import MetadataEditor from "$lib/components/MetadataEditor.svelte";
     import ImportProfileDialog from "$lib/components/ImportProfileDialog.svelte";
+    import WordXmlPanel from "$lib/components/WordXmlPanel.svelte";
     import EntityBrowser from "$lib/components/EntityBrowser.svelte";
     import Lemmatizer from "$lib/components/Lemmatizer.svelte";
     import AnnotationPanel from "$lib/components/AnnotationPanel.svelte";
@@ -50,7 +51,7 @@
         validateXml,
         setImportedLevels,
     } from "$lib/tauri";
-    import type { Profile, StagedDocument } from "$lib/tauri";
+    import type { Profile, StagedDocument, WordXmlChange } from "$lib/tauri";
     import { loadAppResources } from "$lib/startup";
     import { perfEnabled, perfRecord, perfTime, perfTimeSync } from "$lib/perf";
     import { importedLemmas } from "$lib/utils/importedLemmas";
@@ -86,7 +87,7 @@
     let showErrorPanel = $state(false);
     let showValidationPanel = $state(false);
     let showLemmatizer = $state(false);
-    let wordPanelTab = $state<"lemmatize" | "annotate">("lemmatize");
+    let wordPanelTab = $state<"lemmatize" | "annotate" | "xml">("lemmatize");
     let showSettings = $state(false);
     let showHelp = $state(false);
     let selectedWordFacsimile = $state<string | null>(null);
@@ -357,6 +358,18 @@
         showLemmatizer = true;
         lastReviewedWord = word;
         wordReveal.show(word);
+    }
+
+    /** A word's XML was set in the word panel: its shorthand and lemma follow */
+    function handleWordXmlApplied(change: WordXmlChange) {
+        const word = selectedWordIndex;
+        if (change.lemma && change.msa) {
+            sessionLemmaStore.confirmWithHistory(word, { lemma: change.lemma, msa: change.msa });
+        } else if ($lemmaMappings.mappings[word]) {
+            sessionLemmaStore.unconfirmWithHistory(word, true, true);
+        }
+        editorComponent?.replaceRange(change.from, change.to, change.dsl);
+        errorStore.info("Word", `Set the XML of word #${word}`);
     }
 
     function handleLemmatizerClose() {
@@ -1251,6 +1264,21 @@
                     >
                         Annotate
                     </button>
+                    {#if importedStore.isImportedMode}
+                        <button
+                            type="button"
+                            id="word-tab-xml"
+                            class="tab"
+                            class:tab-active={wordPanelTab === "xml"}
+                            role="tab"
+                            aria-selected={wordPanelTab === "xml"}
+                            aria-controls="word-panel-xml"
+                            tabindex={wordPanelTab === "xml" ? 0 : -1}
+                            onclick={() => wordPanelTab = "xml"}
+                        >
+                            XML
+                        </button>
+                    {/if}
                 </div>
                 <!-- Tab content -->
                 <div class="p-4">
@@ -1287,6 +1315,18 @@
                             onFindMatchingWords={findMatchingWords}
                         />
                     </div>
+                    {#if importedStore.isImportedMode}
+                        <div
+                            id="word-panel-xml"
+                            role="tabpanel"
+                            aria-labelledby="word-tab-xml"
+                            class:hidden={wordPanelTab !== "xml"}
+                        >
+                            {#if wordPanelTab === "xml"}
+                                <WordXmlPanel wordIndex={selectedWordIndex} onapplied={handleWordXmlApplied} />
+                            {/if}
+                        </div>
+                    {/if}
                 </div>
             </div>
         </div>

@@ -34,7 +34,9 @@ when it is done (and record it in CHANGELOG.md if users notice).
   and marked when an edit may have outdated them. `//n` shows one lineation. Next in
   4: the profile's abbreviation and punctuation encoding in the compiler, resetting a
   pinned level; imported documents are saved as
-  `.teis` 2.0 (`document.xml`, step 6). Next: step 5 (the word panel on the typed layer);
+  `.teis` 2.0 (`document.xml`, step 6). The word panel's XML tab edits a
+  word's XML (step 5 started). Next: in 5, levels, ranges and attributes in their own
+  controls, and resetting a pinned level;
   in 6, new documents as trees from their template, and annotations anchored by
   fingerprint. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`

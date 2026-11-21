@@ -53,6 +53,10 @@ pub struct TreeSource {
     spans: Vec<Option<(u32, u32)>>,
     /// Where each `<w>` of the body starts in the file, in order
     words: Vec<usize>,
+    /// Words whose XML was set in the word panel: their XML, by segment,
+    /// and their segment, by their new node (which has no span)
+    replaced: HashMap<usize, String>,
+    replaced_nodes: HashMap<NodeId, usize>,
 }
 
 impl TreeSource {
@@ -141,11 +145,15 @@ impl TreeSource {
             let offset = |o: usize| u32::try_from(o).map_err(|_| "the file is too large".to_string());
             located[id] = Some((offset(key.0)?, offset(key.1)?));
         }
-        Ok(Self { tree, body_start, postamble_len, places, spans: located, words })
+        Ok(Self { tree, body_start, postamble_len, places, spans: located, words, replaced: HashMap::new(), replaced_nodes: HashMap::new() })
     }
 
-    /// Segment `id` as written in the file (a word, punctuation, a tag).
+    /// Segment `id` as written in the file (a word, punctuation, a tag), or
+    /// as set since ([`replace_word`](Self::replace_word)).
     pub fn segment_xml(&self, id: usize) -> Option<&str> {
+        if let Some(xml) = self.replaced.get(&id) {
+            return Some(xml);
+        }
         let (start, end) = (*self.spans.get(id)?)?;
         self.tree.source().get(start as usize..end as usize)
     }
@@ -160,6 +168,37 @@ impl TreeSource {
     /// the words as the previews count them.
     pub fn word_offsets(&self) -> Vec<usize> {
         self.words.iter().map(|&w| w - self.body_start).collect()
+    }
+
+    /// Whether a word's XML was set since the file was read: the body is
+    /// then no longer the file's.
+    pub fn is_changed(&self) -> bool {
+        !self.replaced.is_empty()
+    }
+
+    /// Sets the XML of the word that is segment `id` (an element, such as a
+    /// `<w>`) to `xml`, a single element of the same name. The word is then
+    /// written from the tree; everything else is still copied.
+    pub fn replace_word(&mut self, id: usize, xml: &str) -> Result<(), String> {
+        let Some(Place::Node(old)) = self.places.get(id).cloned().flatten() else {
+            return Err("This word isn't an element of the file".into());
+        };
+        let old_name = self.tree.element(old).map(|e| e.name.clone()).ok_or("not an element")?;
+        let (fragment, root) = parse_fragment(xml.trim()).ok_or("The XML is not well-formed")?;
+        let elements: Vec<NodeId> = fragment.children(root).iter().copied().filter(|&c| !is_whitespace(&fragment, c)).collect();
+        let [new] = elements.as_slice() else { return Err("The XML must be a single element".into()) };
+        match fragment.element(*new) {
+            Some(e) if local(&e.name) == local(&old_name) => {}
+            _ => return Err(format!("The XML must be a single <{old_name}> element")),
+        }
+        let parent = self.tree.parent(old).ok_or("The word has no parent")?;
+        let index = self.tree.index_in_parent(old).ok_or("The word isn't in its parent")?;
+        let grafted = self.tree.graft(&fragment, *new, parent, index);
+        self.tree.remove(old);
+        self.places[id] = Some(Place::Node(grafted));
+        self.replaced_nodes.insert(grafted, id);
+        self.replaced.insert(id, self.tree.node_xml(grafted)?);
+        Ok(())
     }
 
     /// The file's tree.
@@ -545,7 +584,10 @@ pub(super) fn apply_to_tree(
                     Some(&token) => Origin::Token(token),
                     None => match applier.tree.span(node) {
                         Some(span) => Origin::Source(span.start - start),
-                        None => Origin::Token(None),
+                        None => match source.replaced_nodes.get(&node) {
+                            Some(&segment) => Origin::Segment(segment),
+                            None => Origin::Token(None),
+                        },
                     },
                 };
                 if edited.contains(&node) {

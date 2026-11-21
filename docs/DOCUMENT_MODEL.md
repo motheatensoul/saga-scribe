@@ -387,7 +387,13 @@ text).
    brought onto the tree. Not yet: the abbreviation and punctuation encoding in the compiler,
    resetting a pinned level to its derivation, and showing in the word panel which levels
    are derived (step 5).
-5. **Word panel** on the typed layer.
+5. **Word panel** on the typed layer. Started (2026-11-21): the word panel's XML tab
+   (`WordXmlPanel.svelte`) shows the word's levels, attributes and markup and edits its
+   XML (`set_imported_word_xml`): the word is replaced in the session's tree
+   (`TreeSource::replace_word`), its segment and the patcher's original take the
+   projected shorthand (`word_dsl`, `Patcher::set_original`), and the editor puts that
+   shorthand in place of the word's. Not yet: editing levels, ranges and attributes in
+   their own controls, and resetting a pinned level to its derivation.
 6. **New documents and the file format.** The same path for new documents; the new
    `.teis` version, converting older ones. Done for imported documents (`.teis` 2.0,
    2026-11-21): a project holds `document.xml` (the file as last written), `profile.json`

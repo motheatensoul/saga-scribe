@@ -137,6 +137,34 @@ pub struct Projection {
     pub spans: Option<SourceSpans>,
 }
 
+/// The shorthand of a single word, `xml` (a `<w>` or `<num>`, which may use
+/// the TEI and MENOTA namespaces' usual prefixes), as the projection writes
+/// it in a body showing `line_edition`'s line breaks. An error unless it is
+/// one well-formed word that reads as one token.
+pub fn word_dsl(xml: &str, line_edition: Option<&str>) -> Result<String, String> {
+    let wrapped = format!(
+        r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body><p>{}</p></body></text></TEI>"#,
+        xml.trim()
+    );
+    crate::xml::check_well_formed(&wrapped).map_err(|e| format!("The XML is not well-formed: {}", e.trim()))?;
+    let tree = Tree::parse(&wrapped).map_err(|_| "The XML is not well-formed".to_string())?;
+    let body = find_body(&tree).ok_or("The XML is not well-formed")?;
+    let projection = project_body_with(&tree, body, line_edition);
+    let words: Vec<&str> = projection
+        .segments
+        .iter()
+        .filter_map(|s| match s {
+            Segment::Word { dsl_content, .. } | Segment::Punctuation { dsl_content, .. } => Some(dsl_content.as_str()),
+            _ => None,
+        })
+        .collect();
+    match words.as_slice() {
+        [word] if !word.trim().is_empty() => Ok(word.trim().to_string()),
+        [] | [_] => Err("The word has no text the shorthand can show".into()),
+        _ => Err("The XML reads as more than one word".into()),
+    }
+}
+
 /// The `<body>` element (the first, in document order).
 pub fn find_body(tree: &Tree) -> Option<NodeId> {
     tree.descendants(Tree::DOCUMENT).into_iter().find(|&id| {

@@ -2,7 +2,7 @@ use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
 use crate::identity::{numbers_by_key, renumbering, Guidance, ParkedWord, Parking, Renumbering, ReturnedWord, Tracked};
 use crate::importer::tei::patching::{
-    apply_decisions, compiler_config_for, render_body, write_lemmas, Originals, Patcher, SavedRecord, WordRecord,
+    apply_decisions, compiler_config_for, render_body, write_lemmas_placed, Originals, Patcher, SavedRecord, WordRecord,
 };
 use crate::importer::tei::apply::TreeSource;
 use crate::importer::tei::segments::{Decision, ImportedDocument};
@@ -297,6 +297,55 @@ pub struct ImportedSource {
     saved: Vec<(usize, u64, SavedRecord)>,
     /// The last compile's records, for saving
     last_records: Vec<WordRecord>,
+    /// The last compile's body, and where each of its `<w>` starts: the
+    /// words as the word panel shows them
+    last_body: String,
+    last_word_offsets: Vec<usize>,
+}
+
+/// A word whose XML was set in the word panel: its shorthand now, to put in
+/// the editor at `from..to` (UTF-16), and its lemma and analysis.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WordXmlChange {
+    pub from: usize,
+    pub to: usize,
+    pub dsl: String,
+    pub lemma: Option<String>,
+    pub msa: Option<String>,
+}
+
+/// The element that starts at `at` in `xml` (a `<w>`), as written.
+fn element_at(xml: &str, at: usize) -> Option<&str> {
+    let rest = xml.get(at..)?;
+    let name_len = rest[1..].find(|c: char| c.is_whitespace() || c == '>' || c == '/')? ;
+    let name = &rest[1..1 + name_len];
+    let (open, close) = (format!("<{name}"), format!("</{name}>"));
+    let mut depth = 0usize;
+    let mut i = 0;
+    while i < rest.len() {
+        let here = &rest[i..];
+        if here.starts_with(&close) {
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(&rest[..i + close.len()]);
+            }
+            i += close.len();
+        } else if here.starts_with(&open) && here[open.len()..].starts_with(|c: char| c.is_whitespace() || c == '>' || c == '/') {
+            let tag_end = here.find('>')?;
+            if here[..tag_end].ends_with('/') {
+                if depth == 0 {
+                    return Some(&rest[..i + tag_end + 1]);
+                }
+            } else {
+                depth += 1;
+            }
+            i += tag_end + 1;
+        } else {
+            i += here.chars().next().map_or(1, char::len_utf8);
+        }
+    }
+    None
 }
 
 impl ImportedSource {
@@ -306,6 +355,42 @@ impl ImportedSource {
     pub(crate) fn compile_plainly(&mut self, dsl: &str) -> Result<CompileOutput, String> {
         let mut compiler = Compiler::new().with_config(self.config.clone());
         compile_imported_source(self, &mut compiler, dsl, None, &HashMap::new(), HashMap::new(), &[])
+    }
+
+    /// The XML of word `word` (as the previews number them) as the last
+    /// compile wrote it.
+    pub fn word_xml(&self, word: usize) -> Result<String, String> {
+        let at = *self.last_word_offsets.get(word).ok_or("There is no such word")?;
+        element_at(&self.last_body, at).map(str::to_string).ok_or_else(|| "The word's XML can't be read".into())
+    }
+
+    /// Sets the XML of word `word` (as the previews number them) to `xml`:
+    /// it becomes the word as the file has it, and the shorthand reads as it
+    /// (the editor puts the returned shorthand in place of the word's).
+    /// The word must be in the file (not added in the shorthand) and `xml`
+    /// one well-formed word of the same element.
+    pub fn set_word_xml(&mut self, word: usize, xml: &str) -> Result<WordXmlChange, String> {
+        let &(token, k) = self.words.as_ref().and_then(|w| w.get(word)).ok_or("There is no such word")?;
+        let not_in_file = "This word was added in the shorthand; its XML can be set once the project is saved and opened again";
+        let segment = usize::try_from(token)
+            .ok()
+            .filter(|_| k == 0)
+            .and_then(|t| self.patcher.segment_of_token(t))
+            .ok_or(not_in_file)?;
+        let line_edition = self.document.profile.as_ref().and_then(|p| p.line_edition.clone());
+        let dsl = crate::document::word_dsl(xml, line_edition.as_deref())?;
+        let tree = self.tree.as_mut().ok_or("The file's XML can't be edited word by word")?;
+        tree.replace_word(segment, xml)?;
+        if let Some(crate::importer::tei::segments::Segment::Word { dsl_content, original_xml, attributes, .. }) = self.document.segments.get_mut(segment) {
+            dsl_content.clone_from(&dsl);
+            original_xml.clear();
+            attributes.clear();
+        }
+        self.patcher.set_original(segment, &dsl, &self.document.segments, self.document.dsl_rules);
+        let (from, to) = self.patcher.span_of_token(token).ok_or("The word isn't in the shorthand")?;
+        let element = tree.segment_element(segment);
+        let attribute = |name: &str| element.and_then(|e| e.attribute(name)).map(str::to_string);
+        Ok(WordXmlChange { from, to, dsl, lemma: attribute("lemma"), msa: attribute("me:msa").or_else(|| attribute("msa")) })
     }
 
     /// The profile, for saving (`profile.json`).
@@ -397,7 +482,7 @@ impl ImportedSource {
             document.drop_copies(|id| tree.segment_xml(id), |id| tree.segment_attributes(id));
         }
         timer.done("imported.load", [("tree", tree.is_some().into()), ("segments", document.segments.len().into())]);
-        Self { document, original_body_xml, preamble, postamble, patcher, tree, config, words: None, parking: Parking::default(), saved: Vec::new(), last_records: Vec::new() }
+        Self { document, original_body_xml, preamble, postamble, patcher, tree, config, words: None, parking: Parking::default(), saved: Vec::new(), last_records: Vec::new(), last_body: String::new(), last_word_offsets: Vec::new() }
     }
 }
 
@@ -426,6 +511,31 @@ pub async fn set_imported_levels(
     choice: bool,
 ) -> Result<crate::document::profile::Profile, String> {
     session.set_levels(levels, choice)
+}
+
+/// The XML of word `word` (numbered as the previews count) of the current
+/// imported document, as the last compile wrote it (the word panel's XML tab).
+///
+/// # Errors
+///
+/// If no imported document is loaded or there is no such word.
+#[tauri::command(async)]
+pub async fn imported_word_xml(session: State<'_, ImportedSession>, word: usize) -> Result<String, String> {
+    session.with_current(|source| source.word_xml(word))?.ok_or("No imported document is loaded")?
+}
+
+/// Sets the XML of word `word` of the current imported document (the word
+/// panel's XML tab); see [`ImportedSource::set_word_xml`]. The editor then
+/// puts the returned shorthand in place of the word's and compiles.
+///
+/// # Errors
+///
+/// If the XML isn't one well-formed word, or the word isn't in the file.
+#[tauri::command(async)]
+pub async fn set_imported_word_xml(session: State<'_, ImportedSession>, word: usize, xml: String) -> Result<WordXmlChange, String> {
+    let mut slots = session.0.lock().map_err(|_| "Imported document state is poisoned")?;
+    let source = slots.current.as_mut().ok_or("No imported document is loaded")?;
+    source.set_word_xml(word, &xml)
 }
 
 /// Compile an imported document using the patching system for round-trip fidelity.
@@ -569,7 +679,8 @@ pub(crate) fn compile_imported_source(
     // Apply patches to the document's tree
     let body = render_body(
         &source.document,
-        Some(&source.original_body_xml),
+        // A word's XML set in the word panel: the body is no longer the file's
+        (!source.tree.as_ref().is_some_and(TreeSource::is_changed)).then_some(source.original_body_xml.as_str()),
         source.tree.as_ref(),
         &patches,
         compiler,
@@ -685,13 +796,15 @@ pub(crate) fn compile_imported_source(
         }
     }
     timer.lap("compile.renumber", []);
-    let body_xml = write_lemmas(&body, &lemmas, source.document.is_menota);
+    let (body_xml, word_offsets) = write_lemmas_placed(&body, &lemmas, source.document.is_menota);
     timer.lap("compile.write_lemmas", [("lemmas", lemmas.len().into())]);
 
     // Only a successful compile becomes the basis for the next one
     source.patcher.commit(state);
     source.words = Some(words);
     source.last_records.clone_from(&records);
+    source.last_body.clone_from(&body_xml);
+    source.last_word_offsets = word_offsets;
 
     // Combine with preamble (everything before body) and postamble (everything after)
     Ok(CompileOutput {
@@ -1588,3 +1701,66 @@ mod imported_identity_tests {
     }
 }
 
+
+#[cfg(test)]
+mod word_xml_tests {
+    use super::*;
+
+    const FILE: &str = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
+<p><w lemma="ok"><me:dipl>ok</me:dipl></w> <!-- <w>not a word</w> --> <w lemma="maðr"><me:dipl>ma<ex>n</ex>n</me:dipl></w> <w><me:dipl>vas</me:dipl></w></p>
+</body></text></TEI>"#;
+
+    fn open() -> (ImportedSource, String) {
+        let import = crate::importer::tei::parse(FILE).unwrap();
+        let source = ImportedSource::new(
+            import.imported_document.unwrap(),
+            import.original_body_xml.unwrap(),
+            import.original_preamble.unwrap_or_default(),
+            import.original_postamble.unwrap_or_default(),
+        );
+        (source, import.dsl)
+    }
+
+    #[test]
+    fn a_words_xml_is_set_and_the_shorthand_follows() {
+        let (mut source, dsl) = open();
+        let first = source.compile_plainly(&dsl).unwrap();
+        assert_eq!(source.word_xml(1).unwrap(), r#"<w lemma="maðr"><me:dipl>ma<ex>n</ex>n</me:dipl></w>"#);
+        // A typo in the file fixed and a lemma changed in the XML tab
+        let change = source
+            .set_word_xml(1, r#"<w lemma="maðr" me:msa="xNC"><me:dipl>ma<ex>n</ex>nr</me:dipl></w>"#)
+            .unwrap();
+        assert_eq!((change.dsl.as_str(), change.msa.as_deref()), ("mannr", Some("xNC")));
+        let dsl16: Vec<u16> = dsl.encode_utf16().collect();
+        assert_eq!(String::from_utf16(&dsl16[change.from..change.to]).unwrap(), "mann");
+        let edited = format!(
+            "{}{}{}",
+            String::from_utf16(&dsl16[..change.from]).unwrap(),
+            change.dsl,
+            String::from_utf16(&dsl16[change.to..]).unwrap()
+        );
+        let mut compiler = Compiler::new().with_config(source.config.clone());
+        let guidance = Guidance {
+            base_revision: source.patcher.revision(),
+            changes: vec![crate::identity::TextChange { from_a: change.from, to_a: change.to, from_b: change.from, to_b: change.from + change.dsl.encode_utf16().count() }],
+        };
+        let out = compile_imported_source(&mut source, &mut compiler, &edited, Some(&guidance), &HashMap::new(), HashMap::new(), &[]).unwrap();
+        assert!(out.xml.contains(r#"<w lemma="maðr" me:msa="xNC"><me:dipl>ma<ex>n</ex>nr</me:dipl></w>"#), "{}", out.xml);
+        // Everything else as it was; the word keeps its number
+        assert_eq!(out.xml.replace(r#" me:msa="xNC""#, "").replace("</ex>nr<", "</ex>n<"), first.xml);
+        assert_eq!(out.renumbering, None);
+        assert_eq!(source.word_xml(1).unwrap(), r#"<w lemma="maðr" me:msa="xNC"><me:dipl>ma<ex>n</ex>nr</me:dipl></w>"#);
+    }
+
+    #[test]
+    fn only_a_single_word_is_taken() {
+        let (mut source, dsl) = open();
+        source.compile_plainly(&dsl).unwrap();
+        assert!(source.set_word_xml(0, "<w>ok</w> <w>ok</w>").is_err());
+        assert!(source.set_word_xml(0, "<w>ok").is_err());
+        assert!(source.set_word_xml(0, "<pc>.</pc>").is_err());
+        assert!(source.set_word_xml(9, "<w>ok</w>").is_err());
+        // Nothing changed
+        assert!(source.compile_plainly(&dsl).unwrap().xml.contains("<!-- <w>not a word</w> -->"));
+    }
+}

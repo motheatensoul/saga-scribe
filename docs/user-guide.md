@@ -507,6 +507,12 @@ exported:
   Removing a lemma removes these attributes.
 - Notes and other annotations are kept in the project only, since they would add markup the
   file does not have.
+- The word panel's **XML** tab shows a word as the file has it: its levels, attributes and
+  the markup in it (such as `<ex>` or `<hi>`), and its XML, which can be edited there for
+  anything the shorthand and the other tabs don't cover. **Apply** sets the word in the
+  file and puts its shorthand in the editor; the XML must be a single, well-formed element
+  of the same kind (a `<w>` stays a `<w>`). A word added in the shorthand can be edited
+  this way once the project has been saved and opened again.
 - A paragraph can be split by adding `.p` and joined by removing one. A split has to fall
   between elements such as sentences (`<s>`), not inside one.
 - If the shorthand contains an error, the document is not saved or exported, rather than

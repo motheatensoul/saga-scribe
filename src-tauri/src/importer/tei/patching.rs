@@ -154,6 +154,31 @@ impl Patcher {
         Self { original_dsl, original, token_of_segment, movable, state: None }
     }
 
+    /// Makes the original of segment `id` (a word that is one token) read
+    /// as `token`: the word's XML was set in the word panel, and `segments`
+    /// (with `id`'s shorthand changed) are the document's now. `false` if
+    /// the segment isn't such a word.
+    pub fn set_original(&mut self, id: usize, token: &str, segments: &[Segment], dsl_rules: u32) -> bool {
+        let Some(&i) = self.movable.get(&id) else { return false };
+        self.original.tokens[i] = token.to_string();
+        self.original_dsl = segments_to_dsl(segments, dsl_rules);
+        true
+    }
+
+    /// Where the token with ID `token` is in the last committed compile's
+    /// shorthand, in UTF-16 code units (the editor's).
+    pub fn span_of_token(&self, token: u64) -> Option<(usize, usize)> {
+        let state = self.state.as_ref()?;
+        let j = state.ids.iter().position(|&id| id == token)?;
+        let utf16 = |offset: usize| state.dsl.get(..offset).map(|text| text.encode_utf16().count());
+        Some((utf16(state.spans[j].start)?, utf16(state.spans[j].end)?))
+    }
+
+    /// The segment whose original token is `token` (a word that is one token).
+    pub fn segment_of_token(&self, token: usize) -> Option<usize> {
+        self.movable.iter().find_map(|(&segment, &t)| (t == token).then_some(segment))
+    }
+
     /// The original token of segment `id` (the first of its unit).
     pub fn token_of(&self, id: usize) -> Option<usize> {
         self.token_of_segment.get(&id).copied()
@@ -1558,7 +1583,9 @@ impl Output {
 /// removed: the word's lemma and analysis attributes are removed. A
 /// normalized form, if given and different from the word's `<me:norm>` text,
 /// replaces that text.
-pub fn write_lemmas(rendered: &RenderedBody, lemmas: &HashMap<u32, LemmaMapping>, menota: bool) -> String {
+///
+/// Also returns where each `<w>` of `rendered` starts in the result.
+pub fn write_lemmas_placed(rendered: &RenderedBody, lemmas: &HashMap<u32, LemmaMapping>, menota: bool) -> (String, Vec<usize>) {
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     for (&number, mapping) in lemmas {
         let Some(&(at, _)) = rendered.words.get(number as usize) else { continue };
@@ -1599,13 +1626,23 @@ pub fn write_lemmas(rendered: &RenderedBody, lemmas: &HashMap<u32, LemmaMapping>
         }
     }
 
+    // The words move by what the edits before them add or take away
+    edits.sort_unstable_by_key(|(at, _, _)| *at);
+    let mut words = Vec::with_capacity(rendered.words.len());
+    let (mut k, mut shift) = (0, 0isize);
+    for &(at, _) in &rendered.words {
+        while k < edits.len() && edits[k].0 < at {
+            shift += edits[k].2.len() as isize - edits[k].1 as isize;
+            k += 1;
+        }
+        words.push((at as isize + shift) as usize);
+    }
     // Back to front, so earlier offsets stay valid
-    edits.sort_unstable_by_key(|(at, _, _)| std::cmp::Reverse(*at));
     let mut xml = rendered.xml.clone();
-    for (at, len, tag) in edits {
+    for (at, len, tag) in edits.into_iter().rev() {
         xml.replace_range(at..at + len, &tag);
     }
-    xml
+    (xml, words)
 }
 
 /// The edit setting the `<me:norm>` text of the word whose start tag ends at

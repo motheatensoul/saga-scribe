@@ -124,6 +124,11 @@
         }
     }
 
+    /** Replaces `from..to` (UTF-16 offsets) with `text`, as an edit. */
+    export function replaceRange(from: number, to: number, text: string) {
+        view?.dispatch({ changes: { from, to, insert: text } });
+    }
+
     export function insertText(text: string) {
         if (view) {
             const pos = view.state.selection.main.head;
