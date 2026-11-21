@@ -207,6 +207,10 @@ pub struct ProjectData {
 /// With `decisions_json` (the answers for replaced words), the project is an
 /// imported document: its manifest and original file come from the
 /// document the backend holds ([`ImportedSession`]).
+///
+/// Replies with why the compiled TEI-XML (`output.xml`) isn't well-formed,
+/// if it isn't: the project is saved all the same, as its shorthand is what
+/// it is made from, but the editor warns about it.
 #[tauri::command(async)]
 #[allow(clippy::too_many_arguments)]
 pub async fn save_project(
@@ -219,14 +223,15 @@ pub async fn save_project(
     metadata_json: Option<String>,
     annotations_json: Option<String>,
     decisions_json: Option<String>,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     let session = session.inner().clone();
     let fields = ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json };
     tauri::async_runtime::spawn_blocking(move || {
         let timer = crate::perf::timer();
+        let not_well_formed = crate::xml::check_well_formed(&fields.output).err();
         let result = save_project_at(&session, Path::new(&path), fields, decisions_json);
-        timer.done("save_project", [("ok", result.is_ok().into())]);
-        result
+        timer.done("save_project", [("ok", result.is_ok().into()), ("well_formed", not_well_formed.is_none().into())]);
+        result.map(|()| not_well_formed)
     })
     .await
     .map_err(|e| format!("Saving failed: {e}"))?

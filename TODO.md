@@ -44,16 +44,15 @@ when it is done (and record it in CHANGELOG.md if users notice).
 - **A session's tree is large**: about 240 MB for Njáls saga (16 MB, 1.8M nodes) at 112
   bytes a node (was 200), plus each text node's own string and each element's list of
   children. Text could be read from the file's text where it has no references.
-- **Output is only partly checked before saving**: exporting TEI-XML refuses XML libxml2
-  doesn't read as well-formed (`export_tei`), but a compile writes with `Tree::write`, not
-  `write_checked` (parsing the whole file again on every edit is too slow), so nothing
-  checks that the written file reads as the tree it came from, and the project's
-  `output.xml` isn't checked at all. The tree check could run on the nodes an edit wrote anew.
-- **Import accepts XML that isn't well-formed**: `crate::xml::parse` uses libxml2's
-  recover mode (the `libxml` crate's default), so a broken file is imported as libxml2
-  repairs it, without a warning; unedited parts are still copied from the original bytes.
-  Importing should say so, or refuse (`xml::check_well_formed` is strict). All 288 Menota
-  files are well-formed.
+- **Compiles don't check their output**: exporting TEI-XML refuses XML libxml2 doesn't
+  read as well-formed (`export_tei`), and saving a project warns when its `output.xml`
+  isn't, but a compile writes with `Tree::write`, not `write_checked` (parsing the whole
+  file again on every edit is too slow), so nothing checks that the written file reads as
+  the tree it came from. The tree check could run on the nodes an edit wrote anew.
+- **Import of XML that isn't well-formed is only warned about**: `crate::xml::parse` uses
+  libxml2's recover mode, so a broken file is imported as libxml2 repairs it, with a
+  warning in the log (unedited parts are still copied from the original bytes). Whether
+  such a file should be refused instead is open. All 288 Menota files are well-formed.
 - **After the document model works:** inferring a changed lemma and analysis after an
   edit (and from them dipl and norm), which needs a robust lemmatizer.
 

@@ -143,6 +143,8 @@ export interface ImportResult {
   words?: ImportedWord[];
   /** Indicates imported mode for round-trip fidelity */
   isImportedMode?: boolean;
+  /** Why the file isn't well-formed XML, if it isn't (it was imported as libxml2 repaired it) */
+  notWellFormed?: string;
 }
 
 /**
@@ -533,7 +535,10 @@ export interface ProjectData {
   imported?: StagedDocument;
 }
 
-// Save project archive (.teis)
+/**
+ * Save project archive (.teis). Resolves to why the compiled TEI-XML isn't
+ * well-formed, if it isn't (the project is saved all the same).
+ */
 export async function saveProject(
   path: string,
   source: string,
@@ -544,7 +549,7 @@ export async function saveProject(
   annotationsJson?: string,
   /** The answers for replaced words, for an imported document (the backend has the rest of it) */
   decisionsJson?: string,
-): Promise<void> {
+): Promise<string | null> {
   return invoke("save_project", {
     path,
     source,

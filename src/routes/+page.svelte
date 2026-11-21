@@ -549,7 +549,7 @@
             const decisionsJson = importedStore.isImportedMode
                 ? JSON.stringify(importedStore.decisions)
                 : undefined;
-            await saveProject(
+            const notWellFormed = await saveProject(
                 path,
                 $editor.content,
                 previewContent,
@@ -562,6 +562,13 @@
 
             editor.setFile(path, $editor.content);
             errorStore.info("Project", `Saved project to ${path}`);
+            if (notWellFormed) {
+                errorStore.warning(
+                    "Project",
+                    "The project was saved, but its compiled TEI-XML is not well-formed, so exporting it will fail. Please report this as a bug.",
+                    notWellFormed,
+                );
+            }
             warnOpenRecords("Project");
         } catch (e) {
             errorStore.error("Save", `Failed to save project: ${e}`);
@@ -818,6 +825,14 @@
             annotationHistory.clear();
             sessionLemmaStore.clear();
             clearTimeout(compileTimeout);
+
+            if (result.notWellFormed) {
+                errorStore.warning(
+                    "Import",
+                    "The file is not well-formed XML. It was imported as the XML parser repaired it, so check the text where the error is.",
+                    result.notWellFormed,
+                );
+            }
 
             const imported = result.isImportedMode ? result.imported : undefined;
             if (setImportedDocument(imported)) {

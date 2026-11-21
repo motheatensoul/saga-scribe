@@ -38,7 +38,8 @@ or exporting a document leads to code execution, file access outside what the
 user chose, data loss, or network access the user didn't ask for. In particular:
 
 - **Imported TEI-XML and plain text**: parsed with libxml2 without network
-  access (no external DTDs or entities are fetched).
+  access (no external DTDs or entities are fetched). A file that isn't
+  well-formed is imported as libxml2 repairs it, with a warning.
 - **XSLT stylesheets**: their output is sanitized (DOMPurify) before it is
   displayed, exported or printed, and the app runs under a strict Content
   Security Policy.

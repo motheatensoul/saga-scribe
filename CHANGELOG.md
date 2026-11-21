@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Importing XML that isn't well-formed said nothing**: such a file was imported as the XML parser repaired it, silently. The log now shows a warning with the parser's first error, so the repaired place can be checked. Likewise, saving a project warns if its compiled TEI-XML (`output.xml`) isn't well-formed
 - **Export could write XML that isn't well-formed**: the TEI-XML export is now read by libxml2 first and refused, with an error, if it isn't well-formed
 - **ONP definitions failed to load** ("Failed to parse response"): the ONP API no longer sends two fields of each sense that the app required, though it never showed them. Entries now load with whatever fields the API sends
 - **Imported files whose shorthand didn't read as their words**: in 194 of the 288 Menota texts and charters, elements written together in the XML ran together in the shorthand (`skrims^{sic}` for a word and the note after it, `þꝩiat` for two words) and words containing punctuation fell apart (`.x.`, `iðran;`), so an edit could be paired with the wrong word and rewrite words that weren't edited. The shorthand now keeps such neighbours apart (`skrims ^{sic}`, `þꝩi|at`), escapes characters that would split a word (`iðran\;`) and writes numerals as `#.x.#`. Now all 288 do. Files imported before keep their shorthand

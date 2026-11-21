@@ -59,7 +59,9 @@ Work is saved as a project file with the extension `.teis`. It is a ZIP archive 
 
 **Open** (**Ctrl+O**) opens a project, or a plain shorthand file (`.dsl` or `.txt`).
 **Save** (**Ctrl+S**) saves the project; the first save asks for a location. Projects saved
-with older versions of Saga-Scribe can still be opened.
+with older versions of Saga-Scribe can still be opened. If the compiled TEI-XML isn't
+well-formed, the project is saved all the same and the log shows a warning (this is a bug
+in Saga-Scribe; please report it).
 
 ## Transcription shorthand
 
@@ -434,6 +436,11 @@ The body of the document is converted to shorthand, which you then edit as usual
 line breaks become `//`, page breaks `///`, each paragraph starts with `.p`, and so on.
 Lemmas, analyses and normalized forms in the file are taken over, and its header is read
 into the [metadata editor](#manuscript-metadata).
+
+A file that isn't well-formed XML (an unclosed element, say) is still imported, as the XML
+parser repairs it, but the [log](#logs-and-reporting-problems) shows a warning with the parser's first error and
+its line. Check the text around that line: the repair may have moved or dropped markup
+there.
 
 Each word, numeral and punctuation mark of the file is one word of the shorthand, so that
 Saga-Scribe knows which element an edit belongs to. Where the file has two of them with
