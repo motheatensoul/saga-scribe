@@ -201,9 +201,11 @@ bun run test        # frontend (Vitest) and Rust tests
 bun run check:all   # svelte-check and cargo clippy
 ```
 
-With [Nix](https://nixos.org/) (flakes enabled), `nix develop` gives a shell with bun, the
-pinned Rust toolchain and the system libraries, on Linux and Apple Silicon macOS; run
-`bun install` and the commands above in it.
+The recommended development environment is [Nix](https://nixos.org/) (with flakes
+enabled): `nix develop` gives a shell with bun, the pinned Rust toolchain and the system
+libraries, on Linux and Apple Silicon macOS. Run `bun install` and the commands above in
+it, or one at a time with `nix develop -c bun run check:all`. Without Nix, install the
+prerequisites listed above yourself.
 
 Saga-Scribe is written in Svelte 5 and TypeScript (frontend, with CodeMirror 6 as the
 editor) and Rust (the shorthand compiler, TEI import and everything else on the backend),

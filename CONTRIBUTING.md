@@ -19,9 +19,10 @@ bun run tauri dev
 ```
 
 The Rust toolchain is pinned in `rust-toolchain.toml`; rustup installs it automatically.
-With Nix, `nix develop` provides all of the prerequisites instead (`flake.nix`, which reads
-the toolchain from the same file). When a build prerequisite changes, update the flake along
-with CI and the README.
+The recommended way to get all of the prerequisites is Nix (with flakes enabled): run
+`nix develop` and work in that shell (`flake.nix`, which reads the toolchain from the same
+file), or run single commands with `nix develop -c …`. When a build prerequisite changes,
+update the flake along with CI and the README.
 
 ## Where things are
 
