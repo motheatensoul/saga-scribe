@@ -518,6 +518,7 @@ pub(crate) fn compile_imported_source(
         &state,
         decisions,
         !annotated.is_empty(),
+        None,
     );
     apply_decisions(&source.document.segments, originals, &mut patches, decisions);
     timer.lap("compile.records", [("records", records.len().into())]);
@@ -555,6 +556,30 @@ pub(crate) fn compile_imported_source(
     // A different word doesn't get the old word's lemma back: the editor
     // still holds it for this word number (read from the file), and only
     // another lemma is the editor's choice for the new word
+    // Edited words with a level that couldn't follow the edit are asked
+    // about too (the normalized form may be out of date)
+    if !body.stale.is_empty() {
+        let stale: HashMap<usize, Vec<String>> = body.stale.iter().cloned().collect();
+        let missing: HashSet<usize> = stale.keys().filter(|k| !records.iter().any(|r| r.key == **k)).copied().collect();
+        if !missing.is_empty() {
+            let more = source.patcher.records(
+                &source.document.segments,
+                originals,
+                &patches,
+                &state,
+                decisions,
+                true,
+                Some(&missing),
+            );
+            records.extend(more);
+            records.sort_by_key(|r| r.from);
+        }
+        for record in &mut records {
+            if let Some(levels) = stale.get(&record.key) {
+                record.stale_levels = levels.clone();
+            }
+        }
+    }
     WordRecord::number(&mut records, &words);
     if !annotated.is_empty() {
         let annotated: HashSet<usize> = annotated
@@ -568,7 +593,7 @@ pub(crate) fn compile_imported_source(
         for record in &mut records {
             record.annotated = record.word.is_some_and(|n| annotated.contains(&n));
         }
-        records.retain(|r| r.lemma.is_some() || r.msa.is_some() || r.annotated);
+        records.retain(|r| r.lemma.is_some() || r.msa.is_some() || r.annotated || !r.stale_levels.is_empty());
     }
     for record in records.iter().filter(|r| r.outcome() == Decision::Different) {
         let Some(n) = record.word else { continue };
@@ -1167,8 +1192,29 @@ mod imported_identity_tests {
     }
 
     #[test]
-    fn test_replaced_word_with_annotations_is_a_record() {
+    fn test_a_curated_normalized_form_that_cant_follow_an_edit_is_marked() {
+        // "maþr" has the normalized form "maðr", which the shorthand doesn't
+        // give: a reading, kept when the word is edited, and marked
         let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[]);
+        let edited = dsl.replacen("maþr", "maþrr", 1);
+        let out = compile_decided(&mut source, &dsl, &edited, &[]);
+        let [record] = out.records.as_slice() else { panic!("{:?}", out.records) };
+        assert_eq!((record.stale_levels.as_slice(), record.lemma.as_deref()), (&["norm".to_string()][..], None));
+        assert!(out.xml.contains("<me:norm>maðr</me:norm>"), "{}", out.xml);
+        // Kept: answered, no longer open
+        let key = record.key;
+        let out = compile_decided(&mut source, &edited, &edited, &[(key, Decision::Same)]);
+        assert_eq!(out.records[0].decision, Some(Decision::Same));
+        assert!(out.xml.contains("<me:norm>maðr</me:norm>"), "{}", out.xml);
+    }
+
+    #[test]
+    fn test_replaced_word_with_annotations_is_a_record() {
+        // "maþr" with the normalized form the shorthand gives (derived, so
+        // it follows edits and isn't asked about)
+        let xml = TWO_OKS.replace("<me:norm>maðr</me:norm>", "<me:norm>maþr</me:norm>");
+        let (mut source, dsl) = open(&xml);
         compile(&mut source, &dsl, None, &[]);
         // "maþr" has no lemma: replaced, it is a record only if annotated
         let edited = dsl.replacen("maþr", "maþrr", 1);

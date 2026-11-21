@@ -179,6 +179,10 @@
     // still the same word or another one
     const hasLemma = $derived(!!record && (record.lemma !== null || record.msa !== null));
     const keepLabel = $derived(hasLemma ? 'Keep the old lemma' : 'Keep it as the same word');
+    /** Levels kept as the file has them that may be out of date, named for the text */
+    const LEVEL_NAMES: Record<string, string> = { norm: 'normalized form', dipl: 'diplomatic form', facs: 'facsimile form' };
+    const staleCount = $derived(record?.staleLevels?.length ?? 0);
+    const staleNames = $derived((record?.staleLevels ?? []).map((l) => LEVEL_NAMES[l] ?? l).join(' and '));
     const newLabel = $derived(hasLemma ? 'Set a new lemma' : 'Treat it as a different word');
 
     function keepOldLemma() {
@@ -316,6 +320,8 @@
         if (!selectedEntry || !msaString) {
             if (normChanged) {
                 sessionLemmaStore.setNormalized(wordIndex, chosenNormalized(), importedStore.isImportedMode);
+                // A normalized form chosen here answers whether the old one is still right
+                if (record?.staleLevels?.length && record.decision === null) importedStore.decide(record.key, 'same');
                 onsave?.(wordIndex);
                 onclose?.();
             }
@@ -622,6 +628,11 @@
                 {#if record.annotated}
                     Its annotations (<span class="font-medium">Annotate</span> tab) stay with it
                     either way: check that they still fit.
+                {/if}
+                {#if staleNames}
+                    The edit couldn’t be carried into its {staleNames}, which {staleCount > 1 ? 'were' : 'was'}
+                    kept as the file has {staleCount > 1 ? 'them' : 'it'} and may now be out of date: check
+                    {staleCount > 1 ? 'them' : 'it'} below.
                 {/if}
             </p>
             <details class="text-sm">

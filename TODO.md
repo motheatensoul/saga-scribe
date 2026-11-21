@@ -30,9 +30,10 @@ when it is done (and record it in CHANGELOG.md if users notice).
   and pasted elsewhere is moved with its XML (2026-11-21). Opening a project projects
   its file afresh, and projects saved with older import rules are brought onto the
   current ones (2026-11-21), which finishes 3b. The profile of step 4 is inferred
-  and confirmed on import, and new words get the file's levels (2026-11-21). Next in 4:
-  the lineation `//n` stands for, the profile's abbreviation and punctuation encoding in
-  the compiler, derived and pinned levels; then steps 5 and 6 (the word panel on the
+  and confirmed on import, and new words get the file's levels (2026-11-21). Pinned normalized forms are kept
+  and marked when an edit may have outdated them. Next in 4: the lineation `//n` stands
+  for, the profile's abbreviation and punctuation encoding in the compiler, resetting a
+  pinned level; then steps 5 and 6 (the word panel on the
   typed layer, the file format without `segments.json`). Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).

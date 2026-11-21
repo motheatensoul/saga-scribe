@@ -375,9 +375,15 @@ text).
    a level in at least 5% of them is one of the file's), saved with the manifest, and shown
    in the import dialog (`ImportProfileDialog.svelte`), where the levels new words get can
    be changed (`set_imported_levels`). The compiler writes a word's levels as the profile
-   has them (`CompilerConfig::levels`). Not yet: the choice of lineation for `//n` (the
+   has them (`CompilerConfig::levels`). Derived and pinned, for the normalized level: a
+   word's normalized form that is what the shorthand gives is derived and follows an edit;
+   one that isn't is pinned, kept, and if the edit changes the derived form to something
+   else, the word becomes a record with `stale_levels` (asked about in the word panel, as
+   decided). A diplomatic level the merge can't carry an edit into is reported the same
+   way (`MergedWord::kept_levels`). Not yet: the choice of lineation for `//n` (the
    shorthand still shows all), the abbreviation and punctuation encoding in the compiler,
-   and derived and pinned levels.
+   resetting a pinned level to its derivation, and showing in the word panel which levels
+   are derived (step 5).
 5. **Word panel** on the typed layer.
 6. **New documents and the file format.** The same path for new documents; the new
    `.teis` version, converting older ones.

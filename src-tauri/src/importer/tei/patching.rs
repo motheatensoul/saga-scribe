@@ -370,6 +370,10 @@ impl Patcher {
     /// Deleted words aren't asked about: they have no word in the text that
     /// the word panel could be opened on, and deleting is undone in the
     /// editor.
+    ///
+    /// With `only`, just the records of those segments, whatever the words
+    /// have to lose (words whose levels need a review).
+    #[allow(clippy::too_many_arguments)]
     pub fn records(
         &self,
         segments: &[Segment],
@@ -378,6 +382,7 @@ impl Patcher {
         state: &Tracked,
         decisions: &HashMap<usize, Decision>,
         annotations: bool,
+        only: Option<&std::collections::HashSet<usize>>,
     ) -> Vec<WordRecord> {
         let segment = |id: usize| segments.get(id).filter(|s| s.id() == id).or_else(|| segments.iter().find(|s| s.id() == id));
         let mut records = Vec::new();
@@ -391,8 +396,10 @@ impl Patcher {
             }
             let lemma = originals.attribute(seg, "lemma");
             let msa = originals.attribute(seg, "me:msa").or_else(|| originals.attribute(seg, "msa"));
-            if lemma.is_none() && msa.is_none() && !annotations {
-                continue;
+            match only {
+                Some(only) if !only.contains(segment_id) => continue,
+                None if lemma.is_none() && msa.is_none() && !annotations => continue,
+                _ => {}
             }
             let was = match parse_dsl_to_tokens(dsl_content).as_deref() {
                 Ok([token]) => token.clone(),
@@ -411,6 +418,7 @@ impl Patcher {
                 lemma,
                 msa,
                 annotated: false,
+                stale_levels: Vec::new(),
             });
         }
         // Byte offsets in the DSL to UTF-16 (the editor's)
@@ -638,6 +646,10 @@ pub struct WordRecord {
     /// stay with it whatever the answer: they may be about the place in the
     /// text rather than the word
     pub annotated: bool,
+    /// The word's levels that couldn't follow the edit and were kept as
+    /// they were (a curated normalized form): they may be out of date
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stale_levels: Vec<String>,
 }
 
 impl WordRecord {
@@ -1138,6 +1150,9 @@ pub struct RenderedBody {
     pub edited_words: Vec<usize>,
     /// Every `<w>` element: its offset in `xml` and where it came from
     pub words: Vec<(usize, Origin)>,
+    /// Edited words (by segment) with levels that couldn't follow the edit
+    /// and were kept as they were: to be reviewed
+    pub stale: Vec<(usize, Vec<String>)>,
 }
 
 impl RenderedBody {
@@ -1410,7 +1425,7 @@ impl Output {
                 (at, origin)
             })
             .collect();
-        RenderedBody { xml: self.xml, edited_words, words }
+        RenderedBody { xml: self.xml, edited_words, words, stale: Vec::new() }
     }
 }
 
@@ -1627,6 +1642,9 @@ pub(super) fn render_insert(dsl: &str, compiler: &mut Compiler) -> String {
 ///
 /// `source` is the segment's original XML text when known, letting break edits
 /// rewrite only the `n` attribute in place.
+/// Also returns the word's levels that couldn't follow the edit and were
+/// kept as they were (pinned levels, such as a curated normalized form, to
+/// be reviewed: `docs/DOCUMENT_MODEL.md`, "Derived or pinned").
 pub(super) fn render_modify(
     segment: &Segment,
     originals: Originals,
@@ -1634,6 +1652,20 @@ pub(super) fn render_modify(
     new_dsl: &str,
     same_word: bool,
     compiler: &mut Compiler,
+) -> (String, Vec<String>) {
+    let mut stale = Vec::new();
+    let xml = render_modify_into(segment, originals, source, new_dsl, same_word, compiler, &mut stale);
+    (xml, stale)
+}
+
+fn render_modify_into(
+    segment: &Segment,
+    originals: Originals,
+    source: Option<&str>,
+    new_dsl: &str,
+    same_word: bool,
+    compiler: &mut Compiler,
+    stale: &mut Vec<String>,
 ) -> String {
     let original_xml = originals.xml(segment);
     match (segment, token_kind(new_dsl)) {
@@ -1654,18 +1686,38 @@ pub(super) fn render_modify(
                 attributes.retain(|name, _| !matches!(name.as_str(), "lemma" | "me:msa" | "msa"));
             }
             let attributes = &attributes;
-            let compiled = compiler.compile_word_from_dsl(new_dsl, attributes, norm.as_deref());
-            // The edit is merged into the word as written, so markup the
-            // shorthand doesn't show stays (see document/merge.rs). The old
-            // shorthand is read as a token, as `new_dsl` was, so the two
-            // differ only by the edit
+            // The old shorthand is read as a token, as `new_dsl` was, so the
+            // two differ only by the edit
             let old_token = match parse_dsl_to_tokens(dsl_content).as_deref() {
                 Ok([token]) => token.clone(),
                 _ => dsl_content.clone(),
             };
+            // A normalized form that is what the shorthand gives is derived,
+            // and follows the edit. One that isn't is pinned (a reading the
+            // editor chose): it's kept, and marked for review if the edit
+            // changes the form the shorthand gives to something else
+            let mut norm = norm;
+            if let Some(curated) = norm.clone() {
+                let derived = |dsl: &str, compiler: &mut Compiler| {
+                    let xml = compiler.compile_word_from_dsl(dsl, attributes, None);
+                    level_content(&xml, "norm").map(without_breaks)
+                };
+                let (was, now) = (derived(&old_token, compiler), derived(new_dsl, compiler));
+                if was.as_deref() == Some(curated.as_str()) {
+                    norm = None;
+                } else if was != now && now.as_deref() != Some(curated.as_str()) {
+                    stale.push("norm".to_string());
+                }
+            }
+            let compiled = compiler.compile_word_from_dsl(new_dsl, attributes, norm.as_deref());
+            // The edit is merged into the word as written, so markup the
+            // shorthand doesn't show stays (see document/merge.rs)
             let before = compiler.compile_word_from_dsl(&old_token, attributes, norm.as_deref());
             match crate::document::merge_word_edit(original, &before, &compiled) {
                 Some(merged) => {
+                    if same_word {
+                        stale.extend(merged.kept_levels.iter().filter(|l| !stale.contains(l)).cloned().collect::<Vec<_>>());
+                    }
                     if !merged.kept_levels.is_empty() || !merged.removed.is_empty() {
                         log::info!(
                             "Edited word {:?}: levels kept as they were {:?}, removed with their text {:?}",
@@ -1799,7 +1851,7 @@ fn reconstruct(segments: &[Segment], originals: Originals, patches: &[PatchOpera
                                     if word && !fresh {
                                         edited_words.push(out.xml.len());
                                     }
-                                    out.generate(&render_modify(seg, originals, None, new_dsl, !fresh, compiler), *token);
+                                    out.generate(&render_modify(seg, originals, None, new_dsl, !fresh, compiler).0, *token);
                                 }
                             }
                             PatchOperation::Delete { .. } if matches!(seg, Segment::Paragraph { .. }) => {

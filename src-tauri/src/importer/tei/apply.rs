@@ -196,6 +196,8 @@ struct Applier<'a> {
     created: HashMap<NodeId, Option<usize>>,
     /// Words edited in place, whose lemma and analysis were kept
     edited: Vec<NodeId>,
+    /// Edited words with levels that couldn't follow the edit, by segment
+    stale: Vec<(usize, Vec<String>)>,
 }
 
 impl Applier<'_> {
@@ -340,6 +342,7 @@ pub(super) fn apply_to_tree(
         pieces: HashMap::new(),
         created: HashMap::new(),
         edited: Vec::new(),
+        stale: Vec::new(),
     };
     let mut anchor: Option<Anchor> = None;
     let mut anchor_segment: Option<usize> = None;
@@ -417,7 +420,11 @@ pub(super) fn apply_to_tree(
                                     render_insert(new_dsl, compiler)
                                 } else {
                                     let original = applier.tree.node_xml(node).ok()?;
-                                    render_modify(segment, originals, Some(&original), new_dsl, !fresh, compiler)
+                                    let (xml, stale) = render_modify(segment, originals, Some(&original), new_dsl, !fresh, compiler);
+                                    if !stale.is_empty() {
+                                        applier.stale.push((*segment_id, stale));
+                                    }
+                                    xml
                                 };
                                 let parent = applier.tree.parent(node)?;
                                 let index = applier.tree.index_in_parent(node)?;
@@ -538,5 +545,5 @@ pub(super) fn apply_to_tree(
             }
         }
     }
-    Some(RenderedBody { xml: written[start..end].to_string(), edited_words, words })
+    Some(RenderedBody { xml: written[start..end].to_string(), edited_words, words, stale: applier.stale })
 }

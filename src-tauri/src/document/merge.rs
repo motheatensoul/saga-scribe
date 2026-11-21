@@ -78,6 +78,11 @@ pub fn merge_word_edit(word_xml: &str, old_compiled: &str, new_compiled: &str) -
             continue;
         }
         let ours = Flat::read(&word, level, false);
+        // Already as the edit makes it (a typo fixed that the curated level
+        // never had): nothing to do, nothing to review
+        if name != primary && ours.keys() == theirs_new.keys() {
+            continue;
+        }
         match merge_level(&ours, &theirs_old, &theirs_new) {
             Some((merged, lost)) => match nesting(&merged) {
                 Some(order) => {

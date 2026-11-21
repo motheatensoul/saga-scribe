@@ -169,6 +169,8 @@ export interface WordRecord {
   msa: string | null;
   /** The word has annotations other than its lemma; they stay with it whatever the answer */
   annotated: boolean;
+  /** Levels kept as the file has them that may be out of date after the edit ("norm", "dipl") */
+  staleLevels?: string[];
 }
 
 /** Result from importing a file */

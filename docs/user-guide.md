@@ -531,6 +531,14 @@ the old word's normalized form. Annotations are never removed by the answer, as 
 be about the place in the text rather than the word: the panel says the word has some, so
 you can check that they still fit. Annotations on a span of several words don't count.
 
+A word's normalized form follows an edit of the word when it is the form Saga-Scribe
+would give the word's shorthand. A normalized form that differs (one an editor chose, such
+as `maðr` for `maþr`) is kept as the file has it. If the edit changes the word so that the
+kept form may no longer fit (`maþr` edited to `maþrr`), the word is marked and asked about
+in the same way: the panel says which form was kept, and either button, or a normalized
+form entered below, answers it. The same holds for a diplomatic form the edit cannot be
+carried into.
+
 A deleted word is not asked about: it is removed with its lemma, and **Undo** brings it
 back.
 
