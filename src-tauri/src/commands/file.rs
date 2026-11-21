@@ -33,7 +33,7 @@
 //! | 1.6 | Paragraph start tags are `paragraph` segments (`.p` in the DSL); spans cover all tags |
 //! | 1.7 | `\` escapes a character and `#…#` is a numeral; older shorthand is escaped when opened |
 //! | 1.8 | segments.json holds the answers for replaced and deleted words (`decisions`) |
-//! | 2.0 | An imported document is saved as the file now is (`document.xml`) with `profile.json` and `records.json` (open records by place and fingerprint); no `segments.json`, `output.xml` or split original for it |
+//! | 2.0 | An imported document is saved as the file now is (`document.xml`) with `profile.json` and `records.json` (open records by place and fingerprint); no `segments.json`, `output.xml` or split original for it. `anchors.json`: the annotated words' fingerprints, by word number |
 //!
 //! All writes are atomic: data is written to a temporary file next to the target
 //! and renamed over it, so a crash mid-save never leaves a truncated file.
@@ -208,6 +208,10 @@ pub struct ProjectData {
     /// Its records still open when saved (2.0, `records.json`)
     #[serde(skip)]
     pub saved_records: Vec<crate::importer::tei::patching::SavedRecord>,
+    /// Annotations dropped because their words couldn't be found again in
+    /// the saved file (2.0, `anchors.json`)
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub unplaced_annotations: usize,
 }
 
 /// Saves a project to a .teis archive file.
@@ -282,6 +286,15 @@ pub(crate) fn save_project_at(
         }
         None => None,
     };
+    // The annotated words' fingerprints, to find them again if the file
+    // changes outside the app (`anchors.json`, 2.0)
+    let anchors_json = match annotations_json.as_deref().map(serde_json::from_str::<AnnotationSet>) {
+        Some(Ok(set)) if !set.annotations.is_empty() => {
+            let anchors = word_anchors(&output, &annotated_words(&set))?;
+            Some(serde_json::to_string(&anchors).map_err(|e| e.to_string())?)
+        }
+        _ => None,
+    };
     let (document_xml, profile_json, records_json, output) = match imported {
         Some((profile, records)) => (Some(output), Some(profile), Some(records), None),
         None => (None, None, None, Some(output)),
@@ -299,6 +312,7 @@ pub(crate) fn save_project_at(
                 document_xml,
                 profile_json,
                 records_json,
+                anchors_json,
                 ..Default::default()
             },
         )
@@ -320,6 +334,8 @@ struct ProjectContents {
     document_xml: Option<String>,
     profile_json: Option<String>,
     records_json: Option<String>,
+    /// The fingerprints of the annotated words, by word number (2.0)
+    anchors_json: Option<String>,
     /// The parts of formats before 2.0, which only tests still write
     segments_json: Option<String>,
     original_body_xml: Option<String>,
@@ -338,6 +354,7 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
         document_xml,
         profile_json,
         records_json,
+        anchors_json,
         segments_json,
         original_body_xml,
         original_preamble,
@@ -369,6 +386,9 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     }
     if let Some(records) = &records_json {
         put("records.json", records)?;
+    }
+    if let Some(anchors) = &anchors_json {
+        put("anchors.json", anchors)?;
     }
 
     // Write confirmations.json (backward compat for older app versions)
@@ -582,7 +602,7 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
         .and_then(|meta_str| serde_json::from_str(&meta_str).ok());
 
     // Read annotations.json (optional, new in v1.2)
-    let annotations: Option<AnnotationSet> = read_zip_file(&mut archive, "annotations.json")
+    let mut annotations: Option<AnnotationSet> = read_zip_file(&mut archive, "annotations.json")
         .ok()
         .and_then(|ann_str| serde_json::from_str(&ann_str).ok());
 
@@ -624,6 +644,19 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
         }
     }
 
+    // Annotated words found again by their fingerprints (2.0), in the file
+    // as saved: if it was changed outside the app, they follow their words
+    let mut unplaced_annotations = 0;
+    if let (Some(set), Ok(json)) = (annotations.as_mut(), read_zip_file(&mut archive, "anchors.json")) {
+        let anchors: std::collections::BTreeMap<usize, String> =
+            serde_json::from_str(&json).map_err(|e| format!("Failed to parse anchors.json: {e}"))?;
+        let xml = document_xml.as_deref().unwrap_or(&output);
+        unplaced_annotations = reanchor(set, xml, &anchors)?;
+        if unplaced_annotations > 0 {
+            log::warn!("{unplaced_annotations} annotation(s) couldn't be placed: their words aren't in the file any more");
+        }
+    }
+
     Ok(ProjectData {
         source,
         output,
@@ -638,7 +671,67 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
         document_xml,
         profile,
         saved_records,
+        unplaced_annotations,
     })
+}
+
+/// The word numbers `set`'s annotations refer to.
+fn annotated_words(set: &AnnotationSet) -> std::collections::BTreeSet<usize> {
+    use crate::annotations::AnnotationTarget;
+    set.annotations
+        .iter()
+        .flat_map(|a| match &a.target {
+            AnnotationTarget::Word { word_index } | AnnotationTarget::Character { word_index, .. } => vec![*word_index],
+            AnnotationTarget::Span { start_word, end_word } => vec![*start_word, *end_word],
+        })
+        .map(|n| n as usize)
+        .collect()
+}
+
+/// The fingerprints of `words` (word numbers) in the document `xml`.
+fn word_anchors(xml: &str, words: &std::collections::BTreeSet<usize>) -> Result<std::collections::BTreeMap<usize, String>, String> {
+    use crate::document::anchor::{body_words, fingerprint};
+    let tree = crate::document::Tree::parse(xml)?;
+    let nodes = body_words(&tree);
+    Ok(words.iter().filter_map(|&n| Some((n, fingerprint(&tree, *nodes.get(n)?)))).collect())
+}
+
+/// Moves `set`'s annotations to their words as found by `anchors` in the
+/// document `xml` (a word changed outside the app is looked for nearby);
+/// those whose word can't be found are dropped. Returns how many.
+fn reanchor(set: &mut AnnotationSet, xml: &str, anchors: &std::collections::BTreeMap<usize, String>) -> Result<usize, String> {
+    use crate::annotations::AnnotationTarget;
+    use crate::document::anchor::{body_words, find_word};
+    let tree = crate::document::Tree::parse(xml)?;
+    let nodes = body_words(&tree);
+    let moved: HashMap<u32, Option<u32>> = anchors
+        .iter()
+        .map(|(&n, print)| (n as u32, find_word(&tree, &nodes, n, print).map(|m| m as u32)))
+        .collect();
+    let place = |n: u32| moved.get(&n).copied().unwrap_or(Some(n));
+    let before = set.annotations.len();
+    set.annotations.retain_mut(|a| {
+        let placed = match &mut a.target {
+            AnnotationTarget::Word { word_index } | AnnotationTarget::Character { word_index, .. } => {
+                place(*word_index).map(|m| *word_index = m).is_some()
+            }
+            AnnotationTarget::Span { start_word, end_word } => match (place(*start_word), place(*end_word)) {
+                (Some(s), Some(e)) if s <= e => {
+                    (*start_word, *end_word) = (s, e);
+                    true
+                }
+                _ => false,
+            },
+        };
+        // Lemma IDs are made from the word number (`lemma-<n>`)
+        if let AnnotationTarget::Word { word_index } = &a.target {
+            if a.id.starts_with("lemma-") {
+                a.id = format!("lemma-{word_index}");
+            }
+        }
+        placed
+    });
+    Ok(before - set.annotations.len())
 }
 
 /// Whether an archive format version (`"1.6"`) is older than `major.minor`.
@@ -850,4 +943,30 @@ mod tests {
         let error = check_well_formed("<TEI><text><w>a</text></TEI>").unwrap_err();
         assert!(error.starts_with("Not exported"), "{error}");
     }
+    #[test]
+    fn annotations_follow_their_words_by_fingerprint() {
+        use crate::annotations::{Annotation, AnnotationSet, AnnotationTarget};
+        let saved = r#"<TEI><text><body><p><w lemma="a">a</w> <w lemma="b">b</w> <w>c</w></p></body></text></TEI>"#;
+        let note = |id: &str, target: AnnotationTarget| -> Annotation {
+            serde_json::from_value(serde_json::json!({
+                "id": id, "type": "note", "target": target, "value": {"kind": "note", "text": "x"}
+            }))
+            .unwrap()
+        };
+        let mut set = AnnotationSet::new();
+        set.annotations = vec![
+            note("lemma-1", AnnotationTarget::Word { word_index: 1 }),
+            note("n2", AnnotationTarget::Span { start_word: 1, end_word: 2 }),
+            note("n3", AnnotationTarget::Word { word_index: 2 }),
+        ];
+        let anchors = word_anchors(saved, &annotated_words(&set)).unwrap();
+        assert_eq!(anchors.get(&1).map(String::as_str), Some("b|b"));
+        // A word added before them outside the app; "c" deleted
+        let changed = r#"<TEI><text><body><p><w>z</w> <w lemma="a">a</w> <w lemma="b">b</w></p></body></text></TEI>"#;
+        let lost = reanchor(&mut set, changed, &anchors).unwrap();
+        assert_eq!(lost, 2);
+        let [kept] = set.annotations.as_slice() else { panic!("{:?}", set.annotations) };
+        assert_eq!((kept.id.as_str(), &kept.target), ("lemma-2", &AnnotationTarget::Word { word_index: 2 }));
+    }
+
 }

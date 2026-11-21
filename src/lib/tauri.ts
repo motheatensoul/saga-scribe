@@ -598,6 +598,8 @@ export interface ProjectData {
   annotations?: import("$lib/types/annotations").AnnotationSet;
   /** The imported document, staged in the backend (imported projects) */
   imported?: StagedDocument;
+  /** Annotations dropped because their words weren't found in the saved file any more */
+  unplacedAnnotations?: number;
   /** Places of the shorthand rewritten to read as the file is imported now (a project saved with older rules) */
   rewritten?: number;
 }

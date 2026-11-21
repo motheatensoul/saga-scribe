@@ -55,7 +55,9 @@ Work is saved as a project file with the extension `.teis`. It is a ZIP archive 
   (`document.xml`), with how it encodes its transcription (`profile.json`) and the
   replaced words still to be decided (`records.json`);
 - confirmed lemmas and analyses, word by word;
-- annotations;
+- annotations, with a fingerprint of each annotated word (`anchors.json`), so that if the
+  file was changed outside Saga-Scribe they are found on their words again, and those whose
+  words are gone are left out with a warning in the log;
 - manuscript metadata.
 
 For an imported file, `document.xml` is the file with your edits: what you didn't edit is

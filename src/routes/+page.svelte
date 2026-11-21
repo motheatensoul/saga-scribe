@@ -509,6 +509,12 @@
                 await compileNow(project.source);
 
                 errorStore.info("Project", `Opened project from ${pathStr}`);
+                if (project.unplacedAnnotations) {
+                    errorStore.warning(
+                        "Project",
+                        `${project.unplacedAnnotations} annotation(s) were left out: their words aren't in the saved file any more (it was changed outside Saga-Scribe).`,
+                    );
+                }
                 if (project.rewritten) {
                     errorStore.info(
                         "Project",

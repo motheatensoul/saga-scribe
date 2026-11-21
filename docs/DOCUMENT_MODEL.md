@@ -404,8 +404,10 @@ text).
    shorthand where it reads as the file (`keep_as_written`) and finds the records' words
    again. Projects of 1.x are opened as before and saved as 2.0. Not yet: new documents
    as trees created from their template (they still save `source.dsl` and
-   `output.xml`), and anchoring the annotations by fingerprint (they are still by word
-   number, which `document.xml` keeps).
+   `output.xml`). Annotations are kept by word number with each annotated word's
+   fingerprint in `anchors.json` (for new documents too); on opening, a word that isn't at
+   its number is looked for nearby, and annotations whose word is gone are left out and
+   counted.
 7. **Shorthand redesign** on top (abbreviations, supplied text with markup, short form
    for normalized punctuation): only the projection and the parser change.
 
