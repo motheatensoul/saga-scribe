@@ -55,6 +55,31 @@ pub struct CompilerConfig {
     /// Wrap page content in `<p>` tags for TEI structural compliance.
     /// TEI requires text to be inside structural elements like `<p>` or `<ab>`.
     pub wrap_pages: bool,
+    /// In multi-level mode, the levels written and whether they are in a
+    /// `<choice>` (an imported file's profile); `None`: MENOTA's three, in one
+    pub levels: Option<Levels>,
+}
+
+/// The transcription levels a multi-level word is written with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Levels {
+    pub facs: bool,
+    pub dipl: bool,
+    pub norm: bool,
+    pub choice: bool,
+}
+
+impl Levels {
+    /// The levels of `profile`, if it has any.
+    pub fn of(profile: &crate::document::profile::Profile) -> Option<Self> {
+        use crate::document::profile::Level;
+        (!profile.levels.is_empty()).then(|| Self {
+            facs: profile.has(Level::Facs),
+            dipl: profile.has(Level::Dipl),
+            norm: profile.has(Level::Norm),
+            choice: profile.choice,
+        })
+    }
 }
 
 /// A lemmatization mapping for a word token.
@@ -436,9 +461,27 @@ impl<'a> Compiler<'a> {
             let facs_with_chars = self.inject_character_tags(&facs, current_index);
 
             format!(
-                "<w{}{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>{}\n</w>\n",
-                lemma_attrs, ann_attrs, facs_with_chars, dipl, norm, notes
+                "<w{}{}>{}{}\n</w>\n",
+                lemma_attrs, ann_attrs, self.levels_xml(&facs_with_chars, &dipl, &norm), notes
             )
+        }
+    }
+
+    /// A word's levels as the configuration has them (the part after its
+    /// start tag): MENOTA's three in a `<choice>` unless set otherwise.
+    fn levels_xml(&self, facs: &str, dipl: &str, norm: &str) -> String {
+        let levels = self.config.levels.unwrap_or(Levels { facs: true, dipl: true, norm: true, choice: true });
+        let indent = if levels.choice { "    " } else { "  " };
+        let mut inner = String::new();
+        for (on, name, content) in [(levels.facs, "facs", facs), (levels.dipl, "dipl", dipl), (levels.norm, "norm", norm)] {
+            if on {
+                inner.push_str(&format!("\n{indent}<me:{name}>{content}</me:{name}>"));
+            }
+        }
+        if levels.choice {
+            format!("\n  <choice>{inner}\n  </choice>")
+        } else {
+            inner
         }
     }
 
@@ -755,10 +798,8 @@ impl<'a> Compiler<'a> {
         }
         let nodes = self.number_word_breaks(&inline_nodes(content));
         format!(
-            "<num>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</num>\n",
-            self.nodes_to_facs(&nodes),
-            self.nodes_to_diplomatic(&nodes),
-            self.nodes_to_normalized(&nodes)
+            "<num>{}\n</num>\n",
+            self.levels_xml(&self.nodes_to_facs(&nodes), &self.nodes_to_diplomatic(&nodes), &self.nodes_to_normalized(&nodes))
         )
     }
 
@@ -791,8 +832,8 @@ impl<'a> Compiler<'a> {
             String::new()
         } else {
             format!(
-                "<pc>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</pc>\n",
-                facs, dipl, norm
+                "<pc>{}\n</pc>\n",
+                self.levels_xml(&facs, &dipl, &norm)
             )
         }
     }
@@ -1109,8 +1150,8 @@ impl<'a> Compiler<'a> {
             };
 
             return format!(
-                "<w{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</w>\n",
-                attr_str, facs, dipl, norm
+                "<w{}>{}\n</w>\n",
+                attr_str, self.levels_xml(&facs, &dipl, &norm)
             );
         }
 
@@ -1145,8 +1186,8 @@ impl<'a> Compiler<'a> {
                 let norm = self.nodes_to_normalized(children);
 
                 return format!(
-                    "<pc>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</pc>\n",
-                    facs, dipl, norm
+                    "<pc>{}\n</pc>\n",
+                    self.levels_xml(&facs, &dipl, &norm)
                 );
             }
         }
@@ -1255,8 +1296,8 @@ impl<'a> Compiler<'a> {
                     let norm = self.nodes_to_normalized(children);
 
                     output.push_str(&format!(
-                        "<pc>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</pc>\n",
-                        facs, dipl, norm
+                        "<pc>{}\n</pc>\n",
+                        self.levels_xml(&facs, &dipl, &norm)
                     ));
                 }
                 Node::LineBreak(n) => {

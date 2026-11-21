@@ -370,6 +370,14 @@ text).
    shorthand in `<…>`) brought that from 94 to all 288 files. Gate:
    `corpus_xml_and_shorthand_read_as_the_same_tokens`.
 4. **Profile and levels.** The profile with the import dialog; derived and pinned levels.
+   Done (2026-11-21): the profile (`document/profile.rs`) is inferred from the file on
+   import and on opening a project (levels counted over words, numerals and punctuation;
+   a level in at least 5% of them is one of the file's), saved with the manifest, and shown
+   in the import dialog (`ImportProfileDialog.svelte`), where the levels new words get can
+   be changed (`set_imported_levels`). The compiler writes a word's levels as the profile
+   has them (`CompilerConfig::levels`). Not yet: the choice of lineation for `//n` (the
+   shorthand still shows all), the abbreviation and punctuation encoding in the compiler,
+   and derived and pinned levels.
 5. **Word panel** on the typed layer.
 6. **New documents and the file format.** The same path for new documents; the new
    `.teis` version, converting older ones.

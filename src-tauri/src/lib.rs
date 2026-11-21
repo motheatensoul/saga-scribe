@@ -114,6 +114,7 @@ pub fn run() {
             commands::parse::compile_dsl,
             commands::parse::compile_imported,
             commands::parse::set_imported_document,
+            commands::parse::set_imported_levels,
             commands::parse::check_dsl,
             commands::notify::notify,
             commands::pdf::pdf_export_supported,

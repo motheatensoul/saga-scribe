@@ -122,6 +122,11 @@ pub struct ImportedDocument {
     /// projects saved before spans existed; recomputed on demand).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spans: Option<SourceSpans>,
+    /// How the file encodes its transcription (step 4 of
+    /// `docs/DOCUMENT_MODEL.md`); inferred from the file when it is read,
+    /// absent in projects saved before 0.8.0
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<crate::document::profile::Profile>,
     /// The DSL rules the document's DSL was generated with ([`DSL_RULES`]);
     /// 0 for documents imported before rules were versioned.
     #[serde(default)]
@@ -257,6 +262,7 @@ impl ImportedDocument {
             segments,
             is_menota,
             spans: None,
+            profile: None,
             dsl_rules: 0,
             decisions: HashMap::new(),
         })

@@ -1058,11 +1058,14 @@ impl<'a> Originals<'a> {
 /// MENOTA three-level words, plain `<w>` words, or unwrapped text.
 pub fn compiler_config_for(doc: &ImportedDocument, originals: Originals) -> CompilerConfig {
     let word_wrap = doc.is_menota || doc.segments.iter().any(|seg| originals.is_word(seg));
+    let levels = doc.profile.as_ref().and_then(crate::parser::Levels::of);
     CompilerConfig {
         word_wrap,
         auto_line_numbers: false,
-        multi_level: doc.is_menota,
+        // Words get the profile's levels (MENOTA's three in files without one)
+        multi_level: if doc.profile.is_some() { levels.is_some() } else { doc.is_menota },
         wrap_pages: false,
+        levels,
     }
 }
 

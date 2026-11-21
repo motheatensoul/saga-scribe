@@ -152,6 +152,7 @@ fn compile_dsl(dsl: &str) -> String {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     Compiler::new().with_config(config).compile(dsl).expect("Compilation should succeed")
 }
@@ -164,6 +165,7 @@ fn compile_dsl_with_word_wrap(dsl: &str) -> String {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     Compiler::new().with_config(config).compile(dsl).expect("Compilation should succeed")
 }
@@ -412,6 +414,7 @@ fn test_entity_syntax_compiles_to_character() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let xml = Compiler::new()
         .with_config(config)
@@ -702,6 +705,7 @@ fn test_menota_file_roundtrip_stability() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     });
     let reconstructed_body =
         apply_patches_and_reconstruct(&imported_doc.segments, &patches, &mut compiler);
@@ -796,6 +800,7 @@ fn test_menota_file_imported_roundtrip_xml() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     });
 
     let reconstructed_body =
@@ -1421,7 +1426,7 @@ fn test_dsl_compiled_and_reimported_reads_the_same() {
     let dsl = ".p //1 Maþr het :thorn:orir þo~at .abbr[k:bar:]{konungr} :middot: \
                fro~//2sto þings , ok -{x}- +{y}+ .p //3 þa :middot: geck .";
     for multi_level in [true, false] {
-        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level, wrap_pages: false };
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level, wrap_pages: false, levels: None };
         let xml = Compiler::new().with_config(config).compile(dsl).unwrap();
         let ns = r#"xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0""#;
         let reread = parse(&format!("<TEI {ns}><text><body>{xml}</body></text></TEI>")).unwrap().dsl;
@@ -1674,7 +1679,7 @@ fn test_guided_character_edits_always_reimport_as_edited() {
 fn test_word_space_between_entities_survives_import() {
     // One <w> whose written words meet at entities: `&et; &thorn;a`
     for dsl in ["a:thorn:~:middot:", ":et:~:thorn:a"] {
-        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false, levels: None };
         let xml = Compiler::new().with_config(config).compile(dsl).unwrap();
         let back = parse(&format!(r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body>{xml}</body></text></TEI>"#)).unwrap().dsl;
         assert_eq!(back, dsl, "{xml}");
@@ -1893,4 +1898,27 @@ fn test_a_project_saved_with_older_rules_is_brought_onto_the_tree() {
     let current = import.imported_document.unwrap();
     let on_tree = onto_tree(&current, ".p a|b c dd", &pre, &body, &post).unwrap();
     assert_eq!((on_tree.dsl.as_str(), on_tree.rewritten), (".p a|b c dd", 0));
+}
+
+#[test]
+fn test_a_new_word_gets_the_files_levels() {
+    // A diplomatic-only charter: no <choice>, no facsimile or normalized level
+    let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w> <w><me:dipl>b</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace(" b", " b cc")).unwrap();
+    assert!(body.contains("<w>\n  <me:dipl>cc</me:dipl>\n</w>"), "{body}");
+    // Two levels in a <choice>
+    let xml = menota_body(
+        r#"<w><choice><me:facs>a</me:facs><me:dipl>a</me:dipl></choice></w> <w><choice><me:facs>b</me:facs><me:dipl>b</me:dipl></choice></w>"#,
+    );
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace(" b", " b cc")).unwrap();
+    assert!(body.contains("<choice>\n    <me:facs>cc</me:facs>\n    <me:dipl>cc</me:dipl>\n  </choice>"), "{body}");
+    assert!(!body.contains("<me:norm>"), "{body}");
+}
+
+#[test]
+fn test_a_plain_word_in_a_file_with_levels_is_edited() {
+    // DN bind 13 nr 11: most words plain, the others diplomatic
+    let xml = menota_body(r#"<w>dernest</w> <w><me:dipl>och</me:dipl></w> <w><me:dipl>att</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("dernest", "dernestt")).unwrap();
+    assert!(body.contains("<w>dernestt</w>"), "{body}");
 }

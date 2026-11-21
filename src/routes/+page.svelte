@@ -8,6 +8,7 @@
     import Toolbar from "$lib/components/Toolbar.svelte";
     import TemplateEditor from "$lib/components/TemplateEditor.svelte";
     import MetadataEditor from "$lib/components/MetadataEditor.svelte";
+    import ImportProfileDialog from "$lib/components/ImportProfileDialog.svelte";
     import EntityBrowser from "$lib/components/EntityBrowser.svelte";
     import Lemmatizer from "$lib/components/Lemmatizer.svelte";
     import AnnotationPanel from "$lib/components/AnnotationPanel.svelte";
@@ -47,8 +48,9 @@
         exportInflections,
         generateTeiHeader,
         validateXml,
+        setImportedLevels,
     } from "$lib/tauri";
-    import type { StagedDocument } from "$lib/tauri";
+    import type { Profile, StagedDocument } from "$lib/tauri";
     import { loadAppResources } from "$lib/startup";
     import { perfEnabled, perfRecord, perfTime, perfTimeSync } from "$lib/perf";
     import { importedLemmas } from "$lib/utils/importedLemmas";
@@ -120,6 +122,8 @@
     let entityMappingsJson = $state<string | null>(null);
     let isImporting = $state(false);
     let showMetadataEditor = $state(false);
+    /** An imported file's profile, shown for confirmation after importing */
+    let importProfile = $state<Profile | null>(null);
     let currentMetadata = $state<Metadata | undefined>(undefined);
 
     onMount(async () => {
@@ -842,6 +846,7 @@
 
             const imported = result.isImportedMode ? result.imported : undefined;
             if (setImportedDocument(imported)) {
+                importProfile = imported?.profile ?? null;
                 const lemmas = importedLemmas(result.words ?? [], imported!.isMenota);
                 if (lemmas.missingLemmas > 0) {
                     errorStore.warning("Import", `Missing lemma for ${lemmas.missingLemmas} word(s); left empty.`);
@@ -1088,6 +1093,19 @@
     </div>
 
     <TemplateEditor bind:isopen={showTemplateManager} />
+
+    <ImportProfileDialog
+        bind:profile={importProfile}
+        onconfirm={async (levels, choice) => {
+            try {
+                await setImportedLevels(levels, choice);
+                errorStore.info("Import", `New words get the levels: ${levels.join(", ") || "none"}`);
+                await compileNow();
+            } catch (e) {
+                errorStore.error("Import", `Failed to set the levels: ${e}`);
+            }
+        }}
+    />
 
     <MetadataEditor
         bind:isopen={showMetadataEditor}

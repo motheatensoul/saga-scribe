@@ -61,11 +61,12 @@ pub fn merge_word_edit(word_xml: &str, old_compiled: &str, new_compiled: &str) -
     let mut removed = Vec::new();
     for (name, level) in word_levels {
         let counterpart = |levels: &[(String, NodeId)]| -> Option<NodeId> {
-            // Same level; or the word's content and the compiled facs (or
-            // content), whichever is the main one
+            // Same level; or the word's content and the compiled facs, dipl
+            // or content, whichever is the main one (a plain word in a file
+            // whose other words have levels)
             let find = |n: &str| levels.iter().find(|(l, _)| l == n).map(|(_, id)| *id);
             find(&name).or_else(|| {
-                (name == primary).then(|| find("facs").or_else(|| find(CONTENT))).flatten()
+                (name == primary).then(|| find("facs").or_else(|| find("dipl")).or_else(|| find(CONTENT))).flatten()
             })
         };
         let (Some(old_level), Some(new_level)) = (counterpart(&old_levels), counterpart(&new_levels)) else {

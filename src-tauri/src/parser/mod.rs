@@ -92,7 +92,7 @@ mod corpus_tests;
 #[cfg(test)]
 mod tests;
 
-pub use compiler::{Compiler, CompilerConfig, LemmaMapping, WordKey};
+pub use compiler::{Compiler, CompilerConfig, LemmaMapping, Levels, WordKey};
 
 // Re-export for use by importer/patching
 pub use ast::Node;

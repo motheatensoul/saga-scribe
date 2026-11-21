@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn test_menota_export_with_entities_is_well_formed() {
         let template = TemplateManager { templates_dir: PathBuf::new() }.menota_template();
-        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: true };
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: true, levels: None };
         let body = Compiler::new().with_config(config).compile("///1r maþr :thorn:orir :middot:").unwrap();
         assert!(body.contains("&thorn;"), "{body}");
 

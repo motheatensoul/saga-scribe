@@ -16,6 +16,7 @@
 //!   anything that is saved.
 
 mod merge;
+pub mod profile;
 mod project;
 mod tree;
 mod write;

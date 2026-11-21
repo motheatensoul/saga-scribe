@@ -450,6 +450,16 @@ line breaks become `//`, page breaks `///`, each paragraph starts with `.p`, and
 Lemmas, analyses and normalized forms in the file are taken over, and its header is read
 into the [metadata editor](#manuscript-metadata).
 
+After a TEI file is imported, **Transcription of the imported file** shows how the file
+encodes its transcription, as read from it: which levels its words have (facsimile,
+diplomatic, normalized) and how many of them have each, whether the levels are in a
+`<choice>`, how abbreviations and punctuation are encoded, the file's lineations if it has
+several, and the markup the shorthand has no syntax for (such as `<hi>` or `<s>`), with
+counts. That markup is kept as it is, also in words you edit. Words you add in the editor
+are written with the levels ticked under **Levels**: change them if the file's reading is
+wrong, then **Confirm**. Words already in the file are not changed. The choice is saved
+with the project.
+
 A file that isn't well-formed XML (an unclosed element, say) is still imported, as the XML
 parser repairs it, but the [log](#logs-and-reporting-problems) shows a warning with the parser's first error and
 its line. Check the text around that line: the repair may have moved or dropped markup

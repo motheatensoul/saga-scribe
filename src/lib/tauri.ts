@@ -92,6 +92,45 @@ export interface StagedDocument {
   dslRules: number;
   /** The editor's answers for replaced words, by the original word's segment id */
   decisions: Record<number, Decision>;
+  /** How the file encodes its transcription (inferred when it was imported) */
+  profile?: Profile | null;
+}
+
+/** A transcription level of a word */
+export type Level = "facs" | "dipl" | "norm";
+
+/** How an imported file encodes its transcription (`src-tauri/src/document/profile.rs`) */
+export interface Profile {
+  /** The levels new words are written with, in order */
+  levels: Level[];
+  /** Whether a word's levels are in a `<choice>` */
+  choice: boolean;
+  abbreviations: "am_ex" | "choice_abbr_expan";
+  punctuation: "pc" | "me_punct";
+  /** The edition `//n` stands for, when the file has several lineations */
+  lineEdition?: string | null;
+  counts: {
+    words: number;
+    /** Words, numerals and punctuation */
+    tokens: number;
+    /** Tokens with each level */
+    levels: Partial<Record<Level, number>>;
+    wordsWithChoice: number;
+    am: number;
+    ex: number;
+    choiceAbbr: number;
+    pc: number;
+    mePunct: number;
+    /** Line breaks by edition ("" for none) */
+    lineEditions: Record<string, number>;
+    /** Elements the shorthand has no syntax for, by name */
+    hidden: Record<string, number>;
+  };
+}
+
+/** Sets the levels new words of the current imported document get (after the editor confirmed them). */
+export async function setImportedLevels(levels: Level[], choice: boolean): Promise<Profile> {
+  return invoke("set_imported_levels", { levels, choice });
 }
 
 /** What an imported file says about one of its words */

@@ -294,6 +294,7 @@ fn test_compiler_auto_line_numbers() {
         auto_line_numbers: true,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("line1// line2// line3").unwrap();
@@ -336,6 +337,7 @@ fn test_compiler_norm_wrapper() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile(".norm{,}").unwrap();
@@ -350,6 +352,7 @@ fn test_compiler_normalized_form_without_lemma() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
     let mut lemmas = HashMap::new();
     let norm_only = LemmaMapping { lemma: String::new(), msa: String::new(), normalized: Some("maðr".to_string()) };
@@ -402,6 +405,7 @@ fn test_compiler_word_wrap() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello world").unwrap();
@@ -416,6 +420,7 @@ fn test_compiler_punctuation_wrap() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello, world.").unwrap();
@@ -440,6 +445,7 @@ fn test_compiler_newlines_in_output() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello world").unwrap();
@@ -458,6 +464,7 @@ fn test_full_pipeline_menota_style() {
         auto_line_numbers: true,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
 
@@ -518,6 +525,7 @@ fn test_compiler_multi_level_word() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile("hello").unwrap();
@@ -537,6 +545,7 @@ fn test_compiler_multi_level_punctuation() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile(",").unwrap();
@@ -556,6 +565,7 @@ fn test_compiler_multi_level_abbreviation() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile(".abbr[dr]{doctor}").unwrap();
@@ -574,6 +584,7 @@ fn test_compiler_multi_level_entity() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
     let mut compiler = Compiler::new().with_config(config);
     let result = compiler.compile(":eth:").unwrap();
@@ -596,6 +607,7 @@ fn test_compiler_lemma_attributes_single_level() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let mut mappings = HashMap::new();
     // Now keyed by word INDEX (0 = first word)
@@ -646,6 +658,7 @@ fn test_compiler_lemma_attributes_multi_level() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
     let mut mappings = HashMap::new();
     // Now keyed by word INDEX (0 = first word)
@@ -677,6 +690,7 @@ fn test_compiler_lemma_only_for_confirmed_index() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let mut mappings = HashMap::new();
     // Only confirm word at index 0 (first "kona")
@@ -708,6 +722,7 @@ fn test_compiler_lemma_attributes_no_mapping() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let mappings = HashMap::new(); // Empty mappings
 
@@ -729,6 +744,7 @@ fn test_compiler_lemma_attributes_escaping() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let mut mappings = HashMap::new();
     mappings.insert(
@@ -767,6 +783,7 @@ fn test_compiler_compound_join_single_level() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
 
     let mut compiler = Compiler::new().with_config(config);
@@ -783,6 +800,7 @@ fn test_compiler_compound_join_multi_level() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
 
     let mut compiler = Compiler::new().with_config(config);
@@ -809,6 +827,7 @@ fn test_compiler_annotation_semantic() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
 
     // Create an annotation set with a semantic annotation for word index 0
@@ -848,6 +867,7 @@ fn test_compiler_annotation_note() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
 
     // Create an annotation set with a note annotation
@@ -886,6 +906,7 @@ fn test_compiler_annotation_paleographic() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
 
     // Create an annotation set with a paleographic annotation
@@ -925,6 +946,7 @@ fn test_compiler_annotation_multiple_on_word() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
 
     // Create an annotation set with multiple annotations on the same word
@@ -978,6 +1000,7 @@ fn test_compiler_menota_character_annotation() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
 
     // Create an annotation set with a character annotation (Initial) on the first letter
@@ -1035,6 +1058,7 @@ fn test_compiler_menota_character_annotation_multi() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
 
     // "Hér", annotate "Hé" [0, 1] (inclusive)
@@ -1082,6 +1106,7 @@ fn test_compiler_menota_character_annotation_entity() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
 
     let ann_set = AnnotationSet {
@@ -1127,6 +1152,7 @@ fn test_compiler_menota_character_annotation_out_of_bounds() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     };
 
     // Annotation range [0, 5] but text is "H" (len 1)
@@ -1174,6 +1200,7 @@ fn word_wrapping_compiler(multi_level: bool, auto_line_numbers: bool) -> Compile
         auto_line_numbers,
         multi_level,
         wrap_pages: false,
+        levels: None,
     })
 }
 
@@ -1249,6 +1276,7 @@ fn test_compile_paragraphs_with_page_wrapping() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: true,
+        levels: None,
     });
     // `.p` right after a page break uses the paragraph the page opened
     let xml = compiler.compile("///1r .p a .p b ///1v c").unwrap();
@@ -1309,7 +1337,7 @@ fn test_escaped_characters_are_part_of_the_token() {
 
 #[test]
 fn test_escaped_characters_compile_as_text() {
-    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false, levels: None };
     let mut compiler = Compiler::new().with_config(config);
     let xml = compiler.compile(r"ꝼæ\;ðꝛ \(anno\) ,\, a\\b \#").unwrap();
     assert!(xml.contains("<w>ꝼæ;ðꝛ</w>"), "{xml}");
@@ -1328,7 +1356,7 @@ fn test_escaped_characters_compile_as_text() {
 #[test]
 fn test_numerals_are_tokens_of_their_own() {
     assert_eq!(token_texts("a #.x.# b #.v:iacute:.#,"), ["a", "#.x.#", "b", "#.v:iacute:.#", ","]);
-    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false, levels: None };
     let mut compiler = Compiler::new().with_config(config);
     let xml = compiler.compile("ok #.x.# ok").unwrap();
     assert!(xml.contains("<num>\n  <choice>\n    <me:facs>.x.</me:facs>\n    <me:dipl>.x.</me:dipl>"), "{xml}");
@@ -1347,7 +1375,7 @@ fn test_unclosed_numeral_is_an_error() {
 #[test]
 fn test_break_numbers_in_braces() {
     assert_eq!(token_texts("a //{56r} b ///{fol. 1r} c~//{-3}d"), ["a", "//{56r}", "b", "///{fol. 1r}", "c~//{-3}d"]);
-    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false, levels: None };
     let xml = Compiler::new().with_config(config).compile(r"a //{56r} ///{fol. 1r} //{a\}b}").unwrap();
     for expected in [r#"<lb n="56r"/>"#, r#"<pb n="fol. 1r"/>"#, r#"<lb n="a}b"/>"#] {
         assert!(xml.contains(expected), "{expected} in {xml}");
@@ -1365,13 +1393,13 @@ fn test_break_numbers_in_braces() {
 fn test_supplied_text_is_shorthand() {
     // One word: supplied text with a line break and an entity inside it
     assert_eq!(token_texts("sa<m~//14:thorn:>yct ok"), ["sa<m~//14:thorn:>yct", "ok"]);
-    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false, levels: None };
     let mut compiler = Compiler::new().with_config(config);
     let xml = compiler.compile("sa<m~//14þ>yct [...2<a:et:>]").unwrap();
     assert!(xml.contains(r#"<me:facs>sa<lb n="14"/>yct</me:facs>"#), "{xml}");
     assert!(xml.contains(r#"<me:dipl>sa<supplied>m<lb n="14"/>þ</supplied>yct</me:dipl>"#), "{xml}");
     assert!(!xml.contains(":et:"), "{xml}");
-    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false, levels: None };
     let xml = Compiler::new().with_config(config).compile("sa<m~//14þ>yct").unwrap();
     assert!(xml.contains(r#"<w>sa<supplied>m<lb n="14"/>þ</supplied>yct</w>"#), "{xml}");
 }
@@ -1380,7 +1408,7 @@ fn test_supplied_text_is_shorthand() {
 fn test_deletions_additions_and_unclear_readings_are_shorthand() {
     // One word each, markup inside
     assert_eq!(token_texts("k-{ny[...]}-t a?{þ:er:}?b ok"), ["k-{ny[...]}-t", "a?{þ:er:}?b", "ok"]);
-    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false };
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false, levels: None };
     let mut compiler = Compiler::new().with_config(config);
     let xml = compiler.compile(r"-{ny[...]}- +{a:thorn:b}+ .abbr[?{þ:er:}?]{þer} -{a~//2b}- ?{a\:b}?").unwrap();
     for expected in [
@@ -1392,7 +1420,7 @@ fn test_deletions_additions_and_unclear_readings_are_shorthand() {
     ] {
         assert!(xml.contains(expected), "{expected} in {xml}");
     }
-    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false, levels: None };
     let xml = Compiler::new().with_config(config).compile("-{ny[...]}-t").unwrap();
     assert!(xml.contains(r#"<me:facs><del>ny<gap reason="illegible"/></del>t</me:facs>"#), "{xml}");
     assert!(xml.contains("<me:dipl><del>ny</del>t</me:dipl>"), "{xml}");

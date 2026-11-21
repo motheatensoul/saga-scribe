@@ -91,6 +91,7 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
     let tree = Tree::from_document(&doc, xml_content);
     let tree_body = find_tree_body(&tree).ok_or("No <body> element found in XML")?;
     let projection = project_body(&tree, tree_body);
+    let profile = crate::document::profile::infer(&tree, tree_body);
     let segments = projection.segments;
     let spans = projection.spans;
 
@@ -117,6 +118,7 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
         segments,
         is_menota,
         spans,
+        profile: Some(profile),
         dsl_rules: DSL_RULES,
         decisions: Default::default(),
     };
@@ -222,6 +224,7 @@ pub fn onto_tree(stored: &ImportedDocument, dsl: &str, preamble: &str, body: &st
         segments: projection.segments,
         is_menota: stored.is_menota,
         spans: Some(fresh_spans),
+        profile: Some(stored.profile.clone().unwrap_or_else(|| crate::document::profile::infer(&tree, tree_body))),
         dsl_rules: DSL_RULES,
         decisions: stored.decisions.iter().filter_map(|(id, d)| Some((*fresh_id.get(id)?, *d))).collect(),
     };

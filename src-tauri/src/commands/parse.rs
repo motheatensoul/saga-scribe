@@ -96,6 +96,7 @@ pub async fn compile_dsl(
             auto_line_numbers: auto_line_numbers.unwrap_or(false),
             multi_level: multi_level.unwrap_or(false),
             wrap_pages: wrap_pages.unwrap_or(false),
+            levels: None,
         };
 
         let mut compiler = Compiler::new()
@@ -199,6 +200,8 @@ pub struct ImportedSlots {
 pub struct StagedDocument {
     pub handle: u64,
     pub is_menota: bool,
+    /// How the file encodes its transcription, for the editor to confirm
+    pub profile: Option<crate::document::profile::Profile>,
     pub dsl_rules: u32,
     pub decisions: HashMap<usize, Decision>,
 }
@@ -213,6 +216,7 @@ impl ImportedSession {
         let staged = StagedDocument {
             handle,
             is_menota: source.document.is_menota,
+            profile: source.document.profile.clone(),
             dsl_rules: source.document.dsl_rules,
             decisions: source.document.decisions.clone(),
         };
@@ -246,6 +250,20 @@ impl ImportedSession {
     pub(crate) fn with_current_mut<T>(&self, f: impl FnOnce(&mut ImportedSource) -> T) -> Result<Option<T>, String> {
         let mut slots = self.0.lock().map_err(|_| "Imported document state is poisoned")?;
         Ok(slots.current.as_mut().map(f))
+    }
+
+    /// Sets the levels of the current document's profile (see
+    /// [`set_imported_levels`]); returns the profile.
+    pub fn set_levels(&self, levels: Vec<crate::document::profile::Level>, choice: bool) -> Result<crate::document::profile::Profile, String> {
+        use crate::document::profile::{Level, Profile};
+        let mut slots = self.0.lock().map_err(|_| "Imported document state is poisoned")?;
+        let source = slots.current.as_mut().ok_or("No imported document is loaded")?;
+        let mut profile = source.document.profile.clone().unwrap_or_else(Profile::menota);
+        profile.levels = Level::ALL.into_iter().filter(|l| levels.contains(l)).collect();
+        profile.choice = choice && profile.levels.len() > 1;
+        source.document.profile = Some(profile.clone());
+        source.config = compiler_config_for(&source.document, Originals::new(source.tree.as_ref()));
+        Ok(profile)
     }
 
     /// Runs `f` on the current document, if there is one.
@@ -349,6 +367,22 @@ impl ImportedSource {
 #[tauri::command(async, rename_all = "camelCase")]
 pub async fn set_imported_document(session: State<'_, ImportedSession>, handle: Option<u64>) -> Result<(), String> {
     session.load(handle)
+}
+
+/// Sets which levels new words of the current imported document are
+/// written with, and whether in a `<choice>`, as the editor confirmed them
+/// after importing. The profile is saved with the project.
+///
+/// # Errors
+///
+/// If no imported document is loaded.
+#[tauri::command(async, rename_all = "camelCase")]
+pub async fn set_imported_levels(
+    session: State<'_, ImportedSession>,
+    levels: Vec<crate::document::profile::Level>,
+    choice: bool,
+) -> Result<crate::document::profile::Profile, String> {
+    session.set_levels(levels, choice)
 }
 
 /// Compile an imported document using the patching system for round-trip fidelity.
