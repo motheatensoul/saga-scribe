@@ -538,6 +538,8 @@ export interface ProjectData {
   annotations?: import("$lib/types/annotations").AnnotationSet;
   /** The imported document, staged in the backend (imported projects) */
   imported?: StagedDocument;
+  /** Places of the shorthand rewritten to read as the file is imported now (a project saved with older rules) */
+  rewritten?: number;
 }
 
 /**

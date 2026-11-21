@@ -39,7 +39,7 @@ use crate::parser::syntax::break_number_dsl;
 use crate::importer::tei::extraction::segments_to_dsl;
 use crate::importer::tei::apply::{apply_to_tree, TreeSource};
 use crate::importer::tei::helpers;
-use crate::importer::tei::segments::{Decision, ImportedDocument, Segment};
+use crate::importer::tei::segments::{Decision, ImportedDocument, Segment, DSL_RULES};
 use crate::importer::tei::source_map::{set_tag_attribute, tag_attribute, tag_length};
 use crate::identity::{
     carry, diff_range, is_token, matched_tokens, node_to_dsl, spanned_dsl_tokens, Edit, Guidance,
@@ -432,6 +432,151 @@ impl Patcher {
         }
         records
     }
+}
+
+/// `dsl`, shorthand written against `old` (the segments of a project saved
+/// with older import rules, `old_rules`), with its unedited words written as
+/// the current rules write `fresh` (the same file projected now); edited and
+/// added words, and the layout, stay as typed (`docs/DOCUMENT_MODEL.md`,
+/// "Keeping the shorthand as written"). `fresh_id` maps `old`'s segment IDs
+/// to `fresh`'s (by where they are in the file). Also returns how many places
+/// were rewritten. `None` if `dsl` doesn't parse.
+///
+/// Tokens are matched in groups: the old tokens of a group and the fresh
+/// ones cover the same segments. A group is rewritten if all its old tokens
+/// are unedited and next to each other in `dsl`.
+pub fn rewrite_unedited(
+    old: &[Segment],
+    old_rules: u32,
+    fresh: &[Segment],
+    dsl: &str,
+    fresh_id: &HashMap<usize, usize>,
+) -> Option<(String, usize)> {
+    use crate::importer::tei::extraction::segments_to_placed_dsl;
+    let (old_dsl, old_places) = segments_to_placed_dsl(old, old_rules);
+    let (fresh_dsl, fresh_places) = segments_to_placed_dsl(fresh, DSL_RULES);
+    let (old_tokens, old_spans) = spanned_dsl_tokens(&old_dsl).ok()?;
+    let (fresh_tokens, fresh_spans) = spanned_dsl_tokens(&fresh_dsl).ok()?;
+    let (tokens, spans) = spanned_dsl_tokens(dsl).ok()?;
+
+    // Which old token each unedited token of `dsl` is
+    let a: Vec<&str> = old_tokens.iter().map(String::as_str).collect();
+    let b: Vec<&str> = tokens.iter().map(String::as_str).collect();
+    let mut edits = Vec::with_capacity(a.len().max(b.len()));
+    diff_range(&a, &b, 0, 0, &mut edits);
+    let mut kept_at: HashMap<usize, usize> = HashMap::new();
+    let mut j = 0;
+    for edit in &edits {
+        match *edit {
+            Edit::Keep(i) => {
+                kept_at.insert(i, j);
+                j += 1;
+            }
+            Edit::Insert(k) | Edit::Replace(_, k) => j = k + 1,
+            Edit::Delete(_) => {}
+        }
+    }
+
+    // The tokens each segment's shorthand is in
+    let tokens_of = |places: &[(usize, std::ops::Range<usize>)], spans: &[std::ops::Range<usize>]| {
+        let mut of: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (segment, range) in places {
+            let first = spans.partition_point(|s| s.end <= range.start);
+            for (t, span) in spans.iter().enumerate().skip(first) {
+                if span.start >= range.end.max(range.start + 1) {
+                    break;
+                }
+                of.entry(*segment).or_default().push(t);
+            }
+        }
+        of
+    };
+    let old_of = tokens_of(&old_places, &old_spans);
+    let fresh_of = tokens_of(&fresh_places, &fresh_spans);
+
+    // Groups: old tokens (0..m) and fresh tokens (m..) joined by segments
+    let (m, n) = (old_tokens.len(), fresh_tokens.len());
+    let mut parent: Vec<usize> = (0..m + n).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    let union = |parent: &mut Vec<usize>, x: usize, y: usize| {
+        let (a, b) = (find(parent, x), find(parent, y));
+        parent[a] = b;
+    };
+    let mut broken = vec![false; m + n];
+    let mut covered = vec![false; m + n];
+    for (segment, olds) in &old_of {
+        let freshes = fresh_id.get(segment).and_then(|s| fresh_of.get(s));
+        for &o in olds {
+            covered[o] = true;
+            match freshes {
+                Some(freshes) => {
+                    for &f in freshes {
+                        covered[m + f] = true;
+                        union(&mut parent, o, m + f);
+                    }
+                }
+                None => broken[o] = true,
+            }
+        }
+    }
+    let mapped: std::collections::HashSet<usize> = fresh_id.values().copied().collect();
+    for (segment, freshes) in &fresh_of {
+        if !mapped.contains(segment) {
+            for &f in freshes {
+                broken[m + f] = true;
+            }
+        }
+    }
+    let mut groups: HashMap<usize, (Vec<usize>, Vec<usize>, bool)> = HashMap::new();
+    for x in 0..m + n {
+        let root = find(&mut parent, x);
+        let group = groups.entry(root).or_default();
+        if x < m {
+            group.0.push(x);
+        } else {
+            group.1.push(x - m);
+        }
+        // A token of no segment (shouldn't be) can't be placed
+        group.2 |= broken[x] || !covered[x];
+    }
+
+    let mut replacements: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
+    for (olds, freshes, broken) in groups.values() {
+        if *broken || olds.is_empty() || freshes.is_empty() {
+            continue;
+        }
+        // Every old token unedited, and next to each other in `dsl`
+        let Some(at) = olds.iter().map(|i| kept_at.get(i).copied()).collect::<Option<Vec<usize>>>() else { continue };
+        let consecutive = |v: &[usize]| v.windows(2).all(|w| w[1] == w[0] + 1);
+        if !consecutive(&at) || !consecutive(freshes) {
+            continue;
+        }
+        let (first, last) = (freshes[0], freshes[freshes.len() - 1]);
+        let text = fresh_dsl.get(fresh_spans[first].start..fresh_spans[last].end)?;
+        let range = spans[at[0]].start..spans[at[at.len() - 1]].end;
+        if dsl.get(range.clone()) != Some(text) {
+            replacements.push((range, text));
+        }
+    }
+    replacements.sort_by_key(|(range, _)| range.start);
+    let mut out = String::with_capacity(dsl.len() + 64);
+    let mut from = 0;
+    for (range, text) in &replacements {
+        if range.start < from {
+            return None;
+        }
+        out.push_str(&dsl[from..range.start]);
+        out.push_str(text);
+        from = range.end;
+    }
+    out.push_str(&dsl[from..]);
+    Some((out, replacements.len()))
 }
 
 /// Applies the editor's answers to `patches`: a replaced word that is the

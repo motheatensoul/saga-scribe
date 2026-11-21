@@ -243,6 +243,16 @@ words are rewritten from the projection, and the editor is told how many places 
 Loading parses the XML anyway; the projection is cheap next to that (the survey projected
 2.5M words in seconds).
 
+Done for imported projects (2026-11-21): opening one projects its file afresh, and the
+session works with those segments, not the saved ones (`onto_tree`). The stored shorthand
+is compared with the shorthand the saved segments make under the rules they were imported
+with; tokens the editor didn't edit are rewritten as the projection writes them, in groups
+of tokens that cover the same elements (an old `þꝩiat` becomes `þꝩi|at`), and edited
+tokens, added ones and the layout stay as typed (`rewrite_unedited`). Answers for replaced
+words move to the projected segments by their place in the file. The log says how many
+places were rewritten. Gate: `corpus_older_projects_are_brought_onto_the_tree` (rules 1
+and 2, unedited and with every 40th token edited).
+
 ## The word panel
 
 Everything in a word must be editable from the word panel (opened by clicking a word in
@@ -349,8 +359,12 @@ text).
      editor keeps by word number for it are parked under its key until it comes back
      (`identity::Parking`, `renumberParking`). Which deleted word an insertion is
      comes from the guidance, or, without it, from there being as many of that text
-     deleted as inserted. Left: the patcher pairing tokens with tree nodes instead of
-     segments.
+     deleted as inserted. The segments are the tree's tokens: importing and opening
+     project the file's tree afresh (a project saved with older rules is brought onto
+     it, see "Keeping the shorthand as written"), and each segment is found at its node
+     (`TreeSource`); the saved segments are only read to convert a project, or where a
+     file can't be projected with spans. `segments.json` goes with the file format
+     (step 6).
    Both need the shorthand to read as the same tokens as the file's words. DSL rules 3
    and 4 (escaped characters, `#…#` numerals, separated neighbours, braced break numbers,
    shorthand in `<…>`) brought that from 94 to all 288 files. Gate:

@@ -1860,3 +1860,37 @@ fn test_words_moved_ambiguously_are_not_taken_for_moves() {
     let (patches, _) = session.patcher.compute(".p x y ok", None).unwrap();
     assert!(!patches.iter().any(|p| matches!(p, PatchOperation::Insert { moved: Some(_), .. })), "{patches:?}");
 }
+
+#[test]
+fn test_a_project_saved_with_older_rules_is_brought_onto_the_tree() {
+    use crate::importer::tei::extraction::segments_to_dsl;
+    use crate::importer::tei::onto_tree;
+    use crate::importer::tei::segments::DSL_RULES;
+    let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w><w><me:dipl>b</me:dipl></w> <w><me:dipl>c</me:dipl></w> <w><me:dipl>d</me:dipl></w>"#);
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p a|b c d");
+    let body = import.original_body_xml.clone().unwrap();
+    let (pre, post) = (import.original_preamble.clone().unwrap(), import.original_postamble.clone().unwrap());
+    // The same file as imported with rules 2, before neighbours were set apart
+    let mut stored = import.imported_document.clone().unwrap();
+    stored.dsl_rules = 2;
+    let old = segments_to_dsl(&stored.segments, 2);
+    assert_eq!(old.trim(), ".p ab c d");
+
+    // Unedited: rewritten to the current form
+    let on_tree = onto_tree(&stored, old.trim(), &pre, &body, &post).unwrap();
+    assert_eq!((on_tree.dsl.as_str(), on_tree.rewritten), (".p a|b c d", 1));
+    assert_eq!(on_tree.document.dsl_rules, DSL_RULES);
+
+    // An edit stays as typed, and so do the layout and the words around it
+    let on_tree = onto_tree(&stored, ".p ab\nc dd", &pre, &body, &post).unwrap();
+    assert_eq!(on_tree.dsl, ".p a|b\nc dd");
+    // Edited where the rules differ: left as typed
+    let on_tree = onto_tree(&stored, ".p abx c d", &pre, &body, &post).unwrap();
+    assert_eq!((on_tree.dsl.as_str(), on_tree.rewritten), (".p abx c d", 0));
+
+    // A project of this version is left as it is
+    let current = import.imported_document.unwrap();
+    let on_tree = onto_tree(&current, ".p a|b c dd", &pre, &body, &post).unwrap();
+    assert_eq!((on_tree.dsl.as_str(), on_tree.rewritten), (".p a|b c dd", 0));
+}

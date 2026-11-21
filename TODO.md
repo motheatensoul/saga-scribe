@@ -27,9 +27,10 @@ when it is done (and record it in CHANGELOG.md if users notice).
   (GetPut, PutGet, Locality: `corpus_edits_are_put_back_locally`) pass, and edits are
   applied to the file's tree instead of spliced into its text (2026-11-12). Replaced words
   are marked in the shorthand and asked about in the word panel (2026-11-12); a word cut
-  and pasted elsewhere is moved with its XML (2026-11-21). **Next in 3b:** the patcher
-  pairing tokens with tree nodes instead of segments. It comes before the shorthand
-  redesign. Corpus gates: `scripts/fetch-menota-corpus.sh`, then
+  and pasted elsewhere is moved with its XML (2026-11-21). Opening a project projects
+  its file afresh, and projects saved with older import rules are brought onto the
+  current ones (2026-11-21), which finishes 3b. Next: steps 4 to 6 (profile and levels,
+  the word panel on the typed layer, the file format without `segments.json`). Corpus gates: `scripts/fetch-menota-corpus.sh`, then
   `cd src-tauri; MENOTA_CORPUS=../tests/corpus/menota cargo test --release corpus_ -- --test-threads=1`
   (run them one at a time; together they can run out of memory).
 - **Text outside words in documents without `<w>`** is still split at punctuation by the

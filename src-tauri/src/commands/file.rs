@@ -420,6 +420,14 @@ pub struct OpenedProject {
     pub project: ProjectData,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub imported: Option<StagedDocument>,
+    /// How many places of the shorthand were rewritten to read as the file
+    /// is projected now (a project saved with older import rules)
+    #[serde(skip_serializing_if = "is_zero")]
+    pub rewritten: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Opens a .teis project archive and loads all contained data; an imported
@@ -430,17 +438,37 @@ pub async fn open_project(path: String, session: State<'_, ImportedSession>) -> 
     tauri::async_runtime::spawn_blocking(move || {
         let timer = crate::perf::timer();
         let mut project = read_project(&path)?;
-        let preamble = project.original_preamble.take().unwrap_or_default();
-        let postamble = project.original_postamble.take().unwrap_or_default();
-        let imported = match (project.imported_document.take(), project.original_body_xml.take()) {
-            (Some(document), Some(body)) => Some(session.stage(ImportedSource::new(document, body, preamble, postamble))?),
-            _ => None,
-        };
-        timer.done("open_project", [("imported", imported.is_some().into())]);
-        Ok(OpenedProject { project, imported })
+        let (imported, rewritten) = stage_project(&mut project, &session)?;
+        timer.done("open_project", [("imported", imported.is_some().into()), ("rewritten", rewritten.into())]);
+        Ok(OpenedProject { project, imported, rewritten })
     })
     .await
     .map_err(|e| format!("Opening failed: {e}"))?
+}
+
+/// Stages the imported document of `project`, if it has one, on its file's
+/// tree as projected now: its shorthand is rewritten where unedited words
+/// read differently with the current import rules (see
+/// [`onto_tree`](crate::importer::tei::onto_tree)). Returns the staged
+/// document and how many places were rewritten.
+pub(crate) fn stage_project(project: &mut ProjectData, session: &ImportedSession) -> Result<(Option<StagedDocument>, usize), String> {
+    let preamble = project.original_preamble.take().unwrap_or_default();
+    let postamble = project.original_postamble.take().unwrap_or_default();
+    let (Some(stored), Some(body)) = (project.imported_document.take(), project.original_body_xml.take()) else {
+        return Ok((None, 0));
+    };
+    let (document, tree, rewritten) = match crate::importer::tei::onto_tree(&stored, &project.source, &preamble, &body, &postamble) {
+        Some(on_tree) => {
+            project.source = on_tree.dsl;
+            (on_tree.document, Some(on_tree.tree), on_tree.rewritten)
+        }
+        None => {
+            log::warn!("The project's file couldn't be projected afresh; its stored segments are used");
+            (stored, None, 0)
+        }
+    };
+    let source = ImportedSource::with_tree(document, tree, body, preamble, postamble);
+    Ok((Some(session.stage(source)?), rewritten))
 }
 
 /// Reads a .teis project archive.

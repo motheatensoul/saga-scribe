@@ -152,7 +152,24 @@ fn is_entity_punctuation(dsl: &str) -> bool {
 ///
 /// `dsl_rules` is the document's [`DSL_RULES`](super::segments::DSL_RULES) version.
 pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
+    write_segments(segments, dsl_rules, None)
+}
+
+/// [`segments_to_dsl`], and where each segment's shorthand is in it (the
+/// words, punctuation, breaks and paragraph starts), by segment ID.
+pub fn segments_to_placed_dsl(segments: &[Segment], dsl_rules: u32) -> (String, Vec<(usize, std::ops::Range<usize>)>) {
+    let mut places = Vec::new();
+    let dsl = write_segments(segments, dsl_rules, Some(&mut places));
+    (dsl, places)
+}
+
+fn write_segments(segments: &[Segment], dsl_rules: u32, mut places: Option<&mut Vec<(usize, std::ops::Range<usize>)>>) -> String {
     let mut dsl = String::new();
+    let place = |places: &mut Option<&mut Vec<(usize, std::ops::Range<usize>)>>, id: usize, range: std::ops::Range<usize>| {
+        if let Some(places) = places.as_deref_mut() {
+            places.push((id, range));
+        }
+    };
     let mut last_was_linebreak = false;
     let mut pending_space = false;  // Track if we should add a space before next word
     // The last word or punctuation written, while nothing else follows it
@@ -194,7 +211,9 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                     dsl.push(' ');
                 }
                 separate(&mut dsl, previous, dsl_content);
+                let at = dsl.len();
                 dsl.push_str(dsl_content);
+                place(&mut places, segment.id(), at..dsl.len());
                 last_was_linebreak = false;
                 pending_space = false;
                 // A word without shorthand (an empty `<w>`) isn't a token
@@ -209,7 +228,9 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 if !dsl.is_empty() && !dsl.ends_with(char::is_whitespace) {
                     dsl.push(' ');
                 }
+                let at = dsl.len();
                 dsl.push_str(dsl_content);
+                place(&mut places, segment.id(), at..dsl.len());
                 last_was_linebreak = false;
                 pending_space = true;
                 previous = Some(dsl_content);
@@ -220,7 +241,9 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 }
                 // Punctuation typically follows immediately after word (no space)
                 separate(&mut dsl, previous, dsl_content);
+                let at = dsl.len();
                 dsl.push_str(dsl_content);
+                place(&mut places, segment.id(), at..dsl.len());
                 last_was_linebreak = false;
                 pending_space = false;
                 previous = Some(dsl_content);
@@ -233,11 +256,13 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 }
                 // Line break on new line, then continue on same line
                 dsl.push('\n');
+                let at = dsl.len();
                 if let Some(n) = attributes.get("n") {
                     dsl.push_str(&format!("//{}", break_number(n, false, dsl_rules)));
                 } else {
                     dsl.push_str("//");
                 }
+                place(&mut places, segment.id(), at..dsl.len());
                 dsl.push(' ');
                 last_was_linebreak = false;
                 pending_space = false;
@@ -249,11 +274,13 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 }
                 // Page break: put on new line, no trailing newline (content follows)
                 dsl.push('\n');
+                let at = dsl.len();
                 if let Some(n) = attributes.get("n") {
                     dsl.push_str(&format!("///{}", break_number(n, true, dsl_rules)));
                 } else {
                     dsl.push_str("///");
                 }
+                place(&mut places, segment.id(), at..dsl.len());
                 last_was_linebreak = true;
                 pending_space = false;
                 previous = None;
@@ -266,7 +293,9 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
                 if !dsl.is_empty() && !dsl.ends_with(char::is_whitespace) {
                     dsl.push(' ');
                 }
+                let at = dsl.len();
                 dsl.push_str(".p ");
+                place(&mut places, segment.id(), at..at + 2);
                 last_was_linebreak = false;
                 pending_space = false;
                 previous = None;
@@ -283,5 +312,12 @@ pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
         }
     }
 
+    // Trimmed, so the places move by what goes at the start
+    let start = dsl.len() - dsl.trim_start().len();
+    if let Some(places) = places {
+        for (_, range) in places.iter_mut() {
+            *range = range.start.saturating_sub(start)..range.end.saturating_sub(start);
+        }
+    }
     dsl.trim().to_string()
 }

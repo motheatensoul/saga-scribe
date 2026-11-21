@@ -171,6 +171,71 @@ pub fn recompute_spans(
     same.then_some(spans)
 }
 
+/// A saved imported document on its file's tree (step 3b of
+/// `docs/DOCUMENT_MODEL.md`): the segments projected afresh from the file,
+/// and the stored shorthand with its unedited words as the projection
+/// writes them.
+pub struct OnTree {
+    pub document: ImportedDocument,
+    pub dsl: String,
+    /// How many places of the shorthand were rewritten
+    pub rewritten: usize,
+    /// The file, parsed
+    pub tree: Tree,
+}
+
+/// Brings `stored` (a saved imported document, whose segments were made
+/// with the import rules of its time) and its shorthand `dsl` onto the
+/// file's tree: the session then works with the segments the current
+/// projection makes, the answers for replaced words move to them, and
+/// `dsl` is rewritten where its unedited words read differently now
+/// ([`rewrite_unedited`]). `None` if the file can't be projected with spans
+/// or doesn't line up with the stored segments; the stored ones are used
+/// then.
+pub fn onto_tree(stored: &ImportedDocument, dsl: &str, preamble: &str, body: &str, postamble: &str) -> Option<OnTree> {
+    use crate::importer::tei::extraction::segments_to_dsl;
+    use crate::importer::tei::patching::rewrite_unedited;
+    let xml = format!("{preamble}{body}{postamble}");
+    let tree = Tree::parse(&xml).ok()?;
+    let tree_body = find_tree_body(&tree)?;
+    if tree.span(tree_body)?.start != preamble.len() {
+        return None;
+    }
+    let projection = project_body(&tree, tree_body);
+    let fresh_spans = projection.spans?;
+    let stored_spans = stored.spans.as_ref()?;
+
+    // Old segment → fresh segment, by kind and place in the file
+    let kind = |s: &Segment| std::mem::discriminant(s);
+    let by_place: std::collections::HashMap<_, usize> = projection
+        .segments
+        .iter()
+        .filter_map(|s| Some(((kind(s), (*fresh_spans.get(s.id())?)?), s.id())))
+        .collect();
+    let fresh_id: std::collections::HashMap<usize, usize> = stored
+        .segments
+        .iter()
+        .filter_map(|s| Some((s.id(), *by_place.get(&(kind(s), (*stored_spans.get(s.id())?)?))?)))
+        .collect();
+
+    let document = ImportedDocument {
+        segments: projection.segments,
+        is_menota: stored.is_menota,
+        spans: Some(fresh_spans),
+        dsl_rules: DSL_RULES,
+        decisions: stored.decisions.iter().filter_map(|(id, d)| Some((*fresh_id.get(id)?, *d))).collect(),
+    };
+    let fresh_dsl = segments_to_dsl(&document.segments, DSL_RULES);
+    let unchanged = segments_to_dsl(&stored.segments, stored.dsl_rules) == fresh_dsl
+        && stored.segments.len() == document.segments.len()
+        && fresh_id.iter().all(|(a, b)| a == b);
+    if unchanged {
+        return Some(OnTree { document, dsl: dsl.to_string(), rewritten: 0, tree });
+    }
+    let (dsl, rewritten) = rewrite_unedited(&stored.segments, stored.dsl_rules, &document.segments, dsl, &fresh_id)?;
+    Some(OnTree { document, dsl, rewritten, tree })
+}
+
 fn segment_dsl(segment: &Segment) -> Option<&str> {
     match segment {
         Segment::Word { dsl_content, .. } | Segment::Punctuation { dsl_content, .. } => {

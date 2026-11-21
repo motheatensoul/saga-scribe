@@ -492,6 +492,12 @@
                 await compileNow(project.source);
 
                 errorStore.info("Project", `Opened project from ${pathStr}`);
+                if (project.rewritten) {
+                    errorStore.info(
+                        "Project",
+                        `${project.rewritten} unedited place(s) of the shorthand were rewritten to read as this version imports the file. Save the project to keep them so.`,
+                    );
+                }
             } else {
                 // Open plain DSL file (backwards compatibility)
                 const file = await openFile(pathStr);

@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Projects imported with older versions read their shorthand with the old rules**: a project opened now works on its file as this version imports it. Unedited words of the shorthand are rewritten to the current form (such as `þꝩi|at` for two words written together, or `//{56r}`), edited words and the layout stay as typed, and the log says how many places were rewritten. Before, such projects kept the old forms, where some words read as one or ran into a page number
 - **Importing XML that isn't well-formed said nothing**: such a file was imported as the XML parser repaired it, silently. The log now shows a warning with the parser's first error, so the repaired place can be checked. Likewise, saving a project warns if its compiled TEI-XML (`output.xml`) isn't well-formed
 - **Export could write XML that isn't well-formed**: the TEI-XML export is now read by libxml2 first and refused, with an error, if it isn't well-formed
 - **ONP definitions failed to load** ("Failed to parse response"): the ONP API no longer sends two fields of each sense that the app required, though it never showed them. Entries now load with whatever fields the API sends

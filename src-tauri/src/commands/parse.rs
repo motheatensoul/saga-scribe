@@ -305,10 +305,24 @@ impl ImportedSource {
 
     /// Reads the file into its tree and prepares the patcher, so the first
     /// edit doesn't wait for either (a large manuscript takes a second).
-    pub fn new(mut document: ImportedDocument, original_body_xml: String, preamble: String, postamble: String) -> Self {
+    pub fn new(document: ImportedDocument, original_body_xml: String, preamble: String, postamble: String) -> Self {
+        Self::with_tree(document, None, original_body_xml, preamble, postamble)
+    }
+
+    /// [`new`](Self::new), with the file already parsed into `tree` if it was.
+    pub fn with_tree(
+        mut document: ImportedDocument,
+        tree: Option<crate::document::Tree>,
+        original_body_xml: String,
+        preamble: String,
+        postamble: String,
+    ) -> Self {
         let timer = perf::timer();
         let tree = document.spans.as_deref().and_then(|spans| {
-            TreeSource::new(&preamble, &original_body_xml, &postamble, &document.segments, spans)
+            match tree {
+                Some(tree) => TreeSource::on(tree, preamble.len(), postamble.len(), &document.segments, spans),
+                None => TreeSource::new(&preamble, &original_body_xml, &postamble, &document.segments, spans),
+            }
                 .inspect_err(|e| {
                     log::warn!("The imported file couldn't be mapped onto its segments ({e}); edits rebuild its body")
                 })
@@ -1041,14 +1055,9 @@ mod imported_identity_tests {
 
         let mut project = crate::commands::file::read_project(&path.to_string_lossy()).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
-        let reopened = session
-            .stage(ImportedSource::new(
-                project.imported_document.take().unwrap(),
-                project.original_body_xml.take().unwrap(),
-                project.original_preamble.take().unwrap_or_default(),
-                project.original_postamble.take().unwrap_or_default(),
-            ))
-            .unwrap();
+        let (reopened, rewritten) = crate::commands::file::stage_project(&mut project, &session).unwrap();
+        let reopened = reopened.unwrap();
+        assert_eq!((rewritten, project.source.as_str()), (0, edited.as_str()));
         assert_eq!(reopened.decisions.get(&key), Some(&Decision::Different));
         session.load(Some(reopened.handle)).unwrap();
         let after = session

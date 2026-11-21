@@ -720,3 +720,98 @@ fn corpus_edits_are_put_back_locally() {
 fn test_nodes_stay_small() {
     assert!(super::node_data_size() <= 112, "{} bytes", super::node_data_size());
 }
+
+/// Gate of step 3b (the tree replaces segments): a project saved with older
+/// import rules (here: rules 1 and 2, the rules of 0.6 and 0.7, before
+/// neighbours were set apart) is brought
+/// onto the file's tree when opened. Unedited, its shorthand then reads as
+/// the file imported now, token for token, and puts back the file
+/// unchanged; with every 40th token edited, only the edits differ.
+#[test]
+fn corpus_older_projects_are_brought_onto_the_tree() {
+    use crate::importer::tei::extraction::segments_to_dsl;
+    use crate::importer::tei::patching::{compute_patches, dsl_tokens, PatchOperation};
+    use crate::importer::tei::segments::DSL_RULES;
+    let files = corpus_files();
+    let mut failures = Vec::new();
+    for path in &files {
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let result = (|| -> Result<(), String> {
+            let import = crate::importer::tei::parse(&source)?;
+            let doc = import.imported_document.ok_or("no manifest")?;
+            let body = import.original_body_xml.ok_or("no body")?;
+            let (pre, post) = (import.original_preamble.unwrap_or_default(), import.original_postamble.unwrap_or_default());
+            let fresh_tokens = dsl_tokens(&import.dsl)?;
+            for rules in [1, 2] {
+            let mut stored = doc.clone();
+            stored.dsl_rules = rules;
+            let old = segments_to_dsl(&stored.segments, rules).trim().to_string();
+
+            let on_tree = crate::importer::tei::onto_tree(&stored, &old, &pre, &body, &post).ok_or("not brought onto the tree")?;
+            if dsl_tokens(&on_tree.dsl)? != fresh_tokens {
+                let got = dsl_tokens(&on_tree.dsl)?;
+                let at = got.iter().zip(&fresh_tokens).position(|(a, b)| a != b).unwrap_or(got.len().min(fresh_tokens.len()));
+                let show = |t: &[String]| t[at.saturating_sub(2)..(at + 3).min(t.len())].join(" ");
+                return Err(format!(
+                    "rules {rules}: unedited, it doesn't read as the import ({} places rewritten): {:?} for {:?}",
+                    on_tree.rewritten,
+                    show(&got),
+                    show(&fresh_tokens)
+                ));
+            }
+            let patches = compute_patches(&on_tree.document.segments, DSL_RULES, &on_tree.dsl)?;
+            if patches.iter().any(|p| !matches!(p, PatchOperation::Keep { .. })) {
+                return Err(format!("rules {rules}: unedited, it changes the file"));
+            }
+
+            // Every 40th token of the old shorthand gets a letter
+            let (tokens, spans) = crate::identity::spanned_dsl_tokens(&old)?;
+            let mut edited = old.clone();
+            let mut edits = 0;
+            for (k, span) in spans.iter().enumerate().rev() {
+                if k % 40 == 20 && tokens[k].chars().all(char::is_alphabetic) {
+                    edited.insert(span.end, 'x');
+                    edits += 1;
+                }
+            }
+            let on_tree = crate::importer::tei::onto_tree(&stored, &edited, &pre, &body, &post).ok_or("edited: not brought onto the tree")?;
+            // Every place that reads differently from the import has an edit
+            let got = dsl_tokens(&on_tree.dsl)?;
+            let a: Vec<&str> = fresh_tokens.iter().map(String::as_str).collect();
+            let b: Vec<&str> = got.iter().map(String::as_str).collect();
+            let mut diff = Vec::new();
+            crate::identity::diff_range(&a, &b, 0, 0, &mut diff);
+            use crate::identity::Edit;
+            let (mut in_run, mut explained, mut unexplained) = (false, false, 0);
+            for edit in diff.iter().chain([&Edit::Keep(usize::MAX)]) {
+                match *edit {
+                    Edit::Keep(_) => {
+                        if in_run && !explained {
+                            unexplained += 1;
+                        }
+                        (in_run, explained) = (false, false);
+                    }
+                    Edit::Insert(j) | Edit::Replace(_, j) => {
+                        in_run = true;
+                        explained |= b[j].contains('x');
+                    }
+                    Edit::Delete(_) => in_run = true,
+                }
+            }
+            if unexplained > 0 {
+                return Err(format!("rules {rules}: {unexplained} places changed that weren't edited ({edits} edits)"));
+            }
+            }
+            Ok(())
+        })();
+        match result {
+            Ok(()) => eprintln!("ok      {name}"),
+            Err(e) => {
+                eprintln!("FAILED  {name}: {e}");
+                failures.push(name);
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
+}

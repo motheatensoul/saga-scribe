@@ -65,14 +65,20 @@ impl TreeSource {
     /// segment by its span (relative to the body). `None` if the file has
     /// no spans or a segment with a span isn't where it says.
     pub fn new(preamble: &str, body: &str, postamble: &str, segments: &[Segment], spans: &[Option<(usize, usize)>]) -> Result<Self, String> {
-        let source = format!("{preamble}{body}{postamble}");
-        let tree = Tree::parse(&source)?;
+        let tree = Tree::parse(&format!("{preamble}{body}{postamble}"))?;
+        Self::on(tree, preamble.len(), postamble.len(), segments, spans)
+    }
+
+    /// [`new`](Self::new) with the file already parsed (`tree`, whose body
+    /// starts at `preamble_len`).
+    pub fn on(tree: Tree, preamble_len: usize, postamble_len: usize, segments: &[Segment], spans: &[Option<(usize, usize)>]) -> Result<Self, String> {
+        let source = tree.source().to_string();
         if !tree.has_spans() {
             return Err("the file's text and tree don't line up".into());
         }
         let body_node = find_body(&tree).ok_or("no <body>")?;
         let body_start = tree.span(body_node).ok_or("no <body> span")?.start;
-        if body_start != preamble.len() {
+        if body_start != preamble_len {
             return Err("the body isn't where the preamble ends".into());
         }
 
@@ -135,7 +141,7 @@ impl TreeSource {
             let offset = |o: usize| u32::try_from(o).map_err(|_| "the file is too large".to_string());
             located[id] = Some((offset(key.0)?, offset(key.1)?));
         }
-        Ok(Self { tree, body_start, postamble_len: postamble.len(), places, spans: located, words })
+        Ok(Self { tree, body_start, postamble_len, places, spans: located, words })
     }
 
     /// Segment `id` as written in the file (a word, punctuation, a tag).

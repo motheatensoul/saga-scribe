@@ -59,7 +59,9 @@ Work is saved as a project file with the extension `.teis`. It is a ZIP archive 
 
 **Open** (**Ctrl+O**) opens a project, or a plain shorthand file (`.dsl` or `.txt`).
 **Save** (**Ctrl+S**) saves the project; the first save asks for a location. Projects saved
-with older versions of Saga-Scribe can still be opened. If the compiled TEI-XML isn't
+with older versions of Saga-Scribe can still be opened. If such a project was imported
+from a TEI file, the words you didn't edit are rewritten in the shorthand as this version
+imports the file, and the log says how many places changed; what you typed stays as it was. If the compiled TEI-XML isn't
 well-formed, the project is saved all the same and the log shows a warning (this is a bug
 in Saga-Scribe; please report it).
 
