@@ -197,6 +197,10 @@ Initial alpha release with core transcription features.
 - Template system with built-in TEI P5 and MENOTA templates
 - Import support for TEI-XML and plain text files
 
-## [0.3.0] - 2024-XX-XX
+## [0.3.0] - 2026-01-11
 
 Early development release.
+
+## [0.1.0] - 2026-01-09
+
+Initial release.
