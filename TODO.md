@@ -25,8 +25,8 @@ when it is done (and record it in CHANGELOG.md if users notice).
   step 6 (`.teis` 2.0: imported documents saved as `document.xml` with their profile, open
   records and annotation anchors; new documents keep words set in the XML tab), and the
   word panel's XML tab of step 5 (all 2026-11-21). Left:
-  - step 4: the profile's abbreviation and punctuation encoding in the compiler (with
-    the abbreviation notation, step 7);
+  - step 4: the profile's punctuation element in the compiler (`<me:punct>`; abbreviations
+    follow the profile since 2026-11-22);
   - step 5: levels, ranges and attributes in their own controls in the word panel, and
     resetting a pinned level to its derivation (needs the normalizer outside a compile);
   - a word typed in the shorthand of an imported file can only get its XML set after
@@ -110,8 +110,9 @@ when it is done (and record it in CHANGELOG.md if users notice).
     - (done 2026-11-22: the store, `{mark}`, import filling it and writing short forms,
       DSL rules 8; the **Abbreviations** dialog, 2026-11-22) JSON export/import of a store
       for reuse;
-    - files encoding abbreviations as `<choice><abbr><expan>` (the profile says so): the
-      notation compiles to `<am>`/`<ex>` there too.
+    - (done 2026-11-22: in files whose profile says `<choice><abbr><expan>`, words
+      without levels get that) the profile's punctuation element (`<me:punct>`) in the
+      compiler: new punctuation is still `<pc>`.
   - **Supplied text with markup.** `<…>` and `[...3<ab>]` take shorthand content (done,
     DSL rules 4). Left: `.supplied{…}` is still how supplied text spanning several words
     is written (`<a b>` is one token); retiring it needs `<…>` to hold several words.

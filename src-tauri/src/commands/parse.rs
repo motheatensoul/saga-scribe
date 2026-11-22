@@ -889,6 +889,11 @@ pub async fn compile_imported(
         }
         let abbreviations = read_abbreviations(abbreviations_json.as_deref())?;
         compiler = compiler.with_abbreviations(&abbreviations);
+        // A file whose abbreviations are TEI's <choice><abbr><expan>
+        let choice = source.document.profile.as_ref().is_some_and(|p| {
+            p.abbreviations == crate::document::profile::Abbreviations::ChoiceAbbrExpan
+        });
+        compiler = compiler.with_choice_abbreviations(choice);
 
         let decisions = decisions.unwrap_or_default();
         let annotated = annotated_words.unwrap_or_default();

@@ -1448,3 +1448,11 @@ fn test_expansion_is_am_on_facs_and_ex_on_dipl() {
     // One word each
     assert_eq!(xml.matches("<w>").count(), 2, "{xml}");
 }
+
+#[test]
+fn test_expansion_as_choice_where_the_file_uses_it() {
+    let config = CompilerConfig { word_wrap: true, ..Default::default() };
+    let mut compiler = Compiler::new().with_config(config).with_choice_abbreviations(true);
+    let xml = compiler.compile("{kgs=konungs}").unwrap();
+    assert!(xml.contains("<w><choice><abbr>kgs</abbr><expan>konungs</expan></choice></w>"), "{xml}");
+}

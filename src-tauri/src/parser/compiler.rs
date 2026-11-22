@@ -126,6 +126,9 @@ pub struct Compiler<'a> {
     /// The abbreviation store: the default expansion of each mark (as
     /// shorthand), which `{mark}` takes
     abbreviations: Option<&'a HashMap<String, String>>,
+    /// Abbreviations as TEI's `<choice><abbr><expan>` (a file's profile says
+    /// so) instead of MENOTA's `<am>`/`<ex>`, where words have no levels
+    choice_abbreviations: bool,
     /// Compiler configuration options
     config: CompilerConfig,
     /// Running line number counter (for auto_line_numbers)
@@ -154,6 +157,7 @@ impl<'a> Compiler<'a> {
             lemma_mappings: HashMap::new(),
             annotations: None,
             abbreviations: None,
+            choice_abbreviations: false,
             config: CompilerConfig::default(),
             line_number: 0,
             word_index: 0,
@@ -228,6 +232,13 @@ impl<'a> Compiler<'a> {
     /// Set full annotation set (for non-lemma annotations)
     pub fn with_annotations(mut self, annotations: &'a AnnotationSet) -> Self {
         self.annotations = Some(annotations);
+        self
+    }
+
+    /// Writes `{mark=expansion}` in words without levels as
+    /// `<choice><abbr>mark</abbr><expan>expansion</expan></choice>`.
+    pub fn with_choice_abbreviations(mut self, choice: bool) -> Self {
+        self.choice_abbreviations = choice;
         self
     }
 
@@ -369,6 +380,9 @@ impl<'a> Compiler<'a> {
             Node::Expansion { mark, expansion } => {
                 let mark = self.nodes_to_xml(&inline_nodes(mark));
                 let expansion = self.nodes_to_xml(&inline_nodes(expansion));
+                if self.choice_abbreviations {
+                    return format!("<choice><abbr>{mark}</abbr><expan>{expansion}</expan></choice>");
+                }
                 let mark = if mark.is_empty() { String::new() } else { format!("<am>{mark}</am>") };
                 let expansion = if expansion.is_empty() { String::new() } else { format!("<ex>{expansion}</ex>") };
                 format!("{mark}{expansion}")
