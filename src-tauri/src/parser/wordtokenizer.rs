@@ -245,6 +245,8 @@ impl WordTokenizer {
 
                 // Other inline elements stay within the current word
                 Node::Abbreviation { .. }
+                | Node::Expansion { .. }
+                | Node::StoredExpansion { .. }
                 | Node::Gap { .. }
                 | Node::Supplied(_)
                 | Node::Deletion(_)

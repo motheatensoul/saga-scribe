@@ -3,6 +3,7 @@ import { entityStore } from "$lib/stores/entities";
 import { get } from "svelte/store";
 import { checkDsl } from "$lib/tauri";
 import { perfTime } from "$lib/perf";
+import { abbreviationDiagnostics } from "$lib/editor/abbreviations";
 
 // Debounce timer
 let linterTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -64,6 +65,9 @@ export const teiLinter = linter(async (view) => {
                     }
                 }
             }
+
+            // Abbreviations and the store
+            diagnostics.push(...abbreviationDiagnostics(view.state));
 
             resolve(diagnostics);
         }, DEBOUNCE_MS);

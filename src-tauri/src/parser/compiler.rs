@@ -123,6 +123,9 @@ pub struct Compiler<'a> {
     lemma_mappings: HashMap<u32, LemmaMapping>,
     /// Full annotation set for semantic, paleographic, and note annotations
     annotations: Option<&'a AnnotationSet>,
+    /// The abbreviation store: the default expansion of each mark (as
+    /// shorthand), which `{mark}` takes
+    abbreviations: Option<&'a HashMap<String, String>>,
     /// Compiler configuration options
     config: CompilerConfig,
     /// Running line number counter (for auto_line_numbers)
@@ -150,6 +153,7 @@ impl<'a> Compiler<'a> {
             dictionary: None,
             lemma_mappings: HashMap::new(),
             annotations: None,
+            abbreviations: None,
             config: CompilerConfig::default(),
             line_number: 0,
             word_index: 0,
@@ -225,6 +229,19 @@ impl<'a> Compiler<'a> {
     pub fn with_annotations(mut self, annotations: &'a AnnotationSet) -> Self {
         self.annotations = Some(annotations);
         self
+    }
+
+    /// The abbreviation store `{mark}` takes its expansion from.
+    pub fn with_abbreviations(mut self, abbreviations: &'a HashMap<String, String>) -> Self {
+        self.abbreviations = Some(abbreviations);
+        self
+    }
+
+    /// `{mark}` as `{mark=expansion}`, with the store's expansion (none if
+    /// the mark isn't in it: the mark alone).
+    fn stored(&self, mark: &str) -> Node {
+        let expansion = self.abbreviations.and_then(|store| store.get(mark.trim())).cloned().unwrap_or_default();
+        Node::Expansion { mark: mark.to_string(), expansion }
     }
 
     pub fn with_config(mut self, config: CompilerConfig) -> Self {
@@ -343,6 +360,18 @@ impl<'a> Compiler<'a> {
                 let abbr = self.nodes_to_xml(&inline_nodes(abbr));
                 let expansion = self.nodes_to_xml(&inline_nodes(expansion));
                 format!("<choice><abbr>{}</abbr><expan>{}</expan></choice>", abbr, expansion)
+            }
+            Node::StoredExpansion { mark } => {
+                let node = self.stored(mark);
+                self.node_to_xml(&node)
+            }
+            // One level: the mark and its expansion side by side (MENOTA)
+            Node::Expansion { mark, expansion } => {
+                let mark = self.nodes_to_xml(&inline_nodes(mark));
+                let expansion = self.nodes_to_xml(&inline_nodes(expansion));
+                let mark = if mark.is_empty() { String::new() } else { format!("<am>{mark}</am>") };
+                let expansion = if expansion.is_empty() { String::new() } else { format!("<ex>{expansion}</ex>") };
+                format!("{mark}{expansion}")
             }
             Node::Gap { quantity, supplied } => {
                 let gap_xml = match quantity {
@@ -875,6 +904,12 @@ impl<'a> Compiler<'a> {
             Node::Abbreviation { abbr, .. } => {
                 format!("<abbr>{}</abbr>", self.nodes_to_facs(&inline_nodes(abbr)))
             }
+            Node::StoredExpansion { mark } => self.node_to_facs(&self.stored(mark)),
+            // The mark as written; nothing where there is none
+            Node::Expansion { mark, .. } => {
+                let mark = self.nodes_to_facs(&inline_nodes(mark));
+                if mark.is_empty() { String::new() } else { format!("<am>{mark}</am>") }
+            }
             Node::Unclear(text) => format!("<unclear>{}</unclear>", self.nodes_to_facs(&inline_nodes(text))),
             Node::Gap { quantity, supplied } => {
                 // Facsimile shows gap only, not supplied (but its breaks)
@@ -941,6 +976,28 @@ impl<'a> Compiler<'a> {
             }
             Node::Abbreviation { expansion, .. } => {
                 format!("<expan>{}</expan>", self.nodes_to_diplomatic(&inline_nodes(expansion)))
+            }
+            Node::StoredExpansion { mark } => self.node_to_diplomatic(&self.stored(mark)),
+            // The expansion; a letter with the mark fused into it was written,
+            // so its base letter stays outside (`{:kbar:=konun}` is
+            // `k<ex>onun</ex>`)
+            Node::Expansion { mark, expansion } => {
+                let base = match inline_nodes(mark).as_slice() {
+                    [Node::Entity(name)] => crate::entities::base_letter(name),
+                    _ => None,
+                };
+                let expansion = expansion.trim();
+                if expansion.is_empty() {
+                    return String::new();
+                }
+                match base.and_then(|b| expansion.strip_prefix(b).map(|rest| (b, rest))) {
+                    Some((base, rest)) => format!(
+                        "{}<ex>{}</ex>",
+                        self.escape_xml(base),
+                        self.nodes_to_diplomatic(&inline_nodes(rest))
+                    ),
+                    None => format!("<ex>{}</ex>", self.nodes_to_diplomatic(&inline_nodes(expansion))),
+                }
             }
             Node::Unclear(text) => format!("<unclear>{}</unclear>", self.nodes_to_diplomatic(&inline_nodes(text))),
             // Clippy is cranky about this being two nested matches, its suggested fix does not work though.
@@ -1050,6 +1107,9 @@ impl<'a> Compiler<'a> {
             Node::Abbreviation { expansion, .. } => {
                 format!("<expan>{}</expan>", self.nodes_to_normalized(&inline_nodes(expansion)))
             }
+            // The word as read: the expansion is part of its text
+            Node::Expansion { expansion, .. } => self.nodes_to_normalized(&inline_nodes(expansion)),
+            Node::StoredExpansion { mark } => self.node_to_normalized(&self.stored(mark)),
             Node::Unclear(text) => format!("<unclear>{}</unclear>", self.nodes_to_normalized(&inline_nodes(text))),
             Node::Gap { supplied, .. } => match supplied.as_deref() {
                 Some(text) if !text.is_empty() => {

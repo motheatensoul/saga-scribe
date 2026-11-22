@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, tick } from "svelte";
+    import { onMount, tick, untrack } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open } from "@tauri-apps/plugin-dialog";
     import { saveAs } from "$lib/utils/saveDialog";
@@ -10,6 +10,7 @@
     import MetadataEditor from "$lib/components/MetadataEditor.svelte";
     import ImportProfileDialog from "$lib/components/ImportProfileDialog.svelte";
     import WordXmlPanel from "$lib/components/WordXmlPanel.svelte";
+    import { abbreviationStore } from "$lib/stores/abbreviations";
     import EntityBrowser from "$lib/components/EntityBrowser.svelte";
     import Lemmatizer from "$lib/components/Lemmatizer.svelte";
     import AnnotationPanel from "$lib/components/AnnotationPanel.svelte";
@@ -125,6 +126,14 @@
     let showMetadataEditor = $state(false);
     /** An imported file's profile, shown for confirmation after importing */
     let importProfile = $state<Profile | null>(null);
+
+    // An abbreviation added to the store (or a default changed): compile
+    // again, so `{mark}` takes it (not when a document's store is loaded,
+    // which a compile follows anyway)
+    let storeChanges = 0;
+    abbreviationStore.subscribe(() => {
+        if (storeChanges++ > 0 && abbreviationStore.changedByEditor()) untrack(() => void compileNow());
+    });
     let currentMetadata = $state<Metadata | undefined>(undefined);
 
     onMount(async () => {
@@ -171,6 +180,7 @@
                         return {
                             ...entityOptions,
                             lemmaMappingsJson: lemmaMappingsJson(),
+                            abbreviationsJson: abbreviationStore.defaultsJson(),
                             annotatedWords: words,
                             annotationsJson: others.length > 0 ? JSON.stringify({ ...annotationSet, annotations: others }) : undefined,
                         };
@@ -206,6 +216,7 @@
                     wrapPages: template.wrapPages,
                     ...entityOptions,
                     lemmaMappingsJson: lemmaMappingsJson(),
+                    abbreviationsJson: abbreviationStore.defaultsJson(),
                     annotationsJson:
                         annotationSet.annotations.length > 0 ? JSON.stringify(annotationSet) : undefined,
                 },
@@ -459,9 +470,11 @@
     function setImportedDocument(document: StagedDocument | undefined): boolean {
         if (!document) {
             importedStore.reset();
+            abbreviationStore.clear();
             return false;
         }
         importedStore.load(document);
+        abbreviationStore.load(document.abbreviations);
         return true;
     }
 
@@ -514,7 +527,8 @@
                     metadataStore.resetMetadata();
                 }
 
-                setImportedDocument(project.imported);
+                // A new document's store comes with the project
+                if (!setImportedDocument(project.imported)) abbreviationStore.load(project.abbreviations);
 
                 await compileNow(project.source);
 
@@ -541,6 +555,7 @@
                 annotationHistory.clear();
                 sessionLemmaStore.clear();
                 importedStore.reset();
+                abbreviationStore.clear();
 
                 await compileNow(file.content);
 
@@ -597,6 +612,7 @@
                 metadataJson,
                 annotationsJson,
                 decisionsJson,
+                JSON.stringify($abbreviationStore),
             );
 
             editor.setFile(path, $editor.content);

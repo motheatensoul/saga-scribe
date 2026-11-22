@@ -17,6 +17,11 @@ use crate::importer::tei::segments::{Segment, SourceSpans};
 use crate::importer::tei::source_map::SourceCursor;
 use std::collections::HashMap;
 
+/// The markers around `<am>` and `<ex>` while a word's levels are read for
+/// `{mark=expansion}` (noncharacters, which no text has): am open, am close,
+/// ex open, ex close.
+const MARKS: [char; 4] = ['\u{FDD0}', '\u{FDD1}', '\u{FDD2}', '\u{FDD3}'];
+
 /// What a text's characters are part of in the shorthand, which decides the
 /// ones written with `\` before them (DSL rules 3). Writing more of them than
 /// needed is harmless (an escaped character is the character), fewer would
@@ -201,6 +206,7 @@ pub fn project_body_with(tree: &Tree, body: NodeId, line_edition: Option<&str>) 
         body_start,
         has_words,
         line_edition: line_edition.map(str::to_string),
+        marking: std::cell::Cell::new(false),
         segments: Vec::new(),
         nodes: Vec::new(),
         spans: Vec::new(),
@@ -221,6 +227,9 @@ struct Projector<'a> {
     /// In a file with several lineations, the one the shorthand shows
     /// (`<lb ed="…">`); the others' line breaks are kept as structure
     line_edition: Option<String>,
+    /// While reading a word's levels for `{mark=expansion}`: `<am>` and
+    /// `<ex>` are written between markers ([`MARKS`])
+    marking: std::cell::Cell<bool>,
     segments: Vec<Segment>,
     nodes: Vec<Option<NodeId>>,
     spans: Vec<Option<(usize, usize)>>,
@@ -615,9 +624,12 @@ impl Projector<'_> {
 
     fn extract_word(&mut self, id: NodeId) -> Segment {
         let mut lb = false;
-        let dsl_content = match self.abbr_expansion(id, &mut lb) {
-            Some((abbr, expan)) => format!(".abbr[{}]{{{}}}", abbr, expan),
-            None => self.levels_dsl(id, &mut lb),
+        let dsl_content = match self.inline_abbreviations(id, &mut lb) {
+            Some(dsl) => dsl,
+            None => match self.abbr_expansion(id, &mut lb) {
+                Some((abbr, expan)) => format!(".abbr[{}]{{{}}}", abbr, expan),
+                None => self.levels_dsl(id, &mut lb),
+            },
         };
         Segment::Word {
             id: self.next_id(),
@@ -643,8 +655,10 @@ impl Projector<'_> {
 
     fn extract_choice(&mut self, id: NodeId) -> Segment {
         let mut lb = false;
+        let inline = self.inline_abbreviations(id, &mut lb);
         let dsl_content = match self.choice_abbr(id) {
             Some((abbr, expan)) => format!(".abbr[{}]{{{}}}", abbr, expan),
+            None if inline.is_some() => inline.unwrap_or_default(),
             None => match self.abbr_expansion(id, &mut lb) {
                 Some((abbr, expan)) => format!(".abbr[{}]{{{}}}", abbr, expan),
                 None => {
@@ -707,6 +721,150 @@ impl Projector<'_> {
         self.node_to_dsl(child, &mut text, lb, true);
         let trimmed = text.trim();
         (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+
+    /// A word with MENOTA's `<am>` (facs) and `<ex>` (dipl) as shorthand
+    /// with `{mark=expansion}` where they stand (DSL rules 7): `k<am>&bar;</am>gs`
+    /// with `k<ex>onun</ex>gs` is `k{:bar:=onun}gs`, `<am>&kbar;</am>gs` with
+    /// `k<ex>onun</ex>gs` is `{:kbar:=konun}gs` (the fused letter's base letter
+    /// belongs to the expansion), `hæn<ex>n</ex>aR` alone is `hæn{=n}aR`.
+    /// `None` if the word has neither, or its levels differ elsewhere too
+    /// (then the whole word is `.abbr[…]{…}`).
+    fn inline_abbreviations(&self, id: NodeId, lb: &mut bool) -> Option<String> {
+        let facs = self.find_descendant(id, "facs");
+        let dipl = self.find_descendant(id, "dipl");
+        let marked = |level: NodeId, lb: &mut bool| {
+            self.marking.set(true);
+            let mut dsl = String::new();
+            self.node_to_dsl(level, &mut dsl, lb, true);
+            self.marking.set(false);
+            dsl.trim().to_string()
+        };
+        // Pieces: text, and the content of each `<am>` (or `<ex>`)
+        let pieces = |dsl: &str, open: char, close: char| -> Option<(Vec<String>, Vec<String>)> {
+            let (mut texts, mut marks) = (vec![String::new()], Vec::new());
+            let mut inside: Option<String> = None;
+            for c in dsl.chars() {
+                match (c, inside.as_mut()) {
+                    (c, None) if c == open => inside = Some(String::new()),
+                    (c, Some(_)) if c == close => {
+                        marks.push(inside.take()?);
+                        texts.push(String::new());
+                    }
+                    (c, _) if MARKS.contains(&c) => return None,
+                    (c, Some(mark)) => mark.push(c),
+                    (c, None) => texts.last_mut()?.push(c),
+                }
+            }
+            inside.is_none().then_some((texts, marks))
+        };
+        // A `{` right after `-`, `+`, `^` or `?` would open a deletion, an
+        // addition, a note or an unclear reading: those are escaped; after a
+        // break without a number it would be the break's number (`//{`)
+        // (`}-`, `}+` and `}?` close a deletion, an addition or an unclear
+        // reading, unless the `}` is that of an expansion written just before)
+        let expansion_end = std::cell::Cell::new(usize::MAX);
+        let open = |out: &mut String| -> Option<()> {
+            if out.ends_with("//") && !out.ends_with("\\/") {
+                return None;
+            }
+            let escaped = out.ends_with("\\-") || out.ends_with("\\+") || out.ends_with("\\^") || out.ends_with("\\?");
+            let last = out.chars().next_back().map_or(0, char::len_utf8);
+            let before = &out[..out.len() - last];
+            let closes = before.ends_with('}') && before.len() != expansion_end.get();
+            if !escaped && !closes && out.ends_with(['-', '+', '^', '?']) {
+                let last = out.pop()?;
+                out.push('\\');
+                out.push(last);
+            }
+            out.push('{');
+            Some(())
+        };
+        // A mark can't hold `=` (the first one ends it); unescaped braces
+        // would end the construct
+        let unfit = |marks: &[String], exs: &[String]| {
+            marks.iter().any(|t| t.contains(['{', '}', '='])) || exs.iter().any(|t| t.contains(['{', '}']))
+        };
+        let (facs, dipl) = match (facs, dipl) {
+            (Some(f), Some(d)) => (marked(f, lb), marked(d, lb)),
+            // One level (or none): `<ex>` without `<am>`, or the reverse
+            (None, Some(level)) | (Some(level), None) => (marked(level, lb), String::new()),
+            (None, None) => (marked(id, lb), String::new()),
+        };
+        if !facs.contains(MARKS) && !dipl.contains(MARKS) {
+            return None;
+        }
+        if dipl.is_empty() {
+            // A single level: its `<am>` and `<ex>` in order, a mark and the
+            // expansion right after it together
+            let mut out = String::new();
+            let (mut marks, mut exs) = (Vec::new(), Vec::new());
+            let mut current: Option<String> = None;
+            for c in facs.chars() {
+                match c {
+                    c if c == MARKS[0] || c == MARKS[2] => current = Some(String::new()),
+                    c if c == MARKS[1] => {
+                        let mark = current.take()?;
+                        open(&mut out)?;
+                        out.push_str(&format!("{mark}=}}"));
+                        expansion_end.set(out.len());
+                        marks.push(mark);
+                    }
+                    c if c == MARKS[3] => {
+                        let ex = current.take()?;
+                        // Right after a mark: its expansion
+                        if out.ends_with("=}") {
+                            out.truncate(out.len() - 1);
+                            out.push_str(&ex);
+                            out.push('}');
+                        } else {
+                            open(&mut out)?;
+                            out.push_str(&format!("={ex}}}"));
+                        }
+                        expansion_end.set(out.len());
+                        exs.push(ex);
+                    }
+                    c => match current.as_mut() {
+                        Some(inner) => inner.push(c),
+                        None => out.push(c),
+                    },
+                }
+            }
+            return (current.is_none() && !unfit(&marks, &exs)).then_some(out);
+        }
+        let (texts, ams) = pieces(&facs, MARKS[0], MARKS[1])?;
+        let (dipl_texts, exs) = pieces(&dipl, MARKS[2], MARKS[3])?;
+        if ams.len() != exs.len() || ams.is_empty() || unfit(&ams, &exs) {
+            return None;
+        }
+        let mut out = String::new();
+        let mut carried = String::new();
+        for (i, text) in texts.iter().enumerate() {
+            let mut dipl_text = format!("{carried}{}", dipl_texts[i]);
+            carried.clear();
+            // A fused letter: its base letter, written before the `<ex>` on dipl
+            let base = ams.get(i).and_then(|am| {
+                let name = am.strip_prefix(':')?.strip_suffix(':')?;
+                (!name.contains(':')).then(|| crate::entities::base_letter(name)).flatten()
+            });
+            let mut expansion_prefix = String::new();
+            if let Some(base) = base {
+                if let Some(rest) = dipl_text.strip_suffix(base) {
+                    expansion_prefix = base.to_string();
+                    dipl_text = rest.to_string();
+                }
+            }
+            if *text != dipl_text {
+                return None;
+            }
+            out.push_str(text);
+            if let (Some(am), Some(ex)) = (ams.get(i), exs.get(i)) {
+                open(&mut out)?;
+                out.push_str(&format!("{am}={expansion_prefix}{ex}}}"));
+                expansion_end.set(out.len());
+            }
+        }
+        Some(out)
     }
 
     /// MENOTA's `<am>` in facs or `<ex>` in dipl (or Saga-Scribe's
@@ -842,14 +1000,24 @@ impl Projector<'_> {
                 }
                 NodeKind::Element(_) => match self.local(c) {
                     "choice" => self.choice_to_dsl(c, out, lb, allow_norm),
+                    name @ ("am" | "ex") if self.marking.get() => {
+                        let (open, close) = if name == "am" { (MARKS[0], MARKS[1]) } else { (MARKS[2], MARKS[3]) };
+                        out.push(open);
+                        self.node_to_dsl(c, out, lb, allow_norm);
+                        out.push(close);
+                    }
                     "am" => self.node_to_dsl(c, out, lb, allow_norm),
                     "w" => {
                         if !out.is_empty() && !out.ends_with(' ') {
                             out.push(' ');
                         }
-                        match self.abbr_expansion(c, lb) {
-                            Some((abbr, expan)) => out.push_str(&format!(".abbr[{}]{{{}}}", abbr, expan)),
-                            None => self.word_levels_to_dsl(c, out, lb, allow_norm),
+                        if let Some(dsl) = self.inline_abbreviations(c, lb) {
+                            out.push_str(&dsl);
+                        } else {
+                            match self.abbr_expansion(c, lb) {
+                                Some((abbr, expan)) => out.push_str(&format!(".abbr[{}]{{{}}}", abbr, expan)),
+                                None => self.word_levels_to_dsl(c, out, lb, allow_norm),
+                            }
                         }
                     }
                     "pc" => {

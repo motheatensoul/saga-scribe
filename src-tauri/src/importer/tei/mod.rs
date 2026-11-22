@@ -44,6 +44,7 @@
 //! The projection detects abbreviation patterns (`<am>`/`<ex>` markers) and converts
 //! them to `.abbr[]{}` syntax.
 
+pub mod abbreviations;
 pub mod helpers;
 pub mod segments;
 pub mod extraction;

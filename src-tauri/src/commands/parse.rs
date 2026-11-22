@@ -33,6 +33,7 @@ pub async fn compile_dsl(
     custom_mappings: Option<HashMap<String, String>>,
     lemma_mappings_json: Option<String>,
     annotations_json: Option<String>,
+    abbreviations_json: Option<String>,
     guidance: Option<Guidance>,
     xml_base: Option<u64>,
     session: State<'_, NativeSession>,
@@ -108,6 +109,8 @@ pub async fn compile_dsl(
         if let Some(ref ann) = annotations {
             compiler = compiler.with_annotations(ann);
         }
+        let abbreviations = read_abbreviations(abbreviations_json.as_deref())?;
+        compiler = compiler.with_abbreviations(&abbreviations);
 
         // Add dictionary if available
         if let Some(ref dict) = dictionary {
@@ -357,6 +360,8 @@ pub struct ImportedSlots {
 pub struct StagedDocument {
     pub handle: u64,
     pub is_menota: bool,
+    /// The abbreviation store its shorthand is written with
+    pub abbreviations: crate::importer::tei::abbreviations::Store,
     /// How the file encodes its transcription, for the editor to confirm
     pub profile: Option<crate::document::profile::Profile>,
     pub dsl_rules: u32,
@@ -373,6 +378,7 @@ impl ImportedSession {
         let staged = StagedDocument {
             handle,
             is_menota: source.document.is_menota,
+            abbreviations: source.document.abbreviations.clone(),
             profile: source.document.profile.clone(),
             dsl_rules: source.document.dsl_rules,
             decisions: source.document.decisions.clone(),
@@ -541,6 +547,14 @@ fn write_annotations(
     }
     for offset in body.edited_words.iter_mut() {
         *offset = shift(*offset);
+    }
+}
+
+/// The abbreviation store's defaults the editor sends (mark → expansion).
+fn read_abbreviations(json: Option<&str>) -> Result<HashMap<String, String>, String> {
+    match json {
+        Some(json) => serde_json::from_str(json).map_err(|e| format!("Failed to parse the abbreviation store: {e}")),
+        None => Ok(HashMap::new()),
     }
 }
 
@@ -813,6 +827,7 @@ pub async fn compile_imported(
     decisions: Option<HashMap<usize, Decision>>,
     annotated_words: Option<Vec<u32>>,
     annotations_json: Option<String>,
+    abbreviations_json: Option<String>,
     xml_base: Option<u64>,
     sent: State<'_, SentOutput>,
 ) -> Result<CompileReply, String> {
@@ -872,6 +887,8 @@ pub async fn compile_imported(
         if let Some(ref dict) = dictionary {
             compiler = compiler.with_dictionary(dict);
         }
+        let abbreviations = read_abbreviations(abbreviations_json.as_deref())?;
+        compiler = compiler.with_abbreviations(&abbreviations);
 
         let decisions = decisions.unwrap_or_default();
         let annotated = annotated_words.unwrap_or_default();
@@ -1521,7 +1538,7 @@ mod imported_identity_tests {
 
     #[test]
     fn test_a_word_cut_and_pasted_in_two_compiles_is_parked_and_comes_back() {
-        let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé"><me:dipl>b<ex>e</ex></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p></body></text></TEI>"#;
+        let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé"><me:dipl>b<hi rend="red">e</hi></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p></body></text></TEI>"#;
         let (mut source, dsl) = open(xml);
         assert_eq!(dsl, ".p a be c");
         compile(&mut source, &dsl, None, &[]);
@@ -1531,7 +1548,7 @@ mod imported_identity_tests {
         assert_eq!(cut.parked[0].word, 1);
         let pasted = compile_guided(&mut source, ".p a c", ".p a c be", &[], &[]);
         assert_eq!(pasted.returned, vec![ReturnedWord { ticket: cut.parked[0].ticket.clone(), word: 2 }]);
-        assert!(pasted.xml.contains(r#"<w lemma="bé"><me:dipl>b<ex>e</ex></me:dipl></w></p>"#), "{}", pasted.xml);
+        assert!(pasted.xml.contains(r#"<w lemma="bé"><me:dipl>b<hi rend="red">e</hi></me:dipl></w></p>"#), "{}", pasted.xml);
         // Back is back: nothing is parked twice
         let again = compile_guided(&mut source, ".p a c be", ".p a c", &[], &[]);
         assert_eq!(again.parked.len(), 1);
@@ -1551,6 +1568,7 @@ mod imported_identity_tests {
             template_id: "menota".into(),
             metadata_json: None,
             annotations_json: None,
+            abbreviations_json: None,
         };
         crate::commands::file::save_project_at(session, &path, fields, Some(decisions.to_string())).unwrap();
         let mut project = crate::commands::file::read_project(&path.to_string_lossy()).unwrap();
@@ -1996,9 +2014,9 @@ mod word_xml_tests {
         let change = source
             .set_word_xml(1, r#"<w lemma="maðr" me:msa="xNC"><me:dipl>ma<ex>n</ex>nr</me:dipl></w>"#)
             .unwrap();
-        assert_eq!((change.dsl.as_str(), change.msa.as_deref()), ("mannr", Some("xNC")));
+        assert_eq!((change.dsl.as_str(), change.msa.as_deref()), ("ma{=n}nr", Some("xNC")));
         let dsl16: Vec<u16> = dsl.encode_utf16().collect();
-        assert_eq!(String::from_utf16(&dsl16[change.from..change.to]).unwrap(), "mann");
+        assert_eq!(String::from_utf16(&dsl16[change.from..change.to]).unwrap(), "ma{=n}n");
         let edited = format!(
             "{}{}{}",
             String::from_utf16(&dsl16[..change.from]).unwrap(),
@@ -2120,5 +2138,35 @@ mod imported_annotation_tests {
         let mut compiler = Compiler::new().with_config(source.config.clone());
         compile_imported_source(&mut source, &mut compiler, &import.dsl, None, &HashMap::new(), HashMap::new(), &[], Some(&annotations)).unwrap();
         assert!(source.word_xml(1).unwrap().contains("<note>a note</note>"));
+    }
+}
+
+#[cfg(test)]
+mod abbreviation_store_tests {
+    use super::*;
+
+    #[test]
+    fn a_short_form_takes_the_stores_expansion() {
+        let et = r#"<w><choice><me:facs><am>&et;</am></me:facs><me:dipl><ex>ok</ex></me:dipl><me:norm>ok</me:norm></choice></w>"#;
+        let xml = format!(
+            r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body><p>{et} <w><choice><me:facs>a</me:facs><me:dipl>a</me:dipl><me:norm>a</me:norm></choice></w> {et}</p></body></text></TEI>"#
+        );
+        let import = crate::importer::tei::parse(&xml).unwrap();
+        // Twice with the same expansion: in the store, and written short
+        assert_eq!(import.dsl, ".p {:et:} a {:et:}");
+        let document = import.imported_document.unwrap();
+        assert_eq!(document.abbreviations.get(":et:"), Some(&vec!["ok".to_string()]));
+        let mut source = ImportedSource::new(
+            document,
+            import.original_body_xml.unwrap(),
+            import.original_preamble.unwrap_or_default(),
+            import.original_postamble.unwrap_or_default(),
+        );
+        let store: HashMap<String, String> = [(":et:".to_string(), "ok".to_string())].into();
+        let mut compiler = Compiler::new().with_config(source.config.clone()).with_abbreviations(&store);
+        let out = compile_imported_source(&mut source, &mut compiler, ".p {:et:} a {:et:} {:et:}", None, &HashMap::new(), HashMap::new(), &[], None).unwrap();
+        // The new word has the expansion; the file's words are as they were
+        assert!(out.xml.contains("<me:facs><am>&et;</am></me:facs>\n    <me:dipl><ex>ok</ex></me:dipl>"), "{}", out.xml);
+        assert!(out.xml.starts_with(&xml[..xml.rfind("</p>").unwrap()]), "{}", out.xml);
     }
 }

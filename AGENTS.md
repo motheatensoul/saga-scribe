@@ -134,7 +134,9 @@ saga-scribe/
 | `///n` | `<pb n="n"/>` | Page break |
 | `//{n}`, `///{n}` | `<lb n="n"/>` | Any break number (letters, spaces) |
 | `.p` | `</p><p>` | New paragraph (standalone token; `¶` itself is the MENOTA character `:para:`) |
-| `.abbr[a]{b}` | `<choice><abbr>a</abbr><expan>b</expan></choice>` | Abbreviation |
+| `{m=e}` | `<am>m</am>` (facs), `<ex>e</ex>` (dipl), `e` (norm) | Abbreviation mark and expansion, inside a word; a fused letter's base letter (`{:kbar:=konun}` → `k<ex>onun</ex>`) comes from `entities::base_letter` (MUFI's list); `{=e}` has no mark |
+| `{m}` | as `{m=e}` with the store's default `e` | Abbreviation store: `importer/tei/abbreviations.rs` (inferred on import, `abbreviations.json` in the project, `src/lib/stores/abbreviations.ts`; the editor sends its defaults with every compile) |
+| `.abbr[a]{b}` | `<choice><abbr>a</abbr><expan>b</expan></choice>` | Whole-word abbreviation (older form) |
 | `[...]` | `<gap/>` | Gap |
 | `[...<txt>]` | `<gap/><supplied>txt</supplied>` | Gap + Supplied |
 | `<txt>` | `<supplied>txt</supplied>` | Supplied (content is DSL: entities, breaks, abbreviations) |

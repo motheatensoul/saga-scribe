@@ -24,6 +24,13 @@ pub enum Node {
     PageBreak(String),
     /// Abbreviation with expansion: .abbr[abbr]{expansion}
     Abbreviation { abbr: String, expansion: String },
+    /// An abbreviation mark and its expansion, inside a word:
+    /// `{mark=expansion}` (MENOTA's `<am>` on the facsimile level and `<ex>`
+    /// on the diplomatic one); `mark` may be empty (`{=n}`)
+    Expansion { mark: String, expansion: String },
+    /// `{mark}`: an abbreviation mark whose expansion is the project's
+    /// default for it (the abbreviation store)
+    StoredExpansion { mark: String },
     /// Gap/lacuna: [...] or [...n] or [...<text>] or [...n<text>]
     Gap {
         /// Extent in characters; compiled as `quantity` with `unit="chars"`.

@@ -1425,3 +1425,26 @@ fn test_deletions_additions_and_unclear_readings_are_shorthand() {
     assert!(xml.contains(r#"<me:facs><del>ny<gap reason="illegible"/></del>t</me:facs>"#), "{xml}");
     assert!(xml.contains("<me:dipl><del>ny</del>t</me:dipl>"), "{xml}");
 }
+
+#[test]
+fn test_expansion_is_am_on_facs_and_ex_on_dipl() {
+    let config = CompilerConfig { word_wrap: true, multi_level: true, ..Default::default() };
+    let mut compiler = Compiler::new().with_config(config);
+    let xml = compiler.compile("{:kbar:=konun}gs k{:bar:=onun}gs").unwrap();
+    // A letter with the mark fused into it: its base letter stays outside the expansion
+    assert!(xml.contains("<me:facs><am>&kbar;</am>gs</me:facs>"), "{xml}");
+    assert!(xml.contains("<me:dipl>k<ex>onun</ex>gs</me:dipl>"), "{xml}");
+    assert!(xml.contains("<me:norm>konungs</me:norm>"), "{xml}");
+    // A mark of its own after the letter
+    assert!(xml.contains("<me:facs>k<am>&bar;</am>gs</me:facs>"), "{xml}");
+    assert_eq!(xml.matches("<me:dipl>k<ex>onun</ex>gs</me:dipl>").count(), 2, "{xml}");
+
+    // One level: mark and expansion side by side; an expansion without a mark
+    let config = CompilerConfig { word_wrap: true, ..Default::default() };
+    let mut compiler = Compiler::new().with_config(config);
+    let xml = compiler.compile("{:kbar:=konun}gs hæn{=n}aR").unwrap();
+    assert!(xml.contains("<w><am>&kbar;</am><ex>konun</ex>gs</w>"), "{xml}");
+    assert!(xml.contains("<w>hæn<ex>n</ex>aR</w>"), "{xml}");
+    // One word each
+    assert_eq!(xml.matches("<w>").count(), 2, "{xml}");
+}

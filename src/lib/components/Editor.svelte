@@ -15,6 +15,7 @@
     import { markEdit } from '$lib/editor/typing';
     import { entityGlyphs, entityGlyphState, setEntityGlyphs } from '$lib/editor/entityGlyphs';
     import { entityStore } from '$lib/stores/entities';
+    import { abbreviationHints } from '$lib/editor/abbreviations';
 
     let {
         onchange,
@@ -62,6 +63,7 @@
                 teiDslFolding,
                 teiLinter,
                 wordRecordMarks,
+                abbreviationHints,
                 entityGlyphState,
                 glyphMode.of(showGlyphs ? entityGlyphs : []),
                 lintGutter(),

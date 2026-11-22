@@ -1051,9 +1051,13 @@ fn menota_body(words: &str) -> String {
 
 #[test]
 fn test_edit_keeps_expansion_in_a_diplomatic_only_word() {
-    // DG 8: the expansion has no mark; the shorthand reads "hænnaR"
+    // DG 8: the expansion has no mark; the shorthand reads "hæn{=n}aR"
     let xml = menota_body(r#"<w xml:id="w28" lemma="hon"><me:dipl>hæn<ex>n</ex>aR</me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
-    let (_, body) = imported_roundtrip(&xml, |d| d.replace("hænnaR", "hænnaRR")).unwrap();
+    let (_, body) = imported_roundtrip(&xml, |d| {
+        assert!(d.contains("hæn{=n}aR"), "{d}");
+        d.replace("hæn{=n}aR", "hæn{=n}aRR")
+    })
+    .unwrap();
     assert!(
         body.contains(r#"<w xml:id="w28" lemma="hon"><me:dipl>hæn<ex>n</ex>aRR</me:dipl></w>"#),
         "{body}"
@@ -1078,13 +1082,14 @@ fn test_edit_keeps_abbreviation_marks_and_expansions_inside_the_word() {
         r#"<w lemma="konungr"><choice><me:facs>k<am>&bar;</am>r</me:facs><me:dipl>k<ex>onung</ex>r</me:dipl><me:norm>konungr</me:norm></choice></w> <w><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w>"#,
     );
     let import = parse(&xml).unwrap();
-    assert!(import.dsl.contains(".abbr[k:bar:r]{konungr}"), "{}", import.dsl);
-    let (_, body) =
-        imported_roundtrip(&xml, |d| d.replace(".abbr[k:bar:r]{konungr}", ".abbr[k:bar:rs]{konungrs}")).unwrap();
+    // The mark and its expansion where they stand (DSL rules 7)
+    assert!(import.dsl.contains("k{:bar:=onung}r"), "{}", import.dsl);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("k{:bar:=onung}r", "k{:bar:=onung}rs")).unwrap();
     assert!(body.contains("<me:facs>k<am>&bar;</am>rs</me:facs>"), "{body}");
     assert!(body.contains("<me:dipl>k<ex>onung</ex>rs</me:dipl>"), "{body}");
-    // The curated normalized form stays
-    assert!(body.contains("<me:norm>konungr</me:norm>"), "{body}");
+    // The normalized form is the one the shorthand gives: it follows
+    assert!(body.contains("<me:norm>konungrs</me:norm>"), "{body}");
+
 }
 
 #[test]
@@ -1755,9 +1760,9 @@ fn test_break_numbers_and_supplied_markup_read_as_tokens() {
 fn test_letter_typed_at_the_end_goes_inside_layout_whitespace() {
     // AM 619 4to, Holm A 80: levels laid out on lines of their own
     let xml = menota_body("<w>\n<me:dipl> <ex>ok</ex> </me:dipl>\n</w> <w><me:dipl>mælom</me:dipl></w>");
-    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("ok", "okk", 1)).unwrap();
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("{=ok}", "{=ok}k", 1)).unwrap();
     assert!(body.contains("<me:dipl> <ex>ok</ex>k </me:dipl>"), "{body}");
-    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("ok", "kok", 1)).unwrap();
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("{=ok}", "k{=ok}", 1)).unwrap();
     assert!(body.contains("<me:dipl> k<ex>ok</ex> </me:dipl>"), "{body}");
 }
 
@@ -1820,9 +1825,9 @@ fn test_edited_numeral_keeps_its_attributes_and_markup() {
 }
 
 const MOVABLE: &str = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
-<p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé" me:msa="xNC"><me:dipl>b<ex>e</ex></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p>
+<p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé" me:msa="xNC"><me:dipl>b<hi rend="red">e</hi></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p>
 </body></text></TEI>"#;
-const MOVED_WORD: &str = r#"<w lemma="bé" me:msa="xNC"><me:dipl>b<ex>e</ex></me:dipl></w>"#;
+const MOVED_WORD: &str = r#"<w lemma="bé" me:msa="xNC"><me:dipl>b<hi rend="red">e</hi></me:dipl></w>"#;
 
 #[test]
 fn test_a_word_cut_and_pasted_elsewhere_is_moved_with_its_markup() {
@@ -1966,4 +1971,70 @@ fn test_stored_shorthand_is_kept_where_it_reads_as_the_file() {
     assert_eq!(keep_as_written(".p a  bx\n c //2   d", projected), (".p a  b\n c //2   d".to_string(), 1));
     assert_eq!(keep_as_written(".p a  b //2 d", projected), (".p a  b c //2 d".to_string(), 1));
     assert_eq!(keep_as_written(".p a  b c e //2 d", projected), (".p a  b c  //2 d".to_string(), 1));
+}
+
+#[test]
+fn test_abbreviations_are_read_where_they_stand() {
+    let dsl = |words: &str| parse(&menota_body(words)).unwrap().dsl;
+    // A letter with the mark fused into it
+    assert_eq!(
+        dsl(r#"<w><choice><me:facs><am>&kbar;</am>gs</me:facs><me:dipl>k<ex>onun</ex>gs</me:dipl><me:norm>konungs</me:norm></choice></w>"#),
+        ".p {:kbar:=konun}gs"
+    );
+    // A whole word for a sign
+    assert_eq!(
+        dsl(r#"<w><choice><me:facs><am>&et;</am></me:facs><me:dipl><ex>ok</ex></me:dipl><me:norm>ok</me:norm></choice></w>"#),
+        ".p {:et:=ok}"
+    );
+    // Facsimile only, with a mark (Holm A 49)
+    assert_eq!(dsl(r#"<w><me:facs>k<am>&bar;</am>r</me:facs></w>"#), ".p k{:bar:=}r");
+    // The levels differ elsewhere too: the whole word, as before
+    assert_eq!(
+        dsl(r#"<w><choice><me:facs>ꝼ<am>&bar;</am>r</me:facs><me:dipl>f<ex>yri</ex>r</me:dipl><me:norm>fyrir</me:norm></choice></w>"#),
+        ".p .abbr[ꝼ:bar:r]{fyrir}"
+    );
+}
+
+#[test]
+fn test_a_project_with_whole_word_abbreviations_is_brought_onto_rules_7() {
+    use crate::importer::tei::onto_tree;
+    let xml = menota_body(
+        r#"<w lemma="konungr"><choice><me:facs>k<am>&bar;</am>r</me:facs><me:dipl>k<ex>onung</ex>r</me:dipl><me:norm>konungr</me:norm></choice></w> <w><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p k{:bar:=onung}r ok");
+    // As imported with rules 6: the word as a whole
+    let mut stored = import.imported_document.clone().unwrap();
+    stored.dsl_rules = 6;
+    stored.profile = None;
+    for segment in &mut stored.segments {
+        if let Segment::Word { dsl_content, .. } = segment {
+            if dsl_content.contains('{') {
+                *dsl_content = ".abbr[k:bar:r]{konungr}".into();
+            }
+        }
+    }
+    let (pre, body, post) = (import.original_preamble.unwrap(), import.original_body_xml.unwrap(), import.original_postamble.unwrap());
+    let on_tree = onto_tree(&stored, ".p .abbr[k:bar:r]{konungr} ok", &pre, &body, &post).unwrap();
+    assert_eq!((on_tree.dsl.as_str(), on_tree.rewritten), (".p k{:bar:=onung}r ok", 1));
+}
+
+#[test]
+fn test_an_expansion_after_a_hyphen_is_not_a_deletion() {
+    // DG 8: "k{=on}-{=ong}r", where `-{` would open a deletion
+    let xml = menota_body(r#"<w><me:dipl>k<ex>on</ex>-<ex>ong</ex>r</me:dipl></w>"#);
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, r".p k{=on}\-{=ong}r");
+    let (original, body) = imported_roundtrip(&xml, |d| d.to_string()).unwrap();
+    assert_eq!(body, original);
+}
+
+#[test]
+fn test_an_expansion_after_an_unclear_reading_keeps_it_closed() {
+    // AM 162 B: an unclear reading right before an expansion: `}?{` is its close
+    let xml = menota_body(r#"<w><me:dipl><unclear>a</unclear><ex>n</ex>d</me:dipl></w>"#);
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p ?{a}?{=n}d");
+    let (original, body) = imported_roundtrip(&xml, |d| d.to_string()).unwrap();
+    assert_eq!(body, original);
 }

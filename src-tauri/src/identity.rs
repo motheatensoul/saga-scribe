@@ -410,6 +410,8 @@ pub fn node_to_dsl(node: &Node) -> String {
         Node::PageBreak(n) if n.is_empty() => "///".to_string(),
         Node::PageBreak(n) => format!("///{}", crate::parser::syntax::break_number_dsl(n, true)),
         Node::Abbreviation { abbr, expansion } => format!(".abbr[{}]{{{}}}", abbr, expansion),
+        Node::Expansion { mark, expansion } => format!("{{{}={}}}", mark, expansion),
+        Node::StoredExpansion { mark } => format!("{{{}}}", mark),
         Node::Gap { quantity, supplied } => {
             let mut s = "[...".to_string();
             if let Some(q) = quantity {

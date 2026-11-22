@@ -153,7 +153,9 @@ Press **F1** in the app for the shorthand reference and keyboard shortcuts. The
 | `///1v`                  | Page break                                 | `<pb n="1v"/>`                                           |
 | `//{56r}`, `///{fol. 1r}` | Break number with letters or spaces       | `<lb n="56r"/>`, `<pb n="fol. 1r"/>`                     |
 | `.p`                     | New paragraph (on its own)                 | `</p><p>`                                                |
-| `.abbr[kgs]{konungs}`    | Abbreviation with its expansion            | `<choice><abbr>…</abbr><expan>…</expan></choice>`        |
+| `k{:bar:=onun}gs`        | Abbreviation mark and its expansion        | `k<am>&bar;</am>gs` (facs), `k<ex>onun</ex>gs` (dipl)   |
+| `hæn{=n}aR`              | Expansion without a mark                   | `hæn<ex>n</ex>aR`                                        |
+| `.abbr[kgs]{konungs}`    | Whole-word abbreviation (older form)       | `<choice><abbr>…</abbr><expan>…</expan></choice>`        |
 | `[...]` or `[...3]`      | Gap, optionally with its length in letters | `<gap reason="illegible" quantity="3" unit="chars"/>`    |
 | `[...3<ok>]`             | Gap with supplied text                     | `<gap …/><supplied>ok</supplied>`                        |
 | `<text>`                 | Supplied text (may contain shorthand)      | `<supplied>text</supplied>`                              |

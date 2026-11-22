@@ -49,6 +49,9 @@ pub enum SyntaxKind {
     PageBreak { number: Span },
     /// `.abbr[abbr]{expansion}`
     Abbreviation { abbr: Span, expansion: Span },
+    /// `{mark=expansion}`: an abbreviation mark and its expansion; `{mark}`
+    /// (no expansion) takes it from the abbreviation store
+    Expansion { mark: Span, expansion: Option<Span> },
     /// `[...]`, `[...n]`, `[...<dsl>]`, `[...n<dsl>]`
     Gap { quantity: Option<u32>, supplied: Option<Span>, children: Vec<SyntaxNode> },
     /// `<dsl>`: supplied text, its content parsed into `children`
@@ -141,6 +144,10 @@ pub fn lower(nodes: &[SyntaxNode], source: &str) -> Vec<Node> {
                 Node::LineBreak(number.as_ref().map(|n| unescape(&source[n.clone()]).into_owned()))
             }
             SyntaxKind::PageBreak { number } => Node::PageBreak(unescape(&source[number.clone()]).into_owned()),
+            SyntaxKind::Expansion { mark, expansion: Some(expansion) } => {
+                Node::Expansion { mark: text(mark), expansion: text(expansion) }
+            }
+            SyntaxKind::Expansion { mark, expansion: None } => Node::StoredExpansion { mark: text(mark) },
             SyntaxKind::Abbreviation { abbr, expansion } => Node::Abbreviation {
                 abbr: text(abbr),
                 expansion: text(expansion),
@@ -232,6 +239,24 @@ impl<'a> Parser<'a> {
 
     fn rest(&self) -> &'a str {
         &self.src[self.pos..self.end]
+    }
+
+    /// The first `=` in `range` that isn't escaped or inside brackets.
+    fn top_level_equals(&self, range: Span) -> Option<usize> {
+        let mut depth = 0usize;
+        let mut chars = self.src[range.clone()].char_indices();
+        while let Some((i, c)) = chars.next() {
+            match c {
+                '\\' => {
+                    chars.next();
+                }
+                '{' | '[' | '<' => depth += 1,
+                '}' | ']' | '>' => depth = depth.saturating_sub(1),
+                '=' if depth == 0 => return Some(range.start + i),
+                _ => {}
+            }
+        }
+        None
     }
 
     /// Whether the `len` bytes at `start` form a word of their own: whitespace
@@ -360,6 +385,22 @@ impl<'a> Parser<'a> {
                 } else if rest.starts_with("?{") {
                     flush_text!(start);
                     Some((2, self.inline(start, Some('?'), |content, children| SyntaxKind::Unclear { content, children })))
+                } else if rest.starts_with('{') {
+                    // `{mark=expansion}`: the mark is what's before the first `=`
+                    flush_text!(start);
+                    self.pos += 1;
+                    let result = self.consume_bracketed('}').and_then(|content| {
+                        let (mark, expansion) = match self.top_level_equals(content.clone()) {
+                            Some(equals) => (content.start..equals, Some(equals + 1..content.end)),
+                            // `{mark}`: the store's expansion
+                            None if !self.src[content.clone()].trim().is_empty() => (content, None),
+                            None => {
+                                return Err("An abbreviation is written {mark=expansion} or {mark}; for a brace as text, write \\{".to_string())
+                            }
+                        };
+                        Ok(vec![self.node(SyntaxKind::Expansion { mark, expansion }, start)])
+                    });
+                    Some((1, result))
                 } else if rest.starts_with(':') {
                     // Not an entity unless the closing colon follows; then it's text
                     match self.try_parse_entity() {

@@ -21,6 +21,7 @@ fn kind_name(kind: &SyntaxKind) -> &'static str {
         SyntaxKind::LineBreak { .. } => "LineBreak",
         SyntaxKind::PageBreak { .. } => "PageBreak",
         SyntaxKind::Abbreviation { .. } => "Abbreviation",
+        SyntaxKind::Expansion { .. } => "Expansion",
         SyntaxKind::Gap { .. } => "Gap",
         SyntaxKind::Supplied { .. } => "Supplied",
         SyntaxKind::SuppliedBlock { .. } => "SuppliedBlock",
@@ -72,7 +73,7 @@ fn generated_inputs() -> Vec<String> {
         "//", "///", "~", "|", ":", "et", "a", "þ", " ", "\n", "1", "3v", "-", "+", "?", "^",
         "{", "}", "[", "]", "<", ">", "-{", "}-", "+{", "}+", "?{", "}?", "^{", "[...", ".abbr[",
         ".head{", ".supplied{", ".norm{", ".", "~//", "~///", ":et:", "ꝛ", "𝔞", ".p", "p", "h",
-        "\\", "#", ";", ",",
+        "\\", "#", ";", ",", "=",
     ];
     let mut state: u64 = 0x2545_F491_4F6C_DD1D;
     let mut next = |n: usize| {

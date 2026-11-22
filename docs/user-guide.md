@@ -55,6 +55,7 @@ Work is saved as a project file with the extension `.teis`. It is a ZIP archive 
   (`document.xml`), with how it encodes its transcription (`profile.json`) and the
   replaced words still to be decided (`records.json`);
 - confirmed lemmas and analyses, word by word;
+- the abbreviation store (`abbreviations.json`, see [Abbreviations](#abbreviations));
 - annotations, with a fingerprint of each annotated word (`anchors.json`), so that if the
   file was changed outside Saga-Scribe they are found on their words again, and those whose
   words are gone are left out with a warning in the log;
@@ -125,11 +126,48 @@ To write a character that would be read as shorthand there, put a backslash befo
 ### Abbreviations
 
 ```
-.abbr[abbreviation]{expansion}
+{mark=expansion}
 ```
 
-For example, `.abbr[kgs]{konungs}` is encoded as
-`<choice><abbr>kgs</abbr><expan>konungs</expan></choice>`.
+The braces hold only what is abbreviated, so they stand inside the word: the abbreviation
+mark as written before `=`, and what it stands for after it. As in the MENOTA handbook, the
+mark is `<am>` on the facsimile level, the expansion `<ex>` on the diplomatic level, and the
+normalized level has the word as read:
+
+- `k{:bar:=onun}gs` (a bar over the k) is `k<am>&bar;</am>gs`, `k<ex>onun</ex>gs`,
+  `konungs`;
+- `{:kbar:=konun}gs` (a k with a stroke through it, one character) is
+  `<am>&kbar;</am>gs`, `k<ex>onun</ex>gs`, `konungs`: the letter's base letter (from
+  MUFI's character list) was written, so it stays outside `<ex>`;
+- `hæn{=n}aR` is an expansion without a mark (`hæn<ex>n</ex>aR`), as diplomatic
+  transcriptions have them;
+- `{:et:=ok}` is a sign that stands for a whole word.
+
+In a transcription without levels, mark and expansion stand side by side
+(`<am>&kbar;</am><ex>konun</ex>gs`). A brace as text is written `\{`.
+
+#### The abbreviation store
+
+Most marks stand for the same letters nearly every time, so the expansion can be left out:
+`{:kbar:}gs` takes the expansion from the project's abbreviation store, where each mark
+has its expansions, the default first. An expansion written out always wins over the store.
+
+- When a TEI file is imported, the store is filled from its `<am>` and `<ex>`: each mark
+  gets the expansions it has in the file, the most frequent first, and wherever a mark has
+  that expansion it is written `{mark}`. (A mark found with its expansion only once is
+  written out and not put in the store.)
+- A `{mark}` whose mark isn't in the store is underlined with a warning: it is compiled as
+  the mark alone. Write it once as `{mark=expansion}`; that form, for a mark not yet in the
+  store, offers **Add "…" for … to the store** (rest the pointer on its underline), after
+  which every `{mark}` takes it.
+- Resting the pointer on a `{mark}` shows its expansion.
+
+The store is saved with the project (`abbreviations.json`).
+
+The older form `.abbr[kgs]{konungs}`, for a whole word, still works and is encoded as
+`<choice><abbr>kgs</abbr><expan>konungs</expan></choice>`. When a TEI file is imported, its
+`<am>` and `<ex>` are written as `{mark=expansion}` where they stand in the word; a word
+whose levels differ in other ways too is written whole, as `.abbr[facsimile]{diplomatic}`.
 
 ### Word division
 

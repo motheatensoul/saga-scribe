@@ -92,6 +92,8 @@ export interface StagedDocument {
   dslRules: number;
   /** The editor's answers for replaced words, by the original word's segment id */
   decisions: Record<number, Decision>;
+  /** The abbreviation store its shorthand is written with */
+  abbreviations?: Record<string, string[]>;
   /** How the file encodes its transcription (inferred when it was imported) */
   profile?: Profile | null;
 }
@@ -253,6 +255,8 @@ export interface CompileOptions {
   customMappings?: Record<string, string>;
   lemmaMappingsJson?: string;
   annotationsJson?: string;
+  /** The abbreviation store's defaults (mark → expansion), which `{mark}` takes */
+  abbreviationsJson?: string;
 }
 
 export async function compileDsl(
@@ -277,6 +281,7 @@ export async function compileDsl(
     customMappings: options?.customMappings ?? null,
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     annotationsJson: options?.annotationsJson ?? null,
+    abbreviationsJson: options?.abbreviationsJson ?? null,
     guidance: guidance ?? null,
     xmlBase: xmlBase ?? null,
   });
@@ -293,6 +298,8 @@ export interface CompileImportedOptions {
   annotatedWords?: number[];
   /** All annotations, whose notes and attributes are written into the file's words */
   annotationsJson?: string;
+  /** The abbreviation store's defaults (mark → expansion), which `{mark}` takes */
+  abbreviationsJson?: string;
 }
 
 /**
@@ -372,6 +379,7 @@ export async function compileImported(
     decisions: decisions ?? null,
     annotatedWords: options?.annotatedWords?.length ? options.annotatedWords : null,
     annotationsJson: options?.annotationsJson ?? null,
+    abbreviationsJson: options?.abbreviationsJson ?? null,
     xmlBase: xmlBase ?? null,
   });
 }
@@ -613,6 +621,8 @@ export interface ProjectData {
   imported?: StagedDocument;
   /** Annotations dropped because their words weren't found in the saved file any more */
   unplacedAnnotations?: number;
+  /** The abbreviation store (2.0) */
+  abbreviations?: Record<string, string[]>;
   /** Places of the shorthand rewritten to read as the file is imported now (a project saved with older rules) */
   rewritten?: number;
 }
@@ -631,6 +641,8 @@ export async function saveProject(
   annotationsJson?: string,
   /** The answers for replaced words, for an imported document (the backend has the rest of it) */
   decisionsJson?: string,
+  /** The abbreviation store */
+  abbreviationsJson?: string,
 ): Promise<string | null> {
   return invoke("save_project", {
     path,
@@ -641,6 +653,7 @@ export async function saveProject(
     metadataJson,
     annotationsJson,
     decisionsJson,
+    abbreviationsJson,
   });
 }
 

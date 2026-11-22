@@ -30,7 +30,8 @@
 //! | `//` | `<lb/>` | Line break |
 //! | `//n` | `<lb n="n"/>` | Numbered line break |
 //! | `///n` | `<pb n="n"/>` | Page break |
-//! | `.abbr[a]{b}` | `<choice><abbr>a</abbr><expan>b</expan></choice>` | Abbreviation |
+//! | `{m=e}` | `<am>m</am>` on facs, `<ex>e</ex>` on dipl | Abbreviation mark and expansion |
+//! | `.abbr[a]{b}` | `<choice><abbr>a</abbr><expan>b</expan></choice>` | Whole-word abbreviation |
 //! | `[...]` | `<gap/>` | Gap/lacuna |
 //! | `[...3]` | `<gap quantity="3"/>` | Gap with character count |
 //! | `[...<txt>]` | `<gap/><supplied>txt</supplied>` | Gap with supplied reading |

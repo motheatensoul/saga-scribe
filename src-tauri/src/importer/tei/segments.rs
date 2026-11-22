@@ -127,6 +127,10 @@ pub struct ImportedDocument {
     /// absent in projects saved before 0.8.0
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<crate::document::profile::Profile>,
+    /// The abbreviation store the shorthand was written with: `{mark}`
+    /// stands for the mark's first expansion
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub abbreviations: super::abbreviations::Store,
     /// The DSL rules the document's DSL was generated with ([`DSL_RULES`]);
     /// 0 for documents imported before rules were versioned.
     #[serde(default)]
@@ -182,7 +186,13 @@ fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
 /// - 6: in a file with several lineations (`<lb ed="ms">` and `<lb ed="DN">`),
 ///   `//n` shows only the line breaks of one of them (the profile's
 ///   `line_edition`); the others are kept as structure.
-pub const DSL_RULES: u32 = 6;
+/// - 7: MENOTA's `<am>` and `<ex>` are written where they stand in the word,
+///   `{mark=expansion}` (`k{:bar:=onun}gs`, `{:kbar:=konun}gs`, `hæn{=n}aR`),
+///   where the word's levels differ only by them; otherwise, as before, the
+///   whole word is `.abbr[facs]{dipl}`.
+/// - 8: an abbreviation whose expansion is its mark's commonest in the file
+///   (the abbreviation store) is written `{mark}`.
+pub const DSL_RULES: u32 = 8;
 
 impl ImportedDocument {
     /// Drops the copies of the file's XML that words and punctuation hold
@@ -241,6 +251,7 @@ impl ImportedDocument {
             is_menota,
             spans: None,
             profile: None,
+            abbreviations: Default::default(),
             dsl_rules: 0,
             decisions: HashMap::new(),
         })

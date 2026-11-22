@@ -78,9 +78,24 @@
         },
         { syntax: ".p", output: "</p><p>", desc: "New paragraph (standalone)" },
         {
+            syntax: "k{:bar:=onun}gs",
+            output: "k<am>&bar;</am>gs / k<ex>onun</ex>gs",
+            desc: "Abbreviation: mark (facs) = expansion (dipl)",
+        },
+        {
+            syntax: "hæn{=n}aR",
+            output: "hæn<ex>n</ex>aR",
+            desc: "Expansion without a mark",
+        },
+        {
+            syntax: "{:kbar:}gs",
+            output: "<am>&kbar;</am>gs / k<ex>onun</ex>gs",
+            desc: "Abbreviation with the store's expansion",
+        },
+        {
             syntax: ".abbr[d.]{deus}",
             output: "<choice><abbr>d.</abbr><expan>deus</expan></choice>",
-            desc: "Abbreviation",
+            desc: "Whole-word abbreviation (older form)",
         },
         {
             syntax: "[...]",

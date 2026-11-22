@@ -44,6 +44,11 @@ describe("entities shown as characters", () => {
         expect(v.state.doc.toString()).toBe(":thorn:at :kbar: :nope: x");
     });
 
+    it("shows the entities of an abbreviation mark", () => {
+        const v = open("{:kbar:=konun}gs x", 18);
+        expect(shown(v)).toEqual(["ꝁ"]);
+    });
+
     it("finds the entity before or after a position", () => {
         const v = open("a:thorn:b", 0);
         expect(glyphAt(v.state, 8, true)).toMatchObject({ from: 1, to: 8, glyph: "þ" });

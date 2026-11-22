@@ -78,6 +78,17 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
 ///
 /// [`Profile`]: crate::document::profile::Profile
 pub fn parse_with(xml_content: &str, line_edition: Option<Option<String>>) -> Result<ImportResult, String> {
+    parse_with_store(xml_content, line_edition, None)
+}
+
+/// [`parse_with`], with the abbreviation store the shorthand is written
+/// with (`Some`: a saved project's); without, one is inferred from the
+/// file ([`abbreviations::infer`](super::abbreviations::infer)).
+pub fn parse_with_store(
+    xml_content: &str,
+    line_edition: Option<Option<String>>,
+    store: Option<&super::abbreviations::Store>,
+) -> Result<ImportResult, String> {
     let doc = parse_document(xml_content)?;
 
     let root = doc
@@ -103,8 +114,11 @@ pub fn parse_with(xml_content: &str, line_edition: Option<Option<String>>) -> Re
         profile.line_edition = chosen.filter(|ed| profile.counts.line_editions.contains_key(ed));
     }
     let projection = project_body_with(&tree, tree_body, profile.line_edition.as_deref());
-    let segments = projection.segments;
+    let mut segments = projection.segments;
     let spans = projection.spans;
+    // `{mark}` where the expansion is the mark's commonest
+    let abbreviations = store.cloned().unwrap_or_else(|| super::abbreviations::infer(&segments));
+    super::abbreviations::shorten(&mut segments, &abbreviations);
 
     // Split original XML into preamble/body/postamble for exact preservation;
     // the spans are relative to the body's start
@@ -130,6 +144,7 @@ pub fn parse_with(xml_content: &str, line_edition: Option<Option<String>>) -> Re
         is_menota,
         spans,
         profile: Some(profile),
+        abbreviations,
         dsl_rules: DSL_RULES,
         decisions: Default::default(),
     };
@@ -263,11 +278,19 @@ pub fn onto_tree(stored: &ImportedDocument, dsl: &str, preamble: &str, body: &st
         })
         .collect();
 
+    // The store the project has, or (from before there was one) the file's
+    let abbreviations = match stored.abbreviations.is_empty() {
+        true => super::abbreviations::infer(&projection.segments),
+        false => stored.abbreviations.clone(),
+    };
+    let mut segments = projection.segments;
+    super::abbreviations::shorten(&mut segments, &abbreviations);
     let document = ImportedDocument {
-        segments: projection.segments,
+        segments,
         is_menota: stored.is_menota,
         spans: Some(fresh_spans),
         profile: Some(profile),
+        abbreviations,
         dsl_rules: DSL_RULES,
         decisions: stored
             .decisions

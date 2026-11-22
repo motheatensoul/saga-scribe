@@ -73,6 +73,17 @@ function glyphsIn(state: EditorState, from: number, to: number): Glyph[] {
         from,
         to,
         enter(node) {
+            if (node.name === "Expansion") {
+                // `{:kbar:=konun}`: the entities of the mark
+                const text = state.doc.sliceString(node.from, node.to);
+                const mark = text.slice(0, Math.max(text.indexOf("="), 0));
+                for (const match of mark.matchAll(/:([\p{L}\p{N}_]+):/gu)) {
+                    const glyph = known[match[1]];
+                    const at = node.from + (match.index ?? 0);
+                    if (glyph) found.push({ from: at, to: at + match[0].length, glyph });
+                }
+                return false;
+            }
             if (node.name !== "Entity") return;
             const glyph = known[state.doc.sliceString(node.from + 1, node.to - 1)];
             if (glyph) found.push({ from: node.from, to: node.to, glyph });

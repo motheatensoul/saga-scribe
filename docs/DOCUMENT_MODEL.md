@@ -415,7 +415,10 @@ text).
    its number is looked for nearby, and annotations whose word is gone are left out and
    counted.
 7. **Shorthand redesign** on top (abbreviations, supplied text with markup, short form
-   for normalized punctuation): only the projection and the parser change.
+   for normalized punctuation): only the projection and the parser change. Started
+   (2026-11-22): abbreviations as `{mark=expansion}`, compiled as the MENOTA handbook's
+   ch. 6 has them, and written so by the projection where a word's levels differ only by
+   `<am>`/`<ex>` (DSL rules 7).
 
 Steps 1 and 2 change nothing users see. From step 3 on, edits stop losing markup.
 

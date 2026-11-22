@@ -33,7 +33,7 @@
 //! | 1.6 | Paragraph start tags are `paragraph` segments (`.p` in the DSL); spans cover all tags |
 //! | 1.7 | `\` escapes a character and `#…#` is a numeral; older shorthand is escaped when opened |
 //! | 1.8 | segments.json holds the answers for replaced and deleted words (`decisions`) |
-//! | 2.0 | `overrides.json`: a new document's words whose XML was set in the word panel. An imported document is saved as the file now is (`document.xml`) with `profile.json` and `records.json` (open records by place and fingerprint); no `segments.json`, `output.xml` or split original for it. `anchors.json`: the annotated words' fingerprints, by word number |
+//! | 2.0 | `overrides.json`: a new document's words whose XML was set in the word panel. An imported document is saved as the file now is (`document.xml`) with `profile.json` and `records.json` (open records by place and fingerprint); no `segments.json`, `output.xml` or split original for it. `anchors.json`: the annotated words' fingerprints, by word number. `abbreviations.json`: the abbreviation store |
 //!
 //! All writes are atomic: data is written to a temporary file next to the target
 //! and renamed over it, so a crash mid-save never leaves a truncated file.
@@ -212,6 +212,9 @@ pub struct ProjectData {
     /// `overrides.json`)
     #[serde(skip)]
     pub overrides: Vec<SavedOverride>,
+    /// The abbreviation store (2.0, `abbreviations.json`)
+    #[serde(default)]
+    pub abbreviations: crate::importer::tei::abbreviations::Store,
     /// Annotations dropped because their words couldn't be found again in
     /// the saved file (2.0, `anchors.json`)
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -243,9 +246,10 @@ pub async fn save_project(
     metadata_json: Option<String>,
     annotations_json: Option<String>,
     decisions_json: Option<String>,
+    abbreviations_json: Option<String>,
 ) -> Result<Option<String>, String> {
     let session = session.inner().clone();
-    let fields = ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json };
+    let fields = ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json, abbreviations_json };
     // A new document's words whose XML was set in the word panel
     let overrides = if decisions_json.is_none() { native.saved_overrides() } else { Vec::new() };
     tauri::async_runtime::spawn_blocking(move || {
@@ -268,6 +272,8 @@ pub(crate) struct ProjectFields {
     pub template_id: String,
     pub metadata_json: Option<String>,
     pub annotations_json: Option<String>,
+    /// The abbreviation store (`abbreviations.json`)
+    pub abbreviations_json: Option<String>,
 }
 
 /// Saves a project at `path` (see [`save_project`]).
@@ -290,7 +296,7 @@ pub(crate) fn save_project_with(
     decisions_json: Option<String>,
     overrides: Vec<SavedOverride>,
 ) -> Result<(), String> {
-    let ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json } = fields;
+    let ProjectFields { source, output, confirmations_json, template_id, metadata_json, annotations_json, abbreviations_json } = fields;
     // An imported document is saved as the file now is (`document.xml`),
     // with its profile and the records still open (`.teis` 2.0)
     let imported = match decisions_json {
@@ -338,6 +344,7 @@ pub(crate) fn save_project_with(
                 records_json,
                 anchors_json,
                 overrides_json,
+                abbreviations_json,
                 ..Default::default()
             },
         )
@@ -363,6 +370,8 @@ struct ProjectContents {
     anchors_json: Option<String>,
     /// A new document's words whose XML was set in the word panel (2.0)
     overrides_json: Option<String>,
+    /// The abbreviation store (2.0)
+    abbreviations_json: Option<String>,
     /// The parts of formats before 2.0, which only tests still write
     segments_json: Option<String>,
     original_body_xml: Option<String>,
@@ -383,6 +392,7 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
         records_json,
         anchors_json,
         overrides_json,
+        abbreviations_json,
         segments_json,
         original_body_xml,
         original_preamble,
@@ -420,6 +430,9 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     }
     if let Some(overrides) = &overrides_json {
         put("overrides.json", overrides)?;
+    }
+    if let Some(abbreviations) = abbreviations_json.as_deref().filter(|json| *json != "{}") {
+        put("abbreviations.json", abbreviations)?;
     }
 
     // Write confirmations.json (backward compat for older app versions)
@@ -576,7 +589,9 @@ pub(crate) fn stage_project(project: &mut ProjectData, session: &ImportedSession
 fn stage_saved_document(project: &mut ProjectData, xml: &str, session: &ImportedSession) -> Result<(Option<StagedDocument>, usize), String> {
     let profile = project.profile.take();
     let line_edition = profile.as_ref().map(|p| p.line_edition.clone());
-    let import = crate::importer::tei::parse_with(xml, line_edition)?;
+    // The shorthand was written with the project's store
+    let store = (!project.abbreviations.is_empty()).then_some(&project.abbreviations);
+    let import = crate::importer::tei::parse_with_store(xml, line_edition, store)?;
     let mut document = import.imported_document.ok_or("The saved document has no body")?;
     if profile.is_some() {
         document.profile = profile;
@@ -612,6 +627,10 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
     // An imported document, saved as the file was (2.0)
     let document_xml = read_zip_file(&mut archive, "document.xml").ok();
     let profile = read_zip_file(&mut archive, "profile.json").ok().and_then(|json| serde_json::from_str(&json).ok());
+    let abbreviations = match read_zip_file(&mut archive, "abbreviations.json") {
+        Ok(json) => serde_json::from_str(&json).map_err(|e| format!("Failed to parse abbreviations.json: {e}"))?,
+        Err(_) => Default::default(),
+    };
     let overrides = match read_zip_file(&mut archive, "overrides.json") {
         Ok(json) => serde_json::from_str(&json).map_err(|e| format!("Failed to parse overrides.json: {e}"))?,
         Err(_) => Vec::new(),
@@ -714,6 +733,7 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
         profile,
         saved_records,
         overrides,
+        abbreviations,
         unplaced_annotations,
     })
 }

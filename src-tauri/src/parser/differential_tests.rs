@@ -4,15 +4,37 @@
 //! with the same message. The only intended difference: errors inside block
 //! content (`.head{...}` etc.) are now reported, where the old lexer accepted
 //! the block and its content failed later, when compiled. Syntax added
-//! since (`\c`, `#numeral#`, `//{n}`) is new to the parser, so input with
-//! `\`, `#` or `//{` isn't compared. Supplied text (`<…>`) is now parsed as
+//! since (`\c`, `#numeral#`, `//{n}`, `{mark=expansion}`) is new to the
+//! parser, so input with `\`, `#`, `//{` or an expansion isn't compared. Supplied text (`<…>`) is now parsed as
 //! DSL, so errors in it are reported (as nested ones).
 
 use super::legacy_lexer::LegacyLexer;
 use super::syntax;
 
+/// Whether the parser reads `{mark=expansion}` in `source`, or fails at a
+/// brace (which now starts one): syntax the old lexer didn't know.
+fn uses_expansions(source: &str) -> bool {
+    fn any(nodes: &[syntax::SyntaxNode]) -> bool {
+        nodes.iter().any(|n| match &n.kind {
+            syntax::SyntaxKind::Expansion { .. } => true,
+            syntax::SyntaxKind::Supplied { children, .. }
+            | syntax::SyntaxKind::SuppliedBlock { children, .. }
+            | syntax::SyntaxKind::Deletion { children, .. }
+            | syntax::SyntaxKind::Addition { children, .. }
+            | syntax::SyntaxKind::Head { children, .. }
+            | syntax::SyntaxKind::Norm { children, .. }
+            | syntax::SyntaxKind::Unclear { children, .. }
+            | syntax::SyntaxKind::Numeral { children, .. }
+            | syntax::SyntaxKind::Gap { children, .. } => any(children),
+            _ => false,
+        })
+    }
+    let tree = syntax::parse(source);
+    any(&tree.nodes) || tree.diagnostics.iter().any(|d| source[d.span.start..].starts_with('{'))
+}
+
 fn assert_equivalent(source: &str) {
-    if source.contains(['\\', '#']) || source.contains("//{") {
+    if source.contains(['\\', '#']) || source.contains("//{") || uses_expansions(source) {
         return;
     }
     let legacy = LegacyLexer::new(source).parse();

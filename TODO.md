@@ -99,27 +99,19 @@ when it is done (and record it in CHANGELOG.md if users notice).
       lines (`rendition="first|middle|last"`, NRA fragments) need the same.
 
   Planned so far:
-  - **Abbreviations as `{mark=expansion}`, with a store** (decided; not implemented yet,
-    reminded 2026-11-12). `.abbr[kgs]{konungs}` is too heavy for something this common.
-    The braces enclose only what is abbreviated, so they can stand inside a word:
-    `{:kbar:=konun}gs`, `{:etslash:=ok}`. The left of `=` is the abbreviation mark, wrapped
-    in `<am>`; the right is the expansion of exactly that mark, wrapped in `<ex>` (this is
-    the MENOTA encoding; documents without `<am>`/`<ex>` need a different approach). MUFI
-    sometimes fuses the mark into a letter (`:hbar:` = h + bar, where the bar is the
-    mark) and sometimes makes it a separate character. A fused letter's base letter was
-    written and isn't part of `<ex>`, so `{:kbar:=konun}gs` gives `<am>&kbar;</am>` on the
-    facsimile level and `k<ex>onun</ex>gs` on the diplomatic level. That needs a table of
-    each entity's base letter: `static/normalizer/entity-base-letters.json` is an
-    unchecked draft, to be replaced by the base characters in MUFI's specification once
-    its website is reachable again. Check the output on each level against the MENOTA
-    handbook (abbreviations chapter) before implementing.
-    `{:kbar:}` takes the expansion from a store in the project file. The store maps a
-    mark to one or more expansions, and the first is the default. An explicit expansion
-    always overrides the store. A mark that isn't in the store gets a diagnostic with a
-    quick fix "add to store", and an explicit form gets an action that adds it. The editor
-    shows a short form's expansion (inline hint or hover), so the store isn't hidden state.
-    JSON export/import of the store for reuse between manuscripts can come later; hands
-    differ too much to make sharing a priority.
+  - **Abbreviations as `{mark=expansion}`, with a store** (decided). Done (2026-11-22):
+    the notation is parsed and compiled as the MENOTA handbook (ch. 6) encodes it, `<am>`
+    on facs, `<ex>` on dipl, the word on norm; a fused letter's base letter comes from
+    MUFI's character list (`static/characters/mufi-export.json`, `entities::base_letter`);
+    `{=n}` has no mark; `.abbr[…]{…}` still parses. Left:
+    - (done 2026-11-22: the importer writes `<am>`/`<ex>` as `{…=…}` where the levels
+      differ only by them, DSL rules 7) words whose levels differ in other ways too
+      (facs `ꝼ`, dipl `f`) are still `.abbr[facs]{dipl}` as a whole;
+    - (done 2026-11-22: the store, `{mark}`, import filling it and writing short forms,
+      DSL rules 8) a way to see and edit the whole store (change a default, remove a
+      mark) besides the lint action; JSON export/import of a store for reuse;
+    - files encoding abbreviations as `<choice><abbr><expan>` (the profile says so): the
+      notation compiles to `<am>`/`<ex>` there too.
   - **Supplied text with markup.** `<…>` and `[...3<ab>]` take shorthand content (done,
     DSL rules 4). Left: `.supplied{…}` is still how supplied text spanning several words
     is written (`<a b>` is one token); retiring it needs `<…>` to hold several words.

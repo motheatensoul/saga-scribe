@@ -19,6 +19,7 @@ import {
     Note,
     Unclear,
     Entity,
+    Expansion,
     Literal,
     Numeral,
     WordBoundary,
@@ -121,8 +122,21 @@ function until(peek: Peek, offset: number, end: string): number {
 
 const found = (token: number, length: number): Found => ({ token, length });
 
-/** The characters a construct can start with: \\ # / . [ < - + ^ ? : ~ | */
-const OPENERS = new Set([..."\\#/.[<-+^?:~|"].map((c) => c.charCodeAt(0)));
+/** The characters a construct can start with: \\ # / . [ < - + ^ ? { : ~ | */
+const OPENERS = new Set([..."\\#/.[<-+^?{:~|"].map((c) => c.charCodeAt(0)));
+
+/** Whether `from..to` has an `=` outside brackets and escapes (as the parser's `top_level_equals`) */
+function hasTopLevelEquals(peek: Peek, from: number, to: number): boolean {
+    let depth = 0;
+    for (let offset = from; offset < to; offset++) {
+        const code = peek(offset);
+        if (code === BACKSLASH) offset = escaped(peek, offset);
+        else if (code === 123 || code === 91 || code === 60) depth++;
+        else if (code === 125 || code === 93 || code === 62) depth = Math.max(0, depth - 1);
+        else if (code === 61 && depth === 0) return true;
+    }
+    return false;
+}
 
 /** The construct starting at `offset`, if any */
 function scan(peek: Peek, offset: number): Found | Failed | null {
@@ -186,6 +200,14 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
         return end < 0 ? { opener: 2 } : found(Note, end - offset);
     }
     if (at("?{")) return inline(Unclear, "?");
+    // {mark=expansion}, or {mark} (the store's expansion)
+    if (at("{")) {
+        const end = bracketed(peek, offset + 1, "}");
+        if (end < 0) return { opener: 1 };
+        let blank = true;
+        for (let i = offset + 1; i < end - 1; i++) if (!isWhitespace(peek(i))) blank = false;
+        return blank && !hasTopLevelEquals(peek, offset + 1, end - 1) ? { opener: 1 } : found(Expansion, end - offset);
+    }
     if (at(":")) {
         let end = offset + 1;
         for (let [cp, length] = codePoint(peek, end); length > 0 && isNameChar(cp); [cp, length] = codePoint(peek, end)) {

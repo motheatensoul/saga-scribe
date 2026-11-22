@@ -90,6 +90,8 @@ const parserWithMetadata = parser.configure({
 
       // Entity
       Entity: tags.atom,
+      // {mark=expansion}
+      Expansion: tags.keyword,
 
       // Escaped character, numeral
       Literal: tags.escape,

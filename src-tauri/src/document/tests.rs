@@ -836,6 +836,7 @@ fn corpus_saved_projects_open_as_they_were() {
         let result = (|| -> Result<(), String> {
             let session = ImportedSession::default();
             let reply = crate::commands::import::stage(crate::importer::tei::parse(&source)?, &session)?;
+            let store = reply.imported.as_ref().map(|s| s.abbreviations.clone()).unwrap_or_default();
             session.load(reply.imported.map(|s| s.handle))?;
             let dsl = reply.dsl;
             let (tokens, spans) = crate::identity::spanned_dsl_tokens(&dsl)?;
@@ -854,6 +855,7 @@ fn corpus_saved_projects_open_as_they_were() {
                 template_id: "menota".into(),
                 metadata_json: None,
                 annotations_json: None,
+                abbreviations_json: Some(serde_json::to_string(&store).map_err(|e| e.to_string())?),
             };
             crate::commands::file::save_project_at(&session, &project, fields, Some("{}".into()))?;
             let mut opened = crate::commands::file::read_project(&project.to_string_lossy())?;

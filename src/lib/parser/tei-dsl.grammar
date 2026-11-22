@@ -24,6 +24,7 @@ element {
   Note |
   Unclear |
   Entity |
+  Expansion |
   Literal |
   Numeral |
   WordBoundary |
@@ -74,6 +75,8 @@ NormBlock { normKeyword BlockContent }
   Unclear,
   // :name:
   Entity,
+  // {mark=expansion}: an abbreviation mark and its expansion
+  Expansion,
   // \c: the character c as text
   Literal,
   // #.x.#: a numeral
