@@ -134,8 +134,7 @@ when it is done (and record it in CHANGELOG.md if users notice).
       attributes from the panel), so nothing needs a dedicated form to be written.
     - Dedicated forms proposed (element, occurrences: shorthand):
       - `<seg>` 9,360: `&{…}`; `<surplus>` 424: `${…}`;
-      - `<hi>` 11,946: `/…/` was proposed, but it clashes with `//` and `///`
-        (`/a//b/`, `//{3}`); something like `*{…}*`, in the pattern of `-{…}-`, would not;
+      - `<hi>` 11,946: `*{…}*` (decided; `/…/` would clash with `//` and `///`);
       - `<c>` 9,181: `.c{…}`; `<q>` 5,593: `.q{…}`; `<name>` 4,981: `.name{…}`;
         `<title>` 150: `.title{…}`; `<damage>` 19: `.damage{…}`; `<gloss>` 15:
         `.gloss{…}`; `<quote>`: `.quote{…}`; `<subst>` 49 (wraps a `<del>`/`<add>` pair,
@@ -151,22 +150,19 @@ when it is done (and record it in CHANGELOG.md if users notice).
         clickable symbol?);
       - `<rdg wit="…">` 5,105 (one file; `<app>`/`<lem>` around it): `.rdg[wit]{…}`.
         Multi-witness editions are otherwise out of scope; `wit` could move to the panel;
-      - `<cb n="B"/>` 3,447: `///cB` and `<s n="1"/>` 8,426: `///s1` were proposed, but a
-        plain page number can be any letters (`///cB` is `<pb n="cB"/>` today). A
-        separator would keep them apart, e.g. `///c=B` and `///s=1`, with page numbers
-        holding `=` written in braces. `<s>` also wraps words in some files
+      - `<cb n="B"/>` 3,447: `///c=B`; `<s n="1"/>` 8,426: `///s=1` (decided; a plain
+        page number can be any letters, so `///cB` is `<pb n="cB"/>`, and page numbers
+        holding `=` are written in braces). `<s>` also wraps words in some files
         (AM 619 4to);
       - `<space quantity="3"/>` 112: `.space[3]`; `<handShift n="hand1"/>` 100:
-        `.hs{hand1}`. (In the CSV these two proposals sit one row lower, on `handShift`
-        and `supplied@type`, as `.settlement{…}` sits on `geogName`.)
+        `.hs{hand1}`.
     - Left as they are for now: `<l>` and `<lg>` (verse lines and stanzas; they wrap
       words rather than mark line ends like `<lb>`, so best edited in the XML tab),
       `<milestone>` (897, two files: an empty marker of a point, e.g. where a speech
-      turn begins; not text, but could be a clickable mark), `<bibl>` and `<ref>`
+      turn begins; XML only, decided), `<bibl>` and `<ref>`
       (front and back matter, for a future editor of those), `<anchor>`,
       `<me:textSpan>`, `<me:expunged>`, `<me:suppressed>`, `<fw>`, `<notatedMusic>`.
-    - Notes already have `^{…}`; `.note{…}` was proposed too, which would be the
-      generic form above. Their type is set from the panel.
+    - Notes keep `^{…}` (no second form); their type is set from the panel.
   - **Junicode as an optional editor font** (entities are shown as characters since
     0.8.0, set in Junicode).
   - **Cost of the breaking changes:** `syntax.rs`, `tokens.ts`, the grammar, the DSL
