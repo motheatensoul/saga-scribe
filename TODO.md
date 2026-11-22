@@ -108,8 +108,8 @@ when it is done (and record it in CHANGELOG.md if users notice).
       differ only by them, DSL rules 7) words whose levels differ in other ways too
       (facs `ꝼ`, dipl `f`) are still `.abbr[facs]{dipl}` as a whole;
     - (done 2026-11-22: the store, `{mark}`, import filling it and writing short forms,
-      DSL rules 8) a way to see and edit the whole store (change a default, remove a
-      mark) besides the lint action; JSON export/import of a store for reuse;
+      DSL rules 8; the **Abbreviations** dialog, 2026-11-22) JSON export/import of a store
+      for reuse;
     - files encoding abbreviations as `<choice><abbr><expan>` (the profile says so): the
       notation compiles to `<am>`/`<ex>` there too.
   - **Supplied text with markup.** `<…>` and `[...3<ab>]` take shorthand content (done,

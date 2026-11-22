@@ -19,6 +19,7 @@
         BookDashed,
         FileText,
         FileCheck,
+        Brackets,
         ScrollText,
         MessageCircleWarning,
     } from "@lucide/svelte";
@@ -34,6 +35,7 @@
         ontemplates,
         onmetadata,
         onvalidate,
+        onabbreviations,
         onundo,
         onredo,
         onlogs,
@@ -50,6 +52,7 @@
         ontemplates?: () => void; // Open the template manager
         onmetadata?: () => void; // Open the metadata editor
         onvalidate?: () => void; // Open the validation panel
+        onabbreviations?: () => void; // Open the abbreviation store
         onundo?: () => void; // Undo lemmatization
         onredo?: () => void; // Redo lemmatization
         onlogs?: () => void; // Open the log
@@ -173,6 +176,13 @@
             title="Edit manuscript metadata"
         >
             <FileText size="18" aria-hidden="true" /><span class="sr-only 2xl:not-sr-only">Metadata</span>
+        </button>
+        <button
+            class={ghost}
+            onclick={onabbreviations}
+            title="Abbreviation store"
+        >
+            <Brackets size="18" aria-hidden="true" /><span class="sr-only 2xl:not-sr-only">Abbreviations</span>
         </button>
         <button
             class={ghost}

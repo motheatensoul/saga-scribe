@@ -27,8 +27,8 @@ For installation, see the [README](../README.md#getting-started).
 The window is divided into three parts:
 
 - **Toolbar** (top), in groups from left to right: the file (**Open**, **Import**, **Save**,
-  **Export**); the document (the template in use, the template manager, **Metadata** and
-  **Validate**); undo and redo of lemmatization; and, at the right, the application log,
+  **Export**); the document (the template in use, the template manager, **Metadata**,
+  **Abbreviations** and **Validate**); undo and redo of lemmatization; and, at the right, the application log,
   help and settings, followed by the file's name. In a narrow window the buttons show only
   their icons (hover over one for its name), and groups that don't fit move to a second
   row.
@@ -161,6 +161,10 @@ has its expansions, the default first. An expansion written out always wins over
   store, offers **Add "…" for … to the store** (rest the pointer on its underline), after
   which every `{mark}` takes it.
 - Resting the pointer on a `{mark}` shows its expansion.
+- **Abbreviations** in the toolbar lists the whole store: choose which expansion of a mark
+  is the default, remove an expansion (a mark goes with its last), or add a mark and an
+  expansion. A change applies to every `{mark}` at once; words with their expansion written
+  out don't change.
 
 The store is saved with the project (`abbreviations.json`).
 

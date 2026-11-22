@@ -10,6 +10,7 @@
     import MetadataEditor from "$lib/components/MetadataEditor.svelte";
     import ImportProfileDialog from "$lib/components/ImportProfileDialog.svelte";
     import WordXmlPanel from "$lib/components/WordXmlPanel.svelte";
+    import AbbreviationsDialog from "$lib/components/AbbreviationsDialog.svelte";
     import { abbreviationStore } from "$lib/stores/abbreviations";
     import EntityBrowser from "$lib/components/EntityBrowser.svelte";
     import Lemmatizer from "$lib/components/Lemmatizer.svelte";
@@ -126,6 +127,7 @@
     let showMetadataEditor = $state(false);
     /** An imported file's profile, shown for confirmation after importing */
     let importProfile = $state<Profile | null>(null);
+    let showAbbreviations = $state(false);
 
     // An abbreviation added to the store (or a default changed): compile
     // again, so `{mark}` takes it (not when a document's store is loaded,
@@ -1047,6 +1049,7 @@
         onexportpdf={handleExportPdf}
         ontemplates={() => (showTemplateManager = true)}
         onmetadata={() => (showMetadataEditor = true)}
+        onabbreviations={() => (showAbbreviations = true)}
         onvalidate={() => (showValidationPanel = true)}
         onundo={handleLemmaUndo}
         onredo={handleLemmaRedo}
@@ -1145,6 +1148,8 @@
     </div>
 
     <TemplateEditor bind:isopen={showTemplateManager} />
+
+    <AbbreviationsDialog bind:isopen={showAbbreviations} />
 
     <ImportProfileDialog
         bind:profile={importProfile}

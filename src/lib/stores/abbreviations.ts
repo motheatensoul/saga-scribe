@@ -28,6 +28,25 @@ function createAbbreviationStore() {
             byEditor = true;
             update((store) => ({ ...store, [mark]: [expansion, ...(store[mark] ?? []).filter((e) => e !== expansion)] }));
         },
+        /** Adds `expansion` to `mark`'s expansions (as the default if the mark is new) */
+        addExpansion: (mark: string, expansion: string) => {
+            byEditor = true;
+            update((store) => {
+                const expansions = store[mark] ?? [];
+                return expansions.includes(expansion) ? store : { ...store, [mark]: [...expansions, expansion] };
+            });
+        },
+        /** Removes one expansion of `mark` (and the mark, if it was its last) */
+        removeExpansion: (mark: string, expansion: string) => {
+            byEditor = true;
+            update((store) => {
+                const rest = (store[mark] ?? []).filter((e) => e !== expansion);
+                const next = { ...store };
+                if (rest.length > 0) next[mark] = rest;
+                else delete next[mark];
+                return next;
+            });
+        },
         changedByEditor: () => byEditor,
         /** Each mark's default expansion, as compiles take it (JSON) */
         defaultsJson: (): string | undefined => {
