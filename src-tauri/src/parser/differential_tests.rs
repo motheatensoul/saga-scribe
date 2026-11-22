@@ -4,8 +4,9 @@
 //! with the same message. The only intended difference: errors inside block
 //! content (`.head{...}` etc.) are now reported, where the old lexer accepted
 //! the block and its content failed later, when compiled. Syntax added
-//! since (`\c`, `#numeral#`, `//{n}`, `{mark=expansion}`) is new to the
-//! parser, so input with `\`, `#`, `//{` or an expansion isn't compared. Supplied text (`<…>`) is now parsed as
+//! since (`\c`, `#numeral#`, `//{n}`, `{mark=expansion}`, markup such as
+//! `.q{…}` and `*{…}*`, `///c=`) is new to the parser, so input with `\`,
+//! `#`, `//{`, an expansion or markup isn't compared. Supplied text (`<…>`) is now parsed as
 //! DSL, so errors in it are reported (as nested ones).
 
 use super::legacy_lexer::LegacyLexer;
@@ -16,7 +17,11 @@ use super::syntax;
 fn uses_expansions(source: &str) -> bool {
     fn any(nodes: &[syntax::SyntaxNode]) -> bool {
         nodes.iter().any(|n| match &n.kind {
-            syntax::SyntaxKind::Expansion { .. } => true,
+            syntax::SyntaxKind::Expansion { .. }
+            | syntax::SyntaxKind::Markup { .. }
+            | syntax::SyntaxKind::Space { .. }
+            | syntax::SyntaxKind::HandShift { .. }
+            | syntax::SyntaxKind::ColumnBreak { .. } => true,
             syntax::SyntaxKind::Supplied { children, .. }
             | syntax::SyntaxKind::SuppliedBlock { children, .. }
             | syntax::SyntaxKind::Deletion { children, .. }
@@ -30,7 +35,10 @@ fn uses_expansions(source: &str) -> bool {
         })
     }
     let tree = syntax::parse(source);
-    any(&tree.nodes) || tree.diagnostics.iter().any(|d| source[d.span.start..].starts_with('{'))
+    let new_opener = |at: &str| {
+        at.starts_with('{') || ["*{", "&{", "${", "///c="].iter().any(|o| at.starts_with(o)) || syntax::markup_name(at).is_some()
+    };
+    any(&tree.nodes) || tree.diagnostics.iter().any(|d| new_opener(&source[d.span.start..]))
 }
 
 fn assert_equivalent(source: &str) {

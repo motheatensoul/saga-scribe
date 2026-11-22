@@ -306,6 +306,8 @@ impl<'a> Compiler<'a> {
         let mut output = String::new();
         // Where the open paragraph's content starts, to spot an empty one
         let mut paragraph_start = 0;
+        // Markup around tokens still open
+        let mut open_markup = 0usize;
         for node in &nodes {
             // Words are keyed by the token they come from (as tracked for
             // this DSL); only word-wrapped compiles tokenize the same way
@@ -329,8 +331,19 @@ impl<'a> Compiler<'a> {
                     paragraph_start = output.len();
                 }
                 Node::PageBreak(_) => {
+                    if self.config.wrap_pages && open_markup > 0 {
+                        return Err("A page break can't be inside markup around words when pages are paragraphs".to_string());
+                    }
                     output.push_str(&self.node_to_xml(node));
                     paragraph_start = output.len();
+                }
+                Node::Open(_) => {
+                    open_markup += 1;
+                    output.push_str(&self.node_to_xml(node));
+                }
+                Node::Close(_) => {
+                    open_markup = open_markup.saturating_sub(1);
+                    output.push_str(&self.node_to_xml(node));
                 }
                 _ => output.push_str(&self.node_to_xml(node)),
             }
@@ -427,12 +440,47 @@ impl<'a> Compiler<'a> {
             Node::Entity(name) => self.compile_entity(name),
             Node::Literal(c) => self.escape_xml(c),
             Node::Numeral(content) => self.compile_numeral(content),
+            Node::ColumnBreak(n) => format!("<cb n=\"{}\"/>\n", self.escape_xml(n)),
+            Node::HandShift(hand) if hand.is_empty() => "<handShift/>\n".to_string(),
+            Node::HandShift(hand) => format!("<handShift new=\"{}\"/>\n", self.escape_xml(hand)),
+            Node::Space(_) => self.space_xml(node),
+            Node::Inline { markup, content, second } => {
+                let mut xml = markup.open_xml() + &self.inline_xml(content);
+                if let Some(second) = second {
+                    xml.push_str(&markup.middle_xml());
+                    xml.push_str(&self.inline_xml(second));
+                }
+                xml + &markup.close_xml()
+            }
+            Node::Open(markup) => markup.open_xml() + "\n",
+            Node::Middle(markup) => markup.middle_xml() + "\n",
+            Node::Close(markup) => markup.close_xml() + "\n",
             Node::WordContinuation => String::new(), // Consumed by word tokenizer
             Node::WordBoundary => String::new(),     // Consumed by word tokenizer
             Node::CompoundJoin => " ".to_string(),   // Space in single-level mode
             Node::Word(children) => self.compile_word(children),
             Node::Punctuation(children) => self.compile_punctuation(children),
         }
+    }
+
+    /// `<space/>`, with its quantity if it has one.
+    fn space_xml(&self, node: &Node) -> String {
+        match node {
+            Node::Space(Some(quantity)) => format!("<space quantity=\"{}\"/>", self.escape_xml(quantity)),
+            _ => "<space/>".to_string(),
+        }
+    }
+
+    /// Markup inside a word on one level: its content (and a pair's second
+    /// half) compiled for that level by `level`.
+    fn inline_level(&self, node: &Node, level: impl Fn(&Self, &[Node]) -> String) -> String {
+        let Node::Inline { markup, content, second } = node else { return String::new() };
+        let mut xml = markup.open_xml() + &level(self, &inline_nodes(content));
+        if let Some(second) = second {
+            xml.push_str(&markup.middle_xml());
+            xml.push_str(&level(self, &inline_nodes(second)));
+        }
+        xml + &markup.close_xml()
     }
 
     fn compile_entity(&self, name: &str) -> String {
@@ -954,7 +1002,9 @@ impl<'a> Compiler<'a> {
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(&unescape(text))),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in facsimile
-            Node::LineBreak(_) | Node::PageBreak(_) => self.word_break_tag(node).unwrap_or_default(),
+            Node::Space(_) => self.space_xml(node),
+            Node::Inline { .. } => self.inline_level(node, Self::nodes_to_facs),
+            Node::LineBreak(_) | Node::PageBreak(_) | Node::ColumnBreak(_) => self.word_break_tag(node).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -1041,7 +1091,9 @@ impl<'a> Compiler<'a> {
             Node::Note(text) => format!("<note>{}</note>", self.escape_xml(&unescape(text))),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in diplomatic
-            Node::LineBreak(_) | Node::PageBreak(_) => self.word_break_tag(node).unwrap_or_default(),
+            Node::Space(_) => self.space_xml(node),
+            Node::Inline { .. } => self.inline_level(node, Self::nodes_to_diplomatic),
+            Node::LineBreak(_) | Node::PageBreak(_) | Node::ColumnBreak(_) => self.word_break_tag(node).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -1090,6 +1142,7 @@ impl<'a> Compiler<'a> {
             Node::LineBreak(Some(n)) => Some(format!("<lb n=\"{}\"/>", self.escape_xml(n))),
             Node::LineBreak(None) => Some("<lb/>".to_string()),
             Node::PageBreak(n) => Some(format!("<pb n=\"{}\"/>", self.escape_xml(n))),
+            Node::ColumnBreak(n) => Some(format!("<cb n=\"{}\"/>", self.escape_xml(n))),
             _ => None,
         }
     }
@@ -1153,8 +1206,9 @@ impl<'a> Compiler<'a> {
             }
             Node::Head(_) => String::new(),
             Node::CompoundJoin => String::new(),
+            Node::Inline { .. } => self.inline_level(node, Self::nodes_to_normalized),
             // Appended after the word by `nodes_to_normalized`
-            Node::LineBreak(_) | Node::PageBreak(_) => String::new(),
+            Node::LineBreak(_) | Node::PageBreak(_) | Node::ColumnBreak(_) => String::new(),
             _ => String::new(),
         }
     }
@@ -1349,6 +1403,9 @@ impl<'a> Compiler<'a> {
                 }
                 Node::Norm(text) => {
                     output.push_str(&self.compile_normalized_fragment(text));
+                }
+                Node::Open(_) | Node::Middle(_) | Node::Close(_) | Node::HandShift(_) | Node::ColumnBreak(_) => {
+                    output.push_str(&self.node_to_xml(node));
                 }
                 _ => {
                     output.push_str(&self.node_to_normalized(node));

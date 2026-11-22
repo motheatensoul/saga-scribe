@@ -209,6 +209,13 @@ impl Patcher {
         guidance: Option<&Guidance>,
     ) -> Result<(Vec<PatchOperation>, Tracked), String> {
         let (tokens, spans) = spanned_dsl_tokens(edited_dsl)?;
+        if let Some(at) = tokens.iter().position(|t| not_yet_in_files(t)) {
+            let (line, column) = crate::parser::syntax::line_col(edited_dsl, spans[at].start);
+            return Err(format!(
+                "Line {line}, column {column}: {} can't be used in an imported file yet (markup around words, column breaks and changes of hand)",
+                tokens[at]
+            ));
+        }
         let original_count = self.original.tokens.len();
         let previous = self.state.as_ref();
 
@@ -1091,6 +1098,13 @@ fn segment_token_text(seg: &Segment) -> Option<String> {
         Segment::Paragraph { .. } => Some(PARAGRAPH.to_string()),
         _ => None,
     }
+}
+
+/// A token the importer doesn't write yet, so it has no place in the file's
+/// tree: the start or end of markup around words, a column break, a change
+/// of hand.
+fn not_yet_in_files(token: &str) -> bool {
+    token.ends_with('{') || matches!(token, "}" | "}*") || token.starts_with(".hs{") || token.starts_with("///c=")
 }
 
 fn parse_dsl_to_tokens(dsl: &str) -> Result<Vec<String>, String> {

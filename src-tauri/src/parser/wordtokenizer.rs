@@ -169,7 +169,7 @@ impl WordTokenizer {
                 // 1. Explicit continuation (`~//`): always continue
                 // 2. Heuristic continuation: if word ends with a letter, likely continues
                 // 3. Otherwise: end the word before the break
-                Node::LineBreak(_) | Node::PageBreak(_) => {
+                Node::LineBreak(_) | Node::PageBreak(_) | Node::ColumnBreak(_) => {
                     if continuation_active {
                         // Case 1: Explicit continuation via ~ marker
                         out.add(node, span);
@@ -194,7 +194,14 @@ impl WordTokenizer {
                     }
                 }
 
-                Node::Head(_) | Node::SuppliedBlock(_) | Node::Norm(_) | Node::ParagraphBreak => {
+                Node::Head(_)
+                | Node::SuppliedBlock(_)
+                | Node::Norm(_)
+                | Node::ParagraphBreak
+                | Node::HandShift(_)
+                | Node::Open(_)
+                | Node::Middle(_)
+                | Node::Close(_) => {
                     out.end_word();
                     out.emit(node, span);
                     state = State::BetweenWords;
@@ -253,6 +260,8 @@ impl WordTokenizer {
                 | Node::Addition(_)
                 | Node::Note(_)
                 | Node::Unclear(_)
+                | Node::Space(_)
+                | Node::Inline { .. }
                 | Node::Entity(_) => {
                     if state == State::BetweenWords {
                         state = State::InWord;

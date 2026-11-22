@@ -24,7 +24,7 @@
 //! content of block constructs is DSL. In notes, as in blocks, only braces
 //! nest, so editorial prose like `^{ð < g}` closes at its brace.
 
-use super::ast::Node;
+use super::ast::{Markup, Node};
 use std::ops::Range;
 
 /// A byte range in the DSL source.
@@ -84,6 +84,23 @@ pub enum SyntaxKind {
     WordBoundary,
     /// `.p`, standalone: starts a new paragraph
     ParagraphBreak,
+    /// `///c=B`: a column break
+    ColumnBreak { number: Span },
+    /// `.hs{hand}`: a change of hand
+    HandShift { hand: Span },
+    /// `.space[n]`, `.space[]`: space left in the manuscript
+    Space { quantity: Option<Span> },
+    /// Markup with shorthand content: `.q{…}`, `*{…}*`, `&{…}`, `.corr{a=b}`.
+    /// `around` if it stands between tokens (its own word, or several), so
+    /// it is written around them; otherwise it is inside a word.
+    Markup {
+        markup: Markup,
+        around: bool,
+        content: Span,
+        children: Vec<SyntaxNode>,
+        /// A pair's second half (after `=`)
+        second: Option<(Span, Vec<SyntaxNode>)>,
+    },
 }
 
 /// A syntax error found while parsing.
@@ -135,10 +152,36 @@ pub fn line_col(source: &str, offset: usize) -> (usize, usize) {
 /// Converts the tree to the flat node sequence the word tokenizer and
 /// compiler consume. Block content is passed on as source text, as before.
 pub fn lower(nodes: &[SyntaxNode], source: &str) -> Vec<Node> {
+    lower_spanned(nodes, source).into_iter().map(|(node, _)| node).collect()
+}
+
+/// [`lower`], with each node's source range. Markup around tokens is lowered
+/// to its start, the nodes inside it and its end, each with its own range.
+pub fn lower_spanned(nodes: &[SyntaxNode], source: &str) -> Vec<(Node, Span)> {
+    let mut out = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        if let SyntaxKind::Markup { markup, around: true, content, children, second } = &node.kind {
+            out.push((Node::Open(markup.clone()), node.span.start..content.start));
+            out.extend(lower_spanned(children, source));
+            let end = match second {
+                Some((second, children)) => {
+                    out.push((Node::Middle(markup.clone()), content.end..second.start));
+                    out.extend(lower_spanned(children, source));
+                    second.end
+                }
+                None => content.end,
+            };
+            out.push((Node::Close(markup.clone()), end..node.span.end));
+        } else {
+            out.push((lower_node(node, source), node.span.clone()));
+        }
+    }
+    out
+}
+
+fn lower_node(node: &SyntaxNode, source: &str) -> Node {
     let text = |span: &Span| source[span.clone()].to_string();
-    nodes
-        .iter()
-        .map(|node| match &node.kind {
+    match &node.kind {
             SyntaxKind::Text => Node::Text(text(&node.span)),
             SyntaxKind::LineBreak { number } => {
                 Node::LineBreak(number.as_ref().map(|n| unescape(&source[n.clone()]).into_owned()))
@@ -171,15 +214,23 @@ pub fn lower(nodes: &[SyntaxNode], source: &str) -> Vec<Node> {
             SyntaxKind::CompoundJoin => Node::CompoundJoin,
             SyntaxKind::WordBoundary => Node::WordBoundary,
             SyntaxKind::ParagraphBreak => Node::ParagraphBreak,
-        })
-        .collect()
+            SyntaxKind::ColumnBreak { number } => Node::ColumnBreak(unescape(&source[number.clone()]).into_owned()),
+            SyntaxKind::HandShift { hand } => Node::HandShift(unescape(&source[hand.clone()]).into_owned()),
+            SyntaxKind::Space { quantity } => Node::Space(quantity.as_ref().map(text)),
+            SyntaxKind::Markup { markup, content, second, .. } => Node::Inline {
+                markup: markup.clone(),
+                content: text(content),
+                second: second.as_ref().map(|(span, _)| text(span)),
+            },
+    }
 }
 
 /// A break's number as written after `//` or `///`: as it is where that reads
 /// back the same, otherwise in braces (`//{56r}`, `///{fol. 1r}`).
 pub fn break_number_dsl(number: &str, page: bool) -> String {
     let plain = if page {
-        !number.is_empty() && !number.starts_with('{') && !number.contains(char::is_whitespace)
+        // `///c=B` is a column break
+        !number.is_empty() && !number.starts_with('{') && !number.starts_with("c=") && !number.contains(char::is_whitespace)
     } else {
         !number.is_empty() && number.chars().all(|c| c.is_ascii_digit())
     };
@@ -214,12 +265,50 @@ pub fn unescape(content: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// Constructs written `.name{` that aren't markup (`.p` is standalone).
+const NOT_MARKUP: &[&str] = &["p", "supplied", "norm", "head", "abbr"];
+
+/// `.name` followed by `{` (or `[`): markup named `name`, and the length of
+/// `.name`. Names are letters and digits, with at most one prefix (`.me:expunged{`).
+pub(crate) fn markup_name(rest: &str) -> Option<(&str, usize)> {
+    let name = rest.strip_prefix('.')?;
+    let mut end = 0;
+    let mut colon = false;
+    for (i, c) in name.char_indices() {
+        let ok = if i == 0 {
+            c.is_ascii_alphabetic()
+        } else if c == ':' && !colon {
+            colon = true;
+            true
+        } else {
+            c.is_ascii_alphanumeric()
+        };
+        if !ok {
+            break;
+        }
+        end = i + c.len_utf8();
+    }
+    let name = &name[..end];
+    if name.is_empty() || name.ends_with(':') || NOT_MARKUP.contains(&name) {
+        return None;
+    }
+    // Brackets only for the reading's witness and the space's extent
+    let takes = match rest[1 + end..].chars().next() {
+        Some('[') => matches!(name, "rdg" | "space"),
+        Some('{') => name != "space",
+        _ => false,
+    };
+    takes.then_some((name, 1 + end))
+}
+
 /// Why a construct could not be parsed.
 type Failure = String;
 
 struct Parser<'a> {
     src: &'a str,
     pos: usize,
+    /// Parsing starts here (the start of a block's content when parsing nested).
+    range_start: usize,
     /// Parsing stops here (the end of a block's content when parsing nested).
     end: usize,
     nested: bool,
@@ -231,6 +320,7 @@ impl<'a> Parser<'a> {
         Self {
             src,
             pos: range.start,
+            range_start: range.start,
             end: range.end,
             nested,
             diagnostics: Vec::new(),
@@ -306,6 +396,13 @@ impl<'a> Parser<'a> {
                         vec![self.node(SyntaxKind::Numeral { content, children }, start)]
                     });
                     Some((1, result))
+                } else if rest.starts_with("///c=") {
+                    flush_text!(start);
+                    self.pos += 5;
+                    let result = self
+                        .page_number()
+                        .map(|number| vec![self.node(SyntaxKind::ColumnBreak { number }, start)]);
+                    Some((5, result))
                 } else if rest.starts_with("///") {
                     flush_text!(start);
                     self.pos += 3;
@@ -343,6 +440,18 @@ impl<'a> Parser<'a> {
                         Ok(vec![self.node(SyntaxKind::Abbreviation { abbr, expansion }, start)])
                     })();
                     Some((6, result))
+                } else if let Some((name, len)) = markup_name(rest) {
+                    flush_text!(start);
+                    Some((1, self.named_markup(start, name, len)))
+                } else if rest.starts_with("*{") {
+                    flush_text!(start);
+                    Some((2, self.symbol_markup(start, "hi", "*{", "}*")))
+                } else if rest.starts_with("&{") {
+                    flush_text!(start);
+                    Some((2, self.symbol_markup(start, "seg", "&{", "}")))
+                } else if rest.starts_with("${") {
+                    flush_text!(start);
+                    Some((2, self.symbol_markup(start, "surplus", "${", "}")))
                 } else if rest.starts_with("[...") {
                     flush_text!(start);
                     self.pos += 4;
@@ -410,6 +519,16 @@ impl<'a> Parser<'a> {
                         }
                         None => None,
                     }
+                } else if rest.starts_with("~///c=") {
+                    flush_text!(start);
+                    self.pos += 6;
+                    let result = self.page_number().map(|number| {
+                        vec![
+                            SyntaxNode { kind: SyntaxKind::WordContinuation, span: start..start + 1 },
+                            self.node(SyntaxKind::ColumnBreak { number }, start + 1),
+                        ]
+                    });
+                    Some((6, result))
                 } else if rest.starts_with("~///") {
                     flush_text!(start);
                     self.pos += 4;
@@ -526,6 +645,114 @@ impl<'a> Parser<'a> {
         }
         let children = self.parse_nested(content.clone());
         Ok(vec![self.node(make(content, children), start)])
+    }
+
+    /// Whether the construct from `start` to `end` is part of a word: text
+    /// (not whitespace, punctuation or `|`) right before or after it.
+    fn glued(&self, start: usize, end: usize) -> bool {
+        let range_start = self.range_start;
+        let joins = |c: char| !c.is_whitespace() && !".,;!?()[]|/".contains(c);
+        let before = (start > range_start).then(|| self.src[range_start..start].chars().next_back()).flatten();
+        let after = self.src[end..self.end].chars().next();
+        before.is_some_and(joins) || after.is_some_and(joins)
+    }
+
+    /// Markup whose content is DSL, around tokens or inside a word.
+    fn markup(
+        &mut self,
+        start: usize,
+        markup: Markup,
+        content: Span,
+        second: Option<Span>,
+    ) -> Result<Vec<SyntaxNode>, Failure> {
+        let children = self.parse_nested(content.clone());
+        let second = second.map(|span| {
+            let children = self.parse_nested(span.clone());
+            (span, children)
+        });
+        let around = !self.glued(start, self.pos);
+        if around {
+            let paragraph = children
+                .iter()
+                .chain(second.iter().flat_map(|(_, c)| c))
+                .any(|c| matches!(c.kind, SyntaxKind::ParagraphBreak));
+            if paragraph {
+                return Err(format!("A paragraph can't start inside {}…{}", markup.opener, markup.closer));
+            }
+        }
+        Ok(vec![self.node(SyntaxKind::Markup { markup, around, content, children, second }, start)])
+    }
+
+    /// `*{…}*`, `&{…}`, `${…}`
+    fn symbol_markup(&mut self, start: usize, name: &str, opener: &str, closer: &str) -> Result<Vec<SyntaxNode>, Failure> {
+        self.pos += opener.len();
+        let content = self.consume_bracketed('}')?;
+        for c in closer.chars().skip(1) {
+            self.expect(c)?;
+        }
+        let markup = Markup {
+            name: name.to_string(),
+            attributes: Vec::new(),
+            pair: None,
+            opener: opener.to_string(),
+            closer: closer.to_string(),
+        };
+        self.markup(start, markup, content, None)
+    }
+
+    /// `.name{…}` (and `.rdg[wit]{…}`, `.space[n]`, `.hs{hand}`, the pairs
+    /// `.corr{sic=corr}` and `.trans{orig=reg}`); `len` is the length of
+    /// `.name`.
+    fn named_markup(&mut self, start: usize, name: &str, len: usize) -> Result<Vec<SyntaxNode>, Failure> {
+        self.pos += len;
+        match name {
+            "space" => {
+                self.expect('[')?;
+                let quantity = self.consume_bracketed(']')?;
+                let quantity = (!self.src[quantity.clone()].trim().is_empty()).then_some(quantity);
+                return Ok(vec![self.node(SyntaxKind::Space { quantity }, start)]);
+            }
+            "hs" => {
+                self.expect('{')?;
+                let hand = self.consume_braced_block()?;
+                return Ok(vec![self.node(SyntaxKind::HandShift { hand }, start)]);
+            }
+            _ => {}
+        }
+        let mut attributes = Vec::new();
+        let mut opener = format!(".{name}");
+        if self.current_char() == Some('[') {
+            self.advance();
+            let wit = self.consume_bracketed(']')?;
+            attributes.push(("wit".to_string(), unescape(&self.src[wit.clone()]).into_owned()));
+            opener.push_str(&format!("[{}]", &self.src[wit]));
+        }
+        self.expect('{')?;
+        opener.push('{');
+        let content = self.consume_braced_block()?;
+        let (element, pair) = match name {
+            "psname" => ("persName", None),
+            "fname" => ("forename", None),
+            "plname" => ("placeName", None),
+            "corr" => ("choice", Some(("sic", "corr"))),
+            "trans" => ("choice", Some(("orig", "reg"))),
+            other => (other, None),
+        };
+        let (content, second) = match pair {
+            Some((first, second)) => match self.top_level_equals(content.clone()) {
+                Some(equals) => (content.start..equals, Some(equals + 1..content.end)),
+                None => return Err(format!(".{name} is written .{name}{{{first}={second}}}")),
+            },
+            None => (content, None),
+        };
+        let markup = Markup {
+            name: element.to_string(),
+            attributes,
+            pair: pair.map(|(a, b)| (a.to_string(), b.to_string())),
+            opener,
+            closer: "}".to_string(),
+        };
+        self.markup(start, markup, content, second)
     }
 
     fn current_char(&self) -> Option<char> {

@@ -95,11 +95,14 @@ the compiler adds the surrounding structure, including the division into words.
 ///1v        Page break, with the folio or page number
 //{56r}      Line break whose number is not just digits
 ///{fol. 1r} Page break whose number contains a space
+///c=B       Column break (<cb n="B"/>)
 .p           New paragraph
 ```
 
 A line break's number is digits only, so that `//2Text` is line 2 followed by "Text"; a
-page break's number ends at the next space. Any other number goes in braces.
+page break's number ends at the next space. Any other number goes in braces, as does a
+page number starting with `c=`. A word continues across a column break as across a page
+break (`hel~///c=Blo`).
 
 `.p` has to stand on its own between spaces (`word.p` is ordinary text). A paragraph can
 begin anywhere, also mid-line: `//4 ſina . .p þer vitið …`. The pilcrow `¶` is a character
@@ -122,6 +125,35 @@ Supplied text, deletions, additions and unclear readings can contain shorthand: 
 gaps, line breaks and abbreviations (`þ?{:er:}?`, `-{ny[...]}-`). A note is plain text.
 To write a character that would be read as shorthand there, put a backslash before it
 (`?{a\:b}?`).
+
+### Other markup
+
+Elements the shorthand has no sign of their own for are written with their name, a dot
+before it and their content in braces: `.q{Ok sagði hann}` is `<q>…</q>`. The content is
+shorthand. Some have short forms:
+
+```
+*{A}*        Highlighting (<hi>)
+&{abc}       Segment (<seg>)
+${abc}       Surplus text (<surplus>)
+.c{S}        A character (<c>)
+.s{…}        A sentence (<s>)
+.q{…}        Quotation (<q>); also .quote{…}
+.name{…}     A name (<name>); also .title{…}, .gloss{…}, .damage{…}, .subst{…}
+.psname{…}   Person's name (<persName>), with .fname{…} for the forename (<forename>)
+.plname{…}   Place name (<placeName>), with .country{…}, .region{…}, .settlement{…}
+.corr{ſagt=sagt}   An error and its correction (<choice><sic>…</sic><corr>…</corr></choice>)
+.trans{a b=b a}    Transposed words and their order (<choice><orig>…</orig><reg>…</reg></choice>)
+.rdg[AM70]{…}      A witness's reading (<rdg wit="AM70">)
+.space[3]    Space left by the scribe (<space quantity="3"/>)
+.hs{hand2}   Change of hand (<handShift new="hand2"/>)
+```
+
+Where the markup stands on its own between words, it goes around the words it holds,
+each still a word of its own (`.psname{.fname{Ari} fróði}` is a `<persName>` around two
+`<w>`). Attached to letters, it is inside the word (`*{A}*nnat` is `<w><hi>A</hi>nnat</w>`,
+on each level of a MENOTA word). Markup around words can't contain a paragraph break
+(`.p`). In an imported file it can't be added yet; inside words it can.
 
 ### Abbreviations
 

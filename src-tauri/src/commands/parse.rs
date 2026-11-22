@@ -1638,7 +1638,7 @@ mod imported_identity_tests {
         crate::commands::file::save_project_at(session, &path, fields, Some(decisions.to_string())).unwrap();
         let mut project = crate::commands::file::read_project(&path.to_string_lossy()).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(project.manifest.version, "2.0");
+        assert_eq!(project.manifest.version, "2.1");
         let (reopened, rewritten) = crate::commands::file::stage_project(&mut project, session).unwrap();
         let reopened = reopened.unwrap();
         session.load(Some(reopened.handle)).unwrap();

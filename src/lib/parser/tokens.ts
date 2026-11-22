@@ -1,5 +1,12 @@
-import { ExternalTokenizer, type InputStream } from "@lezer/lr";
+import { ContextTracker, ExternalTokenizer, type InputStream } from "@lezer/lr";
 import {
+    ColumnBreak,
+    WordContinuationColumnBreak,
+    MarkupOpen,
+    MarkupMiddle,
+    MarkupClose,
+    HandShift,
+    Space,
     PageBreak,
     LineBreak,
     WordContinuationPageBreak,
@@ -122,21 +129,127 @@ function until(peek: Peek, offset: number, end: string): number {
 
 const found = (token: number, length: number): Found => ({ token, length });
 
-/** The characters a construct can start with: \\ # / . [ < - + ^ ? { : ~ | */
-const OPENERS = new Set([..."\\#/.[<-+^?{:~|"].map((c) => c.charCodeAt(0)));
+/** The characters a construct can start with: \\ # / . [ < - + ^ ? { : ~ | * & $ */
+const OPENERS = new Set([..."\\#/.[<-+^?{:~|*&$"].map((c) => c.charCodeAt(0)));
 
-/** Whether `from..to` has an `=` outside brackets and escapes (as the parser's `top_level_equals`) */
-function hasTopLevelEquals(peek: Peek, from: number, to: number): boolean {
+/** The first `=` in `from..to` outside brackets and escapes (as the parser's `top_level_equals`), or -1 */
+function topLevelEquals(peek: Peek, from: number, to: number): number {
     let depth = 0;
     for (let offset = from; offset < to; offset++) {
         const code = peek(offset);
         if (code === BACKSLASH) offset = escaped(peek, offset);
         else if (code === 123 || code === 91 || code === 60) depth++;
         else if (code === 125 || code === 93 || code === 62) depth = Math.max(0, depth - 1);
-        else if (code === 61 && depth === 0) return true;
+        else if (code === 61 && depth === 0) return offset;
     }
-    return false;
+    return -1;
 }
+
+const hasTopLevelEquals = (peek: Peek, from: number, to: number) => topLevelEquals(peek, from, to) >= 0;
+
+/** Constructs written `.name{` that aren't markup (as the parser's `NOT_MARKUP`) */
+const NOT_MARKUP = new Set(["p", "supplied", "norm", "head", "abbr"]);
+const isAsciiAlpha = (code: number) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+const isAsciiAlnum = (code: number) => isAsciiAlpha(code) || isDigit(code);
+
+/** `.name` before `{` (or `[`) at `offset`: the name, as the parser's `markup_name` */
+function markupName(peek: Peek, offset: number): string | null {
+    if (peek(offset) !== 46) return null;
+    let end = offset + 1;
+    let name = "";
+    let colon = false;
+    for (let code = peek(end); ; code = peek(end)) {
+        const ok = name === "" ? isAsciiAlpha(code) : code === 58 && !colon ? (colon = true) : isAsciiAlnum(code);
+        if (!ok) break;
+        name += String.fromCharCode(code);
+        end++;
+    }
+    if (name === "" || name.endsWith(":") || NOT_MARKUP.has(name)) return null;
+    const next = peek(end);
+    const takes = next === 91 ? name === "rdg" || name === "space" : next === 123 ? name !== "space" : false;
+    return takes ? name : null;
+}
+
+/** Markup's parts: its opener's length, and where its content ends (the `=` of a pair, the closer) */
+type MarkupParts = { opener: number; middle: number; close: number; closer: number };
+
+/** The markup at `offset` (`.q{`, `*{`, …), as the parser's `named_markup` and `symbol_markup` */
+function markupAt(peek: Peek, offset: number): MarkupParts | Failed | Found | null {
+    const name = markupName(peek, offset);
+    if (name !== null) {
+        let from = offset + 1 + name.length;
+        if (name === "space") {
+            const end = bracketed(peek, from + 1, "]");
+            return end < 0 ? { opener: 1 } : found(Space, end - offset);
+        }
+        if (name === "hs") {
+            const end = bracedBlock(peek, from + 1);
+            return end < 0 ? { opener: 1 } : found(HandShift, end - offset);
+        }
+        if (peek(from) === 91) {
+            from = bracketed(peek, from + 1, "]");
+            if (from < 0 || peek(from) !== 123) return { opener: 1 };
+        }
+        const end = bracedBlock(peek, from + 1);
+        if (end < 0) return { opener: 1 };
+        let middle = -1;
+        if (name === "corr" || name === "trans") {
+            middle = topLevelEquals(peek, from + 1, end - 1);
+            if (middle < 0) return { opener: 1 };
+        }
+        return { opener: from + 1 - offset, middle: middle < 0 ? -1 : middle - offset, close: end - 1 - offset, closer: 1 };
+    }
+    const symbol = peek(offset);
+    if ((symbol === 42 || symbol === 38 || symbol === 36) && peek(offset + 1) === 123) { // * & $
+        const end = bracketed(peek, offset + 2, "}");
+        if (end < 0) return { opener: 2 };
+        if (symbol === 42) return peek(end) === 42 ? { opener: 2, middle: -1, close: end - 1 - offset, closer: 2 } : { opener: 2 };
+        return { opener: 2, middle: -1, close: end - 1 - offset, closer: 1 };
+    }
+    return null;
+}
+
+/**
+ * Where the markup being read ends: its content is read as the parser reads
+ * it, up to there and no further (`bound`, then `close` after a pair's `=`).
+ */
+class Bound {
+    constructor(
+        readonly parent: Bound | null,
+        /** Where the open part ends: the `=` of a pair, or the closer */
+        readonly bound: number,
+        /** The length of what is there: `=`, `}` or `}*` */
+        readonly length: number,
+        readonly token: number,
+        /** After a pair's `=`: the closer's place and length */
+        readonly then: { bound: number; length: number } | null,
+    ) {}
+
+    get hash(): number {
+        return (this.parent ? this.parent.hash * 31 : 0) + this.bound * 3 + this.length + 1;
+    }
+}
+
+export const markupContext = new ContextTracker<Bound | null>({
+    start: null,
+    shift(context, term, _stack, input) {
+        if (term === MarkupOpen) {
+            const peek: Peek = (offset) => input.peek(offset);
+            const parts = markupAt(peek, 0) as MarkupParts;
+            const at = input.pos;
+            if (parts.middle >= 0) {
+                return new Bound(context, at + parts.middle, 1, MarkupMiddle, { bound: at + parts.close, length: parts.closer });
+            }
+            return new Bound(context, at + parts.close, parts.closer, MarkupClose, null);
+        }
+        if (term === MarkupMiddle && context?.then) {
+            return new Bound(context.parent, context.then.bound, context.then.length, MarkupClose, null);
+        }
+        if (term === MarkupClose && context) return context.parent;
+        return context;
+    },
+    hash: (context) => (context ? context.hash : 0),
+});
 
 /** The construct starting at `offset`, if any */
 function scan(peek: Peek, offset: number): Found | Failed | null {
@@ -167,6 +280,7 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
         const end = until(peek, offset + 1, "#");
         return end < 0 ? { opener: 1 } : found(Numeral, end - offset);
     }
+    if (at("///c=")) return breakAt(ColumnBreak, 5, true);
     if (at("///")) return breakAt(PageBreak, 3, true);
     if (at("//")) return breakAt(LineBreak, 2, false);
     // Standalone: whitespace (or nothing) on both sides
@@ -182,6 +296,8 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
         const end = abbrEnd >= 0 && peek(abbrEnd) === 123 ? bracketed(peek, abbrEnd + 1, "}") : -1;
         return end < 0 ? { opener: 6 } : found(abbrKeyword, 5);
     }
+    const markup = markupAt(peek, offset);
+    if (markup !== null) return "close" in markup ? found(MarkupOpen, markup.opener) : markup;
     if (at("[...")) {
         let end = skipWhile(peek, offset + 4, isDigit);
         if (peek(end) === 60) end = until(peek, end + 1, ">");
@@ -215,6 +331,7 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
         }
         return end > offset + 1 && peek(end) === 58 ? found(Entity, end + 1 - offset) : null;
     }
+    if (at("~///c=")) return breakAt(WordContinuationColumnBreak, 6, true);
     if (at("~///")) return breakAt(WordContinuationPageBreak, 4, true);
     if (at("~//")) return breakAt(WordContinuationLineBreak, 3, false);
     if (at("~")) return found(CompoundJoin, 1);
@@ -224,7 +341,15 @@ function scan(peek: Peek, offset: number): Found | Failed | null {
 
 export const dslTokens = new ExternalTokenizer((input: InputStream, stack) => {
     if (input.next < 0) return;
-    const peek: Peek = (offset) => input.peek(offset);
+    // Inside markup, reading stops where its content ends (as the parser's
+    // nested parse of the content does)
+    const context = stack.context as Bound | null;
+    const bound = context ? context.bound - input.pos : Infinity;
+    if (bound === 0 && context) {
+        input.acceptToken(context.token, context.length);
+        return;
+    }
+    const peek: Peek = (offset) => (offset >= bound ? -1 : input.peek(offset));
 
     // The parts of an abbreviation or block, after its keyword (checked whole by `scan`)
     if (stack.canShift(BracketContent) && input.next === 91) {
@@ -253,4 +378,4 @@ export const dslTokens = new ExternalTokenizer((input: InputStream, stack) => {
         next = scan(peek, offset);
     } while (peek(offset) >= 0 && !(next && "token" in next));
     input.acceptToken(Text, offset);
-});
+}, { contextual: true });

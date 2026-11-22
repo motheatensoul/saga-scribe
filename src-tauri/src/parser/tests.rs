@@ -1465,3 +1465,113 @@ fn test_punctuation_in_me_punct_where_the_file_uses_it() {
     assert!(xml.contains("<me:punct>\n  <choice>") && xml.contains("</choice>\n</me:punct>"), "{xml}");
     assert!(!xml.contains("<pc>"), "{xml}");
 }
+
+// ============================================================================
+// Markup: `.name{…}`, `*{…}*`, `&{…}`, `${…}`, pairs, breaks
+// ============================================================================
+
+fn compile_plain(dsl: &str) -> Result<String, String> {
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: false, wrap_pages: false, levels: None };
+    Compiler::new().with_config(config).compile(dsl)
+}
+
+fn compile_menota(dsl: &str) -> String {
+    let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false, levels: None };
+    Compiler::new().with_config(config).compile(dsl).unwrap()
+}
+
+fn squash(xml: &str) -> String {
+    xml.lines().map(str::trim).collect()
+}
+
+#[test]
+fn test_markup_around_words_keeps_them_words() {
+    let xml = squash(&compile_plain(".q{Ok sagði} hann &{a b} .psname{Ari}").unwrap());
+    assert_eq!(
+        xml,
+        "<q><w>Ok</w><w>sagði</w></q><w>hann</w><seg><w>a</w><w>b</w></seg><persName><w>Ari</w></persName>"
+    );
+}
+
+#[test]
+fn test_markup_glued_to_a_word_is_inside_it() {
+    let xml = squash(&compile_plain("*{A}*nnat .c{S}tephanus h${a}nn").unwrap());
+    assert_eq!(xml, "<w><hi>A</hi>nnat</w><w><c>S</c>tephanus</w><w>h<surplus>a</surplus>nn</w>");
+}
+
+#[test]
+fn test_markup_inside_a_word_is_on_every_level() {
+    let xml = squash(&compile_menota("*{A}*nnat"));
+    assert!(
+        xml.contains("<me:facs><hi>A</hi>nnat</me:facs><me:dipl><hi>A</hi>nnat</me:dipl><me:norm><hi>A</hi>nnat</me:norm>"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn test_markup_around_words_in_menota() {
+    let xml = squash(&compile_menota(".q{a b}"));
+    assert!(xml.starts_with("<q><w>"), "{xml}");
+    assert!(xml.ends_with("</w></q>"), "{xml}");
+    assert_eq!(xml.matches("<w>").count(), 2);
+}
+
+#[test]
+fn test_pairs_in_a_choice() {
+    let xml = squash(&compile_plain("nu.corr{ſagt=sagt} .trans{a b=b a}").unwrap());
+    assert_eq!(
+        xml,
+        "<w>nu<choice><sic>ſagt</sic><corr>sagt</corr></choice></w><choice><orig><w>a</w><w>b</w></orig><reg><w>b</w><w>a</w></reg></choice>"
+    );
+    assert!(compile_plain(".corr{sagt}").is_err());
+}
+
+#[test]
+fn test_reading_space_hand_and_column() {
+    let xml = squash(&compile_plain(".rdg[AM70]{Upphaf sogu} .space[3] .hs{hand2} a ///c=B b").unwrap());
+    assert_eq!(
+        xml,
+        "<rdg wit=\"AM70\"><w>Upphaf</w><w>sogu</w></rdg><w><space quantity=\"3\"/></w><handShift new=\"hand2\"/><w>a</w><cb n=\"B\"/><w>b</w>"
+    );
+}
+
+#[test]
+fn test_a_column_break_inside_a_word() {
+    let xml = squash(&compile_plain("hel~///c=B lo").unwrap());
+    assert_eq!(xml, "<w>hel<cb n=\"B\"/>lo</w>");
+}
+
+#[test]
+fn test_markup_nests_and_round_trips_as_tokens() {
+    let dsl = ".s{.name{.fname{Ari} fróði} sagði}";
+    let xml = squash(&compile_plain(dsl).unwrap());
+    assert_eq!(
+        xml,
+        "<s><name><forename><w>Ari</w></forename><w>fróði</w></name><w>sagði</w></s>"
+    );
+    let (tokens, _) = crate::identity::spanned_dsl_tokens(dsl).unwrap();
+    assert_eq!(tokens, [".s{", ".name{", ".fname{", "Ari", "}", "fróði", "}", "sagði", "}"]);
+}
+
+#[test]
+fn test_markup_mistakes_are_errors() {
+    assert!(compile_plain(".q{a .p b}").is_err());
+    // Only a reading takes brackets: otherwise they are text
+    assert_eq!(squash(&compile_plain(".q[x]").unwrap()), "<pc>.</pc><w>q</w><pc>[</pc><w>x</w><pc>]</pc>");
+    assert!(compile_plain("*{a}").is_err());
+    assert!(compile_plain(".q{a").is_err());
+}
+
+#[test]
+fn test_text_that_only_looks_like_markup() {
+    // Roman numerals and punctuation stay what they were
+    let xml = squash(&compile_plain(".i. a.b c{=e}").unwrap());
+    assert!(!xml.contains("<i>"), "{xml}");
+}
+
+#[test]
+fn test_a_page_number_that_reads_as_a_column_break_is_braced() {
+    assert_eq!(super::syntax::break_number_dsl("c=2", true), "{c=2}");
+    let xml = squash(&compile_plain("///{c=2} a").unwrap());
+    assert!(xml.starts_with("<pb n=\"c=2\"/>"), "{xml}");
+}

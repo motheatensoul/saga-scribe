@@ -42,6 +42,10 @@
 //! | `#.x.#` | `<num>.x.</num>` | Numeral |
 //! | `\c` | `c` | The character as text, part of the word |
 //! | `^{txt}` | `<note>txt</note>` | Editorial note |
+//! | `.q{dsl}` | `<q>…</q>` | Any element: around words between them, inside a word attached to letters |
+//! | `*{dsl}*`, `&{dsl}`, `${dsl}` | `<hi>`, `<seg>`, `<surplus>` | Short forms |
+//! | `.corr{a=b}`, `.trans{a=b}` | `<choice><sic>a</sic><corr>b</corr></choice>`, `<orig>`/`<reg>` | Pairs |
+//! | `.rdg[w]{dsl}`, `.space[n]`, `.hs{h}`, `///c=B` | `<rdg wit>`, `<space>`, `<handShift>`, `<cb>` | |
 //! | `:name:` | `&name;` | Entity reference |
 //! | `~//` | Word continuation across line break | |
 //! | `upp~haf` | Compound word join | |

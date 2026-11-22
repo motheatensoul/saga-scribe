@@ -70,10 +70,77 @@ pub enum Node {
     WordBoundary,
     /// Paragraph break: `.p` (closes the open paragraph, starts a new one)
     ParagraphBreak,
+    /// Column break: `///c=B` (`<cb n="B"/>`)
+    ColumnBreak(String),
+    /// Change of hand: `.hs{hand}` (`<handShift new="hand"/>`)
+    HandShift(String),
+    /// Space left in the manuscript: `.space[n]` (`<space quantity="n"/>`)
+    Space(Option<String>),
+    /// Markup inside a word (`*{A}*nnat`, `.c{S}tephanus`), its content as
+    /// DSL text; `second` is the other half of a pair (`.corr{sic=corr}`)
+    Inline { markup: Markup, content: String, second: Option<String> },
+    /// The start of markup around tokens (`.q{` before the words it holds)
+    Open(Markup),
+    /// Between the halves of a pair around tokens (the `=` of `.corr{a b=c d}`)
+    Middle(Markup),
+    /// The end of markup around tokens
+    Close(Markup),
     /// Word container (groups nodes into a single word)
     Word(Vec<Node>),
     /// Punctuation container (groups punctuation nodes)
     Punctuation(Vec<Node>),
+}
+
+/// An element the shorthand writes around text or tokens: `<q>`, `<hi>`,
+/// `<seg>`, or a pair in a `<choice>` (`<sic>`/`<corr>`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Markup {
+    /// The element (`q`, `persName`); `choice` for a pair
+    pub name: String,
+    pub attributes: Vec<(String, String)>,
+    /// The two elements of a pair (`sic`, `corr`)
+    pub pair: Option<(String, String)>,
+    /// The shorthand before the content (`.q{`, `*{`, `.rdg[A]{`)
+    pub opener: String,
+    /// The shorthand after it (`}`, `}*`)
+    pub closer: String,
+}
+
+impl Markup {
+    fn attributes_xml(&self) -> String {
+        self.attributes
+            .iter()
+            .map(|(name, value)| format!(" {name}=\"{}\"", escape_attribute(value)))
+            .collect()
+    }
+
+    /// The start tag (both, for a pair: `<choice><sic>`).
+    pub fn open_xml(&self) -> String {
+        match &self.pair {
+            Some((first, _)) => format!("<{}{}><{first}>", self.name, self.attributes_xml()),
+            None => format!("<{}{}>", self.name, self.attributes_xml()),
+        }
+    }
+
+    /// Between a pair's halves (`</sic><corr>`); empty for other markup.
+    pub fn middle_xml(&self) -> String {
+        match &self.pair {
+            Some((first, second)) => format!("</{first}><{second}>"),
+            None => String::new(),
+        }
+    }
+
+    /// The end tag (both, for a pair: `</corr></choice>`).
+    pub fn close_xml(&self) -> String {
+        match &self.pair {
+            Some((_, second)) => format!("</{second}></{}>", self.name),
+            None => format!("</{}>", self.name),
+        }
+    }
+}
+
+fn escape_attribute(value: &str) -> String {
+    value.replace('&', "&amp;").replace('<', "&lt;").replace('"', "&quot;")
 }
 
 /// A document is a sequence of nodes

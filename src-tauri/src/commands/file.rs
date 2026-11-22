@@ -34,6 +34,7 @@
 //! | 1.7 | `\` escapes a character and `#…#` is a numeral; older shorthand is escaped when opened |
 //! | 1.8 | segments.json holds the answers for replaced and deleted words (`decisions`) |
 //! | 2.0 | `overrides.json`: a new document's words whose XML was set in the word panel. An imported document is saved as the file now is (`document.xml`) with `profile.json` and `records.json` (open records by place and fingerprint); no `segments.json`, `output.xml` or split original for it. `anchors.json`: the annotated words' fingerprints, by word number. `abbreviations.json`: the abbreviation store |
+//! | 2.1 | Markup in the shorthand (`.q{…}`, `*{…}*`, `&{…}`, `${…}`, `///c=B`); older shorthand that would read as markup is escaped when opened |
 //!
 //! All writes are atomic: data is written to a temporary file next to the target
 //! and renamed over it, so a crash mid-save never leaves a truncated file.
@@ -491,7 +492,7 @@ fn write_project_archive(file: &mut File, contents: ProjectContents) -> Result<(
     // Create and write manifest.json
     let now = chrono_lite_now();
     let manifest = ProjectManifest {
-        version: "2.0".to_string(),
+        version: "2.1".to_string(),
         template_id,
         created: now.clone(),
         modified: now,
@@ -691,6 +692,20 @@ pub fn read_project(path: &str) -> Result<ProjectData, String> {
         }
     }
 
+    // Before v2.1, `.name{`, `*{`, `&{`, `${` and `///c=` were punctuation
+    // or text before an abbreviation, or a page number; since, they are
+    // markup. Escaped, they read as before.
+    if version_before(&manifest.version, 2, 1) {
+        source = escape_pre_2_1(&source);
+        if let Some(doc) = imported_document.as_mut() {
+            for segment in &mut doc.segments {
+                if let Segment::Word { dsl_content, .. } | Segment::Punctuation { dsl_content, .. } = segment {
+                    *dsl_content = escape_pre_2_1(dsl_content);
+                }
+            }
+        }
+    }
+
     // Projects saved before v1.5 have no source spans, and before v1.6 none
     // for element tags (needed to split paragraphs); derive them from the
     // stored original XML so edits can be spliced in byte-for-byte.
@@ -807,6 +822,61 @@ fn version_before(version: &str, major: u32, minor: u32) -> bool {
 /// shorthand since.
 fn escape_pre_1_7(dsl: &str) -> String {
     dsl.replace('\\', "\\\\").replace('#', "\\#")
+}
+
+/// Shorthand from before v2.1 as it read then: `.` before `name{` is set
+/// apart (`.|k{:bar:=onun}gr`), `*{`, `&{` and `${` get a backslash, and a
+/// page number starting with `c=` braces. Notes are prose, left as they are.
+fn escape_pre_2_1(dsl: &str) -> String {
+    let mut out = String::with_capacity(dsl.len());
+    let mut rest = dsl;
+    while let Some(c) = rest.chars().next() {
+        if c == '\\' {
+            // An escape and what it escapes
+            let len = 1 + rest[1..].chars().next().map_or(0, char::len_utf8);
+            out.push_str(&rest[..len]);
+            rest = &rest[len..];
+        } else if rest.starts_with("^{") {
+            // A note, to its brace
+            let mut depth = 0;
+            let mut end = rest.len();
+            let mut chars = rest.char_indices().skip(1);
+            while let Some((i, c)) = chars.next() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = i + 1;
+                            break;
+                        }
+                    }
+                    '\\' => {
+                        chars.next();
+                    }
+                    _ => {}
+                }
+            }
+            out.push_str(&rest[..end]);
+            rest = &rest[end..];
+        } else if crate::parser::syntax::markup_name(rest).is_some() {
+            out.push_str(".|");
+            rest = &rest[1..];
+        } else if ["*{", "&{", "${"].iter().any(|o| rest.starts_with(o)) {
+            out.push('\\');
+            out.push(c);
+            rest = &rest[1..];
+        } else if let Some(number) = rest.strip_prefix("///c=") {
+            let end = number.find(char::is_whitespace).unwrap_or(number.len());
+            out.push_str("///");
+            out.push_str(&crate::parser::syntax::break_number_dsl(&format!("c={}", &number[..end]), true));
+            rest = &number[end..];
+        } else {
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
 }
 
 fn read_zip_file<R: Read + std::io::Seek>(
@@ -945,6 +1015,25 @@ mod tests {
     }
 
     #[test]
+    fn test_shorthand_before_2_1_reads_as_before() {
+        assert!(version_before("2.0", 2, 1));
+        let old = r"ok.k{:bar:=onun}gr *{x} a&{:et:} h${=n} ///c=5 ^{a .q{b} *{c}} \.q{=x} hel~///c=B lo";
+        let escaped = escape_pre_2_1(old);
+        assert_eq!(
+            escaped,
+            r"ok.|k{:bar:=onun}gr \*{x} a\&{:et:} h\${=n} ///{c=5} ^{a .q{b} *{c}} \.q{=x} hel~///{c=B} lo"
+        );
+        let tree = crate::parser::syntax::parse(&escaped);
+        assert!(tree.diagnostics.is_empty(), "{:?}", tree.diagnostics);
+        assert!(!tree.nodes.iter().any(|n| matches!(
+            n.kind,
+            crate::parser::syntax::SyntaxKind::Markup { .. } | crate::parser::syntax::SyntaxKind::ColumnBreak { .. }
+        )));
+        // Escaping twice changes nothing more
+        assert_eq!(escape_pre_2_1(&escaped), escaped);
+    }
+
+    #[test]
     fn test_parse_imported_document_reports_garbage() {
         assert!(ImportedDocument::from_json("{not json").is_err());
     }
@@ -979,7 +1068,7 @@ mod tests {
 
         assert_eq!(project.source, "//1 maþr");
         assert_eq!(project.output, "<TEI/>");
-        assert_eq!(project.manifest.version, "2.0");
+        assert_eq!(project.manifest.version, "2.1");
         assert_eq!(project.manifest.template_id, "menota");
         assert!(project.imported_document.unwrap().is_menota);
         assert_eq!(project.original_body_xml.as_deref(), Some("<body></body>"));

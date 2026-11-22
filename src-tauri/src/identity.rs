@@ -394,6 +394,11 @@ pub fn is_token(node: &Node) -> bool {
             | Node::Norm(_)
             | Node::Numeral(_)
             | Node::ParagraphBreak
+            | Node::ColumnBreak(_)
+            | Node::HandShift(_)
+            | Node::Open(_)
+            | Node::Middle(_)
+            | Node::Close(_)
     )
 }
 
@@ -436,6 +441,16 @@ pub fn node_to_dsl(node: &Node) -> String {
         Node::Entity(name) => format!(":{}:", name),
         Node::Literal(c) => format!("\\{}", c),
         Node::Numeral(content) => format!("#{}#", content),
+        Node::ColumnBreak(n) => format!("///c={}", crate::parser::syntax::break_number_dsl(n, true)),
+        Node::HandShift(hand) => format!(".hs{{{}}}", hand),
+        Node::Space(quantity) => format!(".space[{}]", quantity.as_deref().unwrap_or("")),
+        Node::Inline { markup, content, second } => match second {
+            Some(second) => format!("{}{content}={second}{}", markup.opener, markup.closer),
+            None => format!("{}{content}{}", markup.opener, markup.closer),
+        },
+        Node::Open(markup) => markup.opener.clone(),
+        Node::Middle(_) => "=".to_string(),
+        Node::Close(markup) => markup.closer.clone(),
         Node::WordContinuation => "~".to_string(),
         Node::CompoundJoin => "~".to_string(),
         Node::WordBoundary => "|".to_string(),

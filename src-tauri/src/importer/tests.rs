@@ -2043,3 +2043,16 @@ fn test_an_expansion_after_an_unclear_reading_keeps_it_closed() {
     let (original, body) = imported_roundtrip(&xml, |d| d.to_string()).unwrap();
     assert_eq!(body, original);
 }
+
+/// Markup around words, column breaks and changes of hand have no place in
+/// an imported file's tree yet: typing them is an error, not a lost edit.
+#[test]
+fn test_markup_around_words_is_refused_in_imported_files() {
+    let xml = wrap_body("<p><w>a</w> <w>b</w></p>");
+    for edit in [".q{a b}", "a ///c=B b", "a .hs{h2} b"] {
+        let error = imported_render(&xml, |dsl| dsl.replace("a b", edit)).unwrap_err();
+        assert!(error.contains("can't be used in an imported file yet"), "{edit}: {error}");
+    }
+    // Inside a word it is part of the word
+    assert!(imported_render(&xml, |dsl| dsl.replace("a b", "*{a}*x b")).is_ok());
+}
