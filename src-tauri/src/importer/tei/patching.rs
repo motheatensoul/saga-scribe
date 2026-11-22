@@ -174,6 +174,13 @@ impl Patcher {
         Some((utf16(state.spans[j].start)?, utf16(state.spans[j].end)?))
     }
 
+    /// The text of the token with ID `token` in the last committed compile.
+    pub fn token_text(&self, token: u64) -> Option<&str> {
+        let state = self.state.as_ref()?;
+        let j = state.ids.iter().position(|&id| id == token)?;
+        state.tokens.get(j).map(String::as_str)
+    }
+
     /// The segment whose original token is `token` (a word that is one token).
     pub fn segment_of_token(&self, token: usize) -> Option<usize> {
         self.movable.iter().find_map(|(&segment, &t)| (t == token).then_some(segment))
@@ -1573,6 +1580,13 @@ impl Output {
             .collect();
         RenderedBody { xml: self.xml, edited_words, words, stale: Vec::new() }
     }
+}
+
+/// The normalized form `compiler` gives the word shorthand `dsl` (without a
+/// curated one): what a pinned normalized form is reset to.
+pub fn derived_normalized(compiler: &mut Compiler, dsl: &str) -> Option<String> {
+    let xml = compiler.compile_word_from_dsl(dsl, &HashMap::new(), None);
+    level_content(&xml, "norm").map(without_breaks)
 }
 
 /// `rendered`'s XML with confirmed lemmas (by word number) written into the

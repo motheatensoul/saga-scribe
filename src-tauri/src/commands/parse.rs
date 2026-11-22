@@ -803,6 +803,61 @@ pub async fn set_native_word_xml(session: State<'_, NativeSession>, word: usize,
     session.set_word_xml(word, &xml)
 }
 
+/// The normalized form the shorthand gives word `word` (numbered as the
+/// previews count) of the current imported document, as its edit would
+/// derive it: what the word panel resets a curated normalized form to.
+/// `None` for a word without a normalized level.
+///
+/// # Errors
+///
+/// If no imported document is loaded, the word isn't one, or the entity and
+/// normalizer data don't parse.
+#[tauri::command(async, rename_all = "camelCase")]
+#[allow(clippy::too_many_arguments)]
+pub async fn imported_derived_normalized(
+    session: State<'_, ImportedSession>,
+    word: usize,
+    entities_json: Option<String>,
+    normalizer_json: Option<String>,
+    entity_mappings_json: Option<String>,
+    custom_mappings: Option<HashMap<String, String>>,
+    abbreviations_json: Option<String>,
+) -> Result<Option<String>, String> {
+    let session = session.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut registry = EntityRegistry::new();
+        if let Some(json) = entities_json {
+            registry.load_from_str(&json)?;
+        }
+        let mut dictionary = match normalizer_json {
+            Some(json) => Some(LevelDictionary::load(&json)?),
+            None => None,
+        };
+        if let Some(ref mut dict) = dictionary {
+            if let Some(ref json) = entity_mappings_json {
+                dict.load_entity_mappings(json)?;
+            }
+            if let Some(custom) = custom_mappings {
+                dict.add_entity_mappings(custom);
+            }
+        }
+        let abbreviations = read_abbreviations(abbreviations_json.as_deref())?;
+        session
+            .with_current(|source| -> Result<Option<String>, String> {
+                let &(token, _) = source.words.as_ref().and_then(|w| w.get(word)).ok_or("There is no such word")?;
+                let dsl = source.patcher.token_text(token).ok_or("The word isn't in the shorthand")?.to_string();
+                let mut compiler = Compiler::new().with_entities(&registry).with_config(source.config.clone()).with_abbreviations(&abbreviations);
+                if let Some(ref dict) = dictionary {
+                    compiler = compiler.with_dictionary(dict);
+                }
+                Ok(crate::importer::tei::patching::derived_normalized(&mut compiler, &dsl))
+            })?
+            .ok_or("No imported document is loaded")?
+    })
+    .await
+    .map_err(|e| format!("Deriving the normalized form failed: {e}"))?
+}
+
 /// Compile an imported document using the patching system for round-trip fidelity.
 ///
 /// Takes the edited DSL, computes the differences against the imported
@@ -1714,6 +1769,18 @@ mod imported_identity_tests {
         let out = compile_decided(&mut source, &edited, &edited, &[(key, Decision::Same)]);
         assert_eq!(out.records[0].decision, Some(Decision::Same));
         assert!(out.xml.contains("<me:norm>maðr</me:norm>"), "{}", out.xml);
+    }
+
+    #[test]
+    fn test_the_derived_normalized_form_is_what_the_shorthand_gives() {
+        let (mut source, dsl) = open(TWO_OKS);
+        compile(&mut source, &dsl, None, &[]);
+        let &(token, _) = source.words.as_ref().unwrap().get(1).unwrap();
+        let word = source.patcher.token_text(token).unwrap().to_string();
+        assert_eq!(word, "maþr");
+        let mut compiler = Compiler::new().with_config(source.config.clone());
+        // The file has the curated "maðr"; the shorthand alone gives "maþr"
+        assert_eq!(crate::importer::tei::patching::derived_normalized(&mut compiler, &word).as_deref(), Some("maþr"));
     }
 
     #[test]

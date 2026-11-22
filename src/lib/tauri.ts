@@ -159,6 +159,18 @@ export async function setNativeWordXml(word: number, xml: string): Promise<WordX
   return invoke("set_native_word_xml", { word, xml });
 }
 
+/** The normalized form the shorthand gives word `word` of the current imported document (null without a normalized level). */
+export async function importedDerivedNormalized(word: number, options: CompileImportedOptions): Promise<string | null> {
+  return invoke("imported_derived_normalized", {
+    word,
+    entitiesJson: options.entitiesJson ?? null,
+    normalizerJson: options.normalizerJson ?? null,
+    entityMappingsJson: options.entityMappingsJson ?? null,
+    customMappings: options.customMappings ?? null,
+    abbreviationsJson: options.abbreviationsJson ?? null,
+  });
+}
+
 /** Sets the levels new words of the current imported document get (after the editor confirmed them). */
 export async function setImportedLevels(levels: Level[], choice: boolean): Promise<Profile> {
   return invoke("set_imported_levels", { levels, choice });

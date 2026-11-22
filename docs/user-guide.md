@@ -390,7 +390,9 @@ preview to open the word panel; its **Lemmatize** tab shows:
 - **Word class** and the morphological categories that apply to it (case, number, gender,
   definiteness, grade, person, tense, mood, voice, finiteness).
 - **Normalized form** (`me:norm`), on multi-level transcriptions. It starts from the word's
-  current form and can be saved with or without a lemma.
+  current form and can be saved with or without a lemma. In an imported file, **From the
+  shorthand** puts in the form Saga-Scribe gives the word's shorthand, for example to
+  replace a curated form that an edit has made out of date; save to keep it.
 
 **Save** confirms the lemma and analysis for this occurrence of the word. **Remove lemma**
 removes them again; a normalized form entered by hand is kept.

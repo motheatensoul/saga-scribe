@@ -52,6 +52,7 @@
         generateTeiHeader,
         validateXml,
         setImportedLevels,
+        importedDerivedNormalized,
     } from "$lib/tauri";
     import type { Profile, StagedDocument, WordXmlChange } from "$lib/tauri";
     import { loadAppResources } from "$lib/startup";
@@ -379,6 +380,17 @@
         showLemmatizer = true;
         lastReviewedWord = word;
         wordReveal.show(word);
+    }
+
+    /** The normalized form the shorthand gives the selected word (imported files) */
+    function deriveNormalized(): Promise<string | null> {
+        return importedDerivedNormalized(selectedWordIndex, {
+            entitiesJson: entitiesJson ?? undefined,
+            normalizerJson: normalizerJson ?? undefined,
+            entityMappingsJson: entityMappingsJson ?? undefined,
+            customMappings: $entityStore.customMappings,
+            abbreviationsJson: abbreviationStore.defaultsJson(),
+        });
     }
 
     /** A word's XML was set in the word panel: its shorthand and lemma follow */
@@ -1331,6 +1343,7 @@
                                 wordIndex={selectedWordIndex}
                                 onclose={handleLemmatizerClose}
                                 onsave={handleLemmatizerSave}
+                                derive={importedStore.isImportedMode ? deriveNormalized : undefined}
                             />
                         {/key}
                     </div>

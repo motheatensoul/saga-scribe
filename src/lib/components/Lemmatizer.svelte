@@ -39,6 +39,7 @@
         wordIndex,
         onclose,
         onsave,
+        derive,
     }: {
         facsimile: string;   // Facsimile-level form (for display/storage)
         diplomatic: string;  // Diplomatic-level form (for lookup)
@@ -48,7 +49,21 @@
         onclose?: () => void;
         /** After a lemma was confirmed (lemma, msa), removed (none) or the normalized form changed */
         onsave?: (wordIndex: number, lemma?: string, msa?: string) => void;
+        /** The normalized form the shorthand gives the word (imported files), to reset a curated one to */
+        derive?: () => Promise<string | null>;
     } = $props();
+
+    let deriving = $state(false);
+    async function useDerived() {
+        if (!derive) return;
+        deriving = true;
+        try {
+            const derived = await derive();
+            if (derived !== null) normalizedForm = derived;
+        } finally {
+            deriving = false;
+        }
+    }
 
     // Search state - use diplomatic form for searching
     // svelte-ignore state_referenced_locally 
@@ -1002,6 +1017,17 @@
                         title={importedStore.isImportedMode ? "Use the file's normalized form" : 'Use the generated normalized form'}
                     >
                         {importedStore.isImportedMode ? "Use the file's" : 'Use generated'}
+                    </button>
+                {/if}
+                {#if derive}
+                    <button
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        onclick={useDerived}
+                        disabled={deriving}
+                        title="Put in the normalized form the shorthand gives the word (then save)"
+                    >
+                        From the shorthand
                     </button>
                 {/if}
             </div>

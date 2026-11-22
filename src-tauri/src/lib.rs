@@ -119,6 +119,7 @@ pub fn run() {
             commands::parse::set_imported_word_xml,
             commands::parse::native_word_xml,
             commands::parse::set_native_word_xml,
+            commands::parse::imported_derived_normalized,
             commands::parse::check_dsl,
             commands::notify::notify,
             commands::pdf::pdf_export_supported,

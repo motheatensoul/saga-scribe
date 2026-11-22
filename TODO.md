@@ -27,8 +27,9 @@ when it is done (and record it in CHANGELOG.md if users notice).
   word panel's XML tab of step 5 (all 2026-11-21). Left:
   - step 4: the profile's punctuation element in the compiler (`<me:punct>`; abbreviations
     follow the profile since 2026-11-22);
-  - step 5: levels, ranges and attributes in their own controls in the word panel, and
-    resetting a pinned level to its derivation (needs the normalizer outside a compile);
+  - step 5: levels, ranges and attributes in their own controls in the word panel (the
+    XML tab edits them as XML; a pinned normalized form can be reset with **From the
+    shorthand** since 2026-11-22);
   - a word typed in the shorthand of an imported file can only get its XML set after
     the project is saved and opened again.
   Corpus gates: `scripts/fetch-menota-corpus.sh`, then
