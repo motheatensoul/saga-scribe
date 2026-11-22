@@ -30,3 +30,4 @@ flatpak-repo/
 
 # Menota corpus for the opt-in corpus tests (scripts/fetch-menota-corpus.sh)
 /tests/corpus/
+shorthand-coverage.csv
