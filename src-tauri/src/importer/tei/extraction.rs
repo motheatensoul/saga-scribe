@@ -200,7 +200,13 @@ fn write_segments(segments: &[Segment], dsl_rules: u32, mut places: Option<&mut 
         }
     };
 
+    // Right after markup's end (`}`, `}*`), whitespace aside
+    let mut after_markup_end = false;
     for segment in segments {
+        let markup_end = after_markup_end && !matches!(segment, Segment::Whitespace { .. } | Segment::Structural { shown: None, .. });
+        if !matches!(segment, Segment::Whitespace { .. } | Segment::Structural { shown: None, .. }) {
+            after_markup_end = false;
+        }
         match segment {
             Segment::Word { dsl_content, .. } => {
                 if last_was_linebreak && dsl_rules >= 2 {
@@ -238,6 +244,11 @@ fn write_segments(segments: &[Segment], dsl_rules: u32, mut places: Option<&mut 
             Segment::Punctuation { dsl_content, .. } => {
                 if last_was_linebreak && dsl_rules >= 2 {
                     dsl.push('\n');
+                }
+                // After markup's end, glued, it would make the markup part
+                // of a word (`}·`)
+                if markup_end && !dsl.ends_with(char::is_whitespace) {
+                    dsl.push(' ');
                 }
                 // Punctuation typically follows immediately after word (no space)
                 separate(&mut dsl, previous, dsl_content);
@@ -298,6 +309,33 @@ fn write_segments(segments: &[Segment], dsl_rules: u32, mut places: Option<&mut 
                 place(&mut places, segment.id(), at..at + 2);
                 last_was_linebreak = false;
                 pending_space = false;
+                previous = None;
+            }
+            // Markup around tokens (rules 10): set apart from the token
+            // before its start and after its end, so it isn't inside a word
+            Segment::Structural { shown: Some(shown), .. } if dsl_rules >= 10 => {
+                if shown.ends_with('{') {
+                    if last_was_linebreak {
+                        dsl.push('\n');
+                    } else if !dsl.is_empty() && !dsl.ends_with(|c: char| c.is_whitespace() || c == '{' || c == '=') {
+                        dsl.push(' ');
+                    }
+                    pending_space = false;
+                } else {
+                    if last_was_linebreak {
+                        // A page number runs to the next space
+                        dsl.push('\n');
+                    } else {
+                        dsl.truncate(dsl.trim_end_matches([' ', '\t']).len());
+                    }
+                    // After its end, the next word is set apart
+                    pending_space = shown != "=";
+                    after_markup_end = shown != "=";
+                }
+                let at = dsl.len();
+                dsl.push_str(shown);
+                place(&mut places, segment.id(), at..dsl.len());
+                last_was_linebreak = false;
                 previous = None;
             }
             Segment::Structural { .. } => {

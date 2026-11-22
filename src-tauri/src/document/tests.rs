@@ -633,8 +633,12 @@ fn corpus_edits_are_put_back_locally() {
                 let text = &dsl[span.clone()];
                 let Some(region) = xml_span(segment) else { continue };
                 let edit = match segment {
+                    // (Not a word with a `<sic>`/`<corr>` pair inside its level,
+                    // whose shorthand shows both texts: TODO.md)
                     Segment::Word { original_xml, .. }
-                        if original_xml.starts_with("<w") && text.chars().all(char::is_alphabetic) =>
+                        if original_xml.starts_with("<w")
+                            && !original_xml.contains("<sic")
+                            && text.chars().all(char::is_alphabetic) =>
                     {
                         kind += 1;
                         match kind % 5 {
@@ -734,6 +738,12 @@ fn corpus_older_projects_are_brought_onto_the_tree() {
             let mut stored = if rules == 5 { all_breaks.clone() } else { doc.clone() };
             stored.dsl_rules = rules;
             stored.profile = None;
+            // Before rules 10, no markup was shown
+            for segment in &mut stored.segments {
+                if let crate::importer::tei::segments::Segment::Structural { shown, .. } = segment {
+                    *shown = None;
+                }
+            }
             let old = segments_to_dsl(&stored.segments, rules).trim().to_string();
             // Today's segments written with older rules can make shorthand
             // that no project had (today's lexer rejects it): not a case
@@ -743,7 +753,17 @@ fn corpus_older_projects_are_brought_onto_the_tree() {
             }
 
             let on_tree = crate::importer::tei::onto_tree(&stored, &old, &pre, &body, &post).ok_or("not brought onto the tree")?;
-            if dsl_tokens(&on_tree.dsl)? != fresh_tokens {
+            if dsl_tokens(&on_tree.dsl).inspect_err(|e| {
+                if std::env::var("DEBUG_OLDER").is_ok() {
+                    let line: usize = e.split(',').next().and_then(|l| l.trim_start_matches("Line ").parse().ok()).unwrap_or(1);
+                    for l in on_tree.dsl.lines().skip(line.saturating_sub(3)).take(12) {
+                        eprintln!("  | {l}");
+                    }
+                    for l in old.lines().skip(line.saturating_sub(3)).take(12) {
+                        eprintln!("  old | {l}");
+                    }
+                }
+            })? != fresh_tokens {
                 let got = dsl_tokens(&on_tree.dsl)?;
                 let at = got.iter().zip(&fresh_tokens).position(|(a, b)| a != b).unwrap_or(got.len().min(fresh_tokens.len()));
                 let show = |t: &[String]| t[at.saturating_sub(2)..(at + 3).min(t.len())].join(" ");
@@ -771,7 +791,17 @@ fn corpus_older_projects_are_brought_onto_the_tree() {
             }
             let on_tree = crate::importer::tei::onto_tree(&stored, &edited, &pre, &body, &post).ok_or("edited: not brought onto the tree")?;
             // Every place that reads differently from the import has an edit
-            let got = dsl_tokens(&on_tree.dsl)?;
+            let got = dsl_tokens(&on_tree.dsl).inspect_err(|e| {
+                if std::env::var("DEBUG_OLDER").is_ok() {
+                    let line: usize = e.split(',').next().and_then(|l| l.trim_start_matches("Line ").parse().ok()).unwrap_or(1);
+                    for l in on_tree.dsl.lines().skip(line.saturating_sub(3)).take(12) {
+                        eprintln!("  | {l}");
+                    }
+                    for l in edited.lines().skip(line.saturating_sub(3)).take(3) {
+                        eprintln!("  edited | {l}");
+                    }
+                }
+            })?;
             let a: Vec<&str> = fresh_tokens.iter().map(String::as_str).collect();
             let b: Vec<&str> = got.iter().map(String::as_str).collect();
             let mut diff = Vec::new();
@@ -795,8 +825,16 @@ fn corpus_older_projects_are_brought_onto_the_tree() {
                     Edit::Insert(j) | Edit::Replace(_, j) => {
                         in_run = true;
                         explained |= b[j].contains('x');
+                        if std::env::var("DEBUG_OLDER").is_ok() {
+                            eprintln!("  got {:?}: {:?}", edit, b[j.saturating_sub(3)..(j + 3).min(b.len())].join(" "));
+                        }
                     }
-                    Edit::Delete(_) => in_run = true,
+                    Edit::Delete(i) => {
+                        in_run = true;
+                        if std::env::var("DEBUG_OLDER").is_ok() {
+                            eprintln!("  lost {:?}: {:?}", edit, a[i.saturating_sub(3)..(i + 3).min(a.len())].join(" "));
+                        }
+                    }
                 }
             }
             // The comparison that explains differences can pair an edit with
@@ -840,9 +878,17 @@ fn corpus_saved_projects_open_as_they_were() {
             session.load(reply.imported.map(|s| s.handle))?;
             let dsl = reply.dsl;
             let (tokens, spans) = crate::identity::spanned_dsl_tokens(&dsl)?;
+            // (Not a word with a `<sic>`/`<corr>` pair inside its level, whose
+            // shorthand shows both texts: TODO.md)
+            let segments = crate::importer::tei::parse(&source)?.imported_document.ok_or("no manifest")?.segments;
+            let pairs: Vec<bool> = segments
+                .iter()
+                .filter(|s| crate::importer::tei::patching::segment_dsl_token(s).is_some())
+                .map(|s| matches!(s, crate::importer::tei::segments::Segment::Word { original_xml, .. } if original_xml.contains("<sic")))
+                .collect();
             let mut edited = dsl.clone();
             for (k, span) in spans.iter().enumerate().rev() {
-                if k % 40 == 20 && tokens[k].chars().all(char::is_alphabetic) {
+                if k % 40 == 20 && tokens[k].chars().all(char::is_alphabetic) && !pairs.get(k).copied().unwrap_or(false) {
                     edited.insert(span.end, 'x');
                 }
             }
@@ -862,6 +908,11 @@ fn corpus_saved_projects_open_as_they_were() {
             std::fs::remove_file(&project).ok();
             let (staged, rewritten) = crate::commands::file::stage_project(&mut opened, &session)?;
             if rewritten > 0 || opened.source != edited {
+                if std::env::var("DEBUG_SAVED").is_ok() {
+                    for (a, b) in opened.source.lines().zip(edited.lines()).filter(|(a, b)| a != b) {
+                        eprintln!("  now    {a}\n  edited {b}");
+                    }
+                }
                 return Err(format!("the shorthand changed ({rewritten} places)"));
             }
             session.load(staged.map(|s| s.handle))?;
@@ -936,7 +987,8 @@ fn corpus_zz_markup_survey() {
         let charter = path.to_string_lossy().contains("diploma");
         for id in tree.descendants(body) {
             let Some(element) = tree.element(id) else { continue };
-            let shown = super::profile::SHOWN.contains(&local(&element.name).as_str());
+            let shown = super::profile::SHOWN.contains(&local(&element.name).as_str())
+                || (super::project::shown_around(&element.name) && !super::profile::in_token(&tree, id));
             let mut keys = Vec::new();
             if !shown {
                 keys.push(("element".to_string(), element.name.clone()));

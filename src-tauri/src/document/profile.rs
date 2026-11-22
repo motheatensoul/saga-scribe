@@ -135,6 +135,19 @@ fn local(name: &str) -> &str {
     name.rsplit(':').next().unwrap_or(name)
 }
 
+/// Whether `id` is inside a word, numeral or punctuation (where markup
+/// around tokens isn't shown).
+pub(super) fn in_token(tree: &Tree, id: NodeId) -> bool {
+    let mut current = tree.parent(id);
+    while let Some(parent) = current {
+        if tree.element(parent).is_some_and(|e| matches!(local(&e.name), "w" | "pc" | "num")) {
+            return true;
+        }
+        current = tree.parent(parent);
+    }
+    false
+}
+
 /// The profile of the file whose body is `body`.
 pub fn infer(tree: &Tree, body: NodeId) -> Profile {
     let mut counts = ProfileCounts::default();
@@ -145,7 +158,7 @@ pub fn infer(tree: &Tree, body: NodeId) -> Profile {
         if local_name == "w" {
             counts.words += 1;
         }
-        if !SHOWN.contains(&local_name) {
+        if !SHOWN.contains(&local_name) && !(super::project::shown_around(name) && !in_token(tree, id)) {
             *counts.hidden.entry(name.to_string()).or_default() += 1;
         }
         match local_name {
@@ -250,8 +263,9 @@ mod tests {
 
     #[test]
     fn markup_the_shorthand_doesnt_show() {
-        let p = profile_of("<p><s><w>a<hi rend=\"red\">b</hi></w></s> <w>c<hi>d</hi></w></p>");
-        assert_eq!(p.counts.hidden.into_iter().collect::<Vec<_>>(), vec![("hi".to_string(), 2), ("s".to_string(), 1)]);
+        // `<s>` around words is shown (`.s{…}`), `<hi>` inside a word isn't
+        let p = profile_of("<p><s><w>a<hi rend=\"red\">b</hi></w></s> <w>c<hi>d</hi></w> <l><w>e</w></l></p>");
+        assert_eq!(p.counts.hidden.into_iter().collect::<Vec<_>>(), vec![("hi".to_string(), 2), ("l".to_string(), 1)]);
     }
 
     #[test]

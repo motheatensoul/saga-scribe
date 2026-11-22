@@ -1197,18 +1197,22 @@ fn test_menota_file_distant_edits_preserve_everything_else() {
     let Some(xml) = load_holmperg() else { return };
     let import = parse(&xml).unwrap();
     let doc = import.imported_document.unwrap();
-    // First plain word outside any block construct (a word inside `.head{...}`
+    // First plain word that is a word of its own (a word inside `.head{...}`
     // is part of one opaque segment and would regenerate the whole head).
-    let mut depth = 0i32;
-    let mut first = None;
-    for token in import.dsl.split_whitespace() {
-        if depth == 0 && token.len() > 3 && token.chars().all(char::is_alphabetic) {
-            first = Some(token.to_string());
-            break;
-        }
-        depth += token.matches('{').count() as i32 - token.matches('}').count() as i32;
-    }
-    let first = first.unwrap();
+    let first = doc
+        .segments
+        .iter()
+        .find_map(|s| match s {
+            Segment::Word { dsl_content, .. }
+                if dsl_content.len() > 3
+                    && dsl_content.chars().all(char::is_alphabetic)
+                    && import.dsl.contains(&format!(" {dsl_content} ")) =>
+            {
+                Some(dsl_content.clone())
+            }
+            _ => None,
+        })
+        .unwrap();
     // An edit of the word (one letter): it keeps its lemma. (Another word
     // in its place would be a new word, without the old word's lemma.)
     let typo: String = first.chars().take(first.chars().count() - 1).chain(['x']).collect();
@@ -1282,10 +1286,15 @@ fn test_paragraph_merge_of_plain_text_keeps_words_apart() {
 
 #[test]
 fn test_paragraph_split_inside_inline_element_is_an_error() {
-    let xml = "<TEI><text><body><p>a <hi>b c</hi> d</p></body></text></TEI>";
+    // Hidden markup: `<l>` (a verse line) isn't shown
+    let xml = "<TEI><text><body><p>a <l>b c</l> d</p></body></text></TEI>";
     let result = imported_roundtrip(xml, |d| d.replace("b c", "b .p c"));
-    let error = result.expect_err("a split inside <hi> would break the XML");
-    assert!(error.contains("inside <hi>"), "{error}");
+    let error = result.expect_err("a split inside <l> would break the XML");
+    assert!(error.contains("inside <l>"), "{error}");
+    // Shown markup: the shorthand can't have it
+    let xml = "<TEI><text><body><p>a <hi>b c</hi> d</p></body></text></TEI>";
+    let error = imported_roundtrip(xml, |d| d.replace("b c", "b .p c")).unwrap_err();
+    assert!(error.contains("A paragraph can't start inside *{…}*"), "{error}");
 }
 
 #[test]
@@ -1304,10 +1313,10 @@ fn test_menota_file_paragraph_edits_reimport_as_edited() {
     // Merge the 3rd paragraph into the 2nd, and split one later on
     let third = dsl.match_indices(" .p ").nth(2).unwrap().0;
     let edited = format!("{}{}", &dsl[..third], &dsl[third + 3..]);
-    // Split after the first sentence end (". " closes an <s>) that allows it;
-    // mid-sentence splits are refused, as <s> can't be split
+    // Split after the first sentence end (`}` closes a `.s{…}`) that allows
+    // it; a paragraph can't start inside a sentence
     let mut result = None;
-    for (at, _) in edited.match_indices(". ").skip(5).take(50) {
+    for (at, _) in edited.match_indices("} ").filter(|(at, _)| *at > third).skip(5).take(50) {
         let mut candidate = edited.clone();
         candidate.insert_str(at + 1, " .p");
         if let Ok(rendered) = imported_roundtrip(&xml, |_| candidate.clone()) {
@@ -1483,8 +1492,14 @@ fn test_documents_imported_before_rule_changes_keep_their_dsl() {
     assert_eq!(old.dsl_rules, 0);
 
     // Its stored DSL glues entity punctuation to words ("þa:middot:"); one
-    // unrelated edit must still be one change, not one per middle dot
+    // unrelated edit must still be one change, not one per middle dot.
+    // (Before rules 10, no markup was shown.)
     doc.dsl_rules = 0;
+    for segment in &mut doc.segments {
+        if let Segment::Structural { shown, .. } = segment {
+            *shown = None;
+        }
+    }
     let stored = crate::importer::tei::extraction::segments_to_dsl(&doc.segments, 0);
     assert!(!stored.contains(" :middot: "));
     let edited = stored.replacen(" logum ", " logvm ", 1);
@@ -1777,7 +1792,7 @@ fn test_deleting_the_only_word_of_a_wrapper_removes_the_wrapper() {
     assert_eq!(body, original.replace(r#"<num n="50"><w><me:dipl>fímtígí</me:dipl></w></num>"#, ""));
     // A wrapper with something else left in it stays
     let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w> <s><w><me:dipl>b</me:dipl></w> <w><me:dipl>c</me:dipl></w></s>"#);
-    let (original, body) = imported_roundtrip(&xml, |d| d.replace(" b", "")).unwrap();
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace(".s{b ", ".s{")).unwrap();
     assert_eq!(body, original.replace(r#"<w><me:dipl>b</me:dipl></w>"#, ""));
     // So does a paragraph or division, even if empty
     let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w></p><p><w><me:dipl>b</me:dipl></w>"#);
@@ -2044,15 +2059,131 @@ fn test_an_expansion_after_an_unclear_reading_keeps_it_closed() {
     assert_eq!(body, original);
 }
 
-/// Markup around words, column breaks and changes of hand have no place in
-/// an imported file's tree yet: typing them is an error, not a lost edit.
+/// Column breaks and changes of hand have no place in an imported file's
+/// tree yet: typing them is an error, not a lost edit.
 #[test]
-fn test_markup_around_words_is_refused_in_imported_files() {
+fn test_column_breaks_and_hands_are_refused_in_imported_files() {
     let xml = wrap_body("<p><w>a</w> <w>b</w></p>");
-    for edit in [".q{a b}", "a ///c=B b", "a .hs{h2} b"] {
+    for edit in ["a ///c=B b", "a .hs{h2} b"] {
         let error = imported_render(&xml, |dsl| dsl.replace("a b", edit)).unwrap_err();
         assert!(error.contains("can't be used in an imported file yet"), "{edit}: {error}");
     }
-    // Inside a word it is part of the word
+    // Inside a word, markup is part of the word
     assert!(imported_render(&xml, |dsl| dsl.replace("a b", "*{a}*x b")).is_ok());
 }
+
+/// Markup typed around words in an imported file wraps them; removed, its
+/// content stays in its place; renamed, its content and attributes go into
+/// an element of the new name. The rest of the file is untouched.
+#[test]
+fn test_markup_around_words_is_edited_in_the_tree() {
+    let body = |inner: &str| wrap_body(&format!("<p><w>a</w> <w>b</w> <w>c</w>{inner}</p>"));
+    let xml = body(" <q who=\"A\"><w>d</w> <w>e</w></q> <w>f</w>");
+    let render = |edit: &dyn Fn(&str) -> String| {
+        imported_render(&xml, |dsl| edit(dsl)).map(|(_, body)| body.xml.trim_start_matches("<body>").trim_end_matches("</body>").to_string())
+    };
+    // Wrap
+    assert_eq!(
+        render(&|dsl| dsl.replace("a b c", "a .s{b c}")).unwrap(),
+        "<p><w>a</w> <s><w>b</w> <w>c</w></s> <q who=\"A\"><w>d</w> <w>e</w></q> <w>f</w></p>"
+    );
+    // Wrap with a new word in it, and nested
+    assert_eq!(
+        render(&|dsl| dsl.replace("a b c", ".s{a .name{b} x} c")).unwrap().replace('\n', ""),
+        "<p><s><w>a</w> <name><w>b</w></name><w>x</w></s> <w>c</w> <q who=\"A\"><w>d</w> <w>e</w></q> <w>f</w></p>"
+    );
+    // Unwrap
+    assert_eq!(
+        render(&|dsl| dsl.replace(".q{d e}", "d e")).unwrap(),
+        "<p><w>a</w> <w>b</w> <w>c</w> <w>d</w> <w>e</w> <w>f</w></p>"
+    );
+    // Rename, keeping the attributes
+    assert_eq!(
+        render(&|dsl| dsl.replace(".q{d e}", "&{d e}")).unwrap(),
+        "<p><w>a</w> <w>b</w> <w>c</w> <seg who=\"A\"><w>d</w> <w>e</w></seg> <w>f</w></p>"
+    );
+    // A word deleted from markup leaves the markup
+    assert_eq!(
+        render(&|dsl| dsl.replace(".q{d e}", ".q{e}")).unwrap(),
+        "<p><w>a</w> <w>b</w> <w>c</w> <q who=\"A\"> <w>e</w></q> <w>f</w></p>"
+    );
+    // Across the end of existing markup: refused
+    let error = render(&|dsl| dsl.replace("c .q{d e}", ".s{c .q{d} e}")).unwrap_err();
+    assert!(error.contains("doesn't close") || error.contains("same element"), "{error}");
+
+}
+
+#[test]
+fn test_markup_across_elements_is_refused() {
+    let xml = wrap_body("<p><s><w>a</w> <w>b</w></s> <w>c</w></p>");
+    let render = |from: &str, to: &str| imported_render(&xml, |dsl| dsl.replace(from, to)).map(|(_, b)| b.xml);
+    // Inside `<s>`: fine
+    assert_eq!(render(".s{a b} c", ".s{a .q{b}} c").unwrap(), "<body><p><s><w>a</w> <q><w>b</w></q></s> <w>c</w></p></body>");
+    // A word moved out of it goes with its markup
+    assert_eq!(render(".s{a b} c", ".s{a} .q{b c}").unwrap(), "<body><p><s><w>a</w> </s><q>\n<w>b</w> <w>c</w></q></p></body>");
+    // Moving its end: refused
+    for to in [".s{a .q{b} c}", ".s{a b c}"] {
+        let error = render(".s{a b} c", to).unwrap_err();
+        assert!(error.contains("same element"), "{to}: {error}");
+    }
+}
+
+/// Markup around words is shown (DSL rules 10), and reads back as the same
+/// tokens; unedited, the file comes back byte for byte.
+#[test]
+fn test_markup_around_words_is_shown() {
+    let xml = wrap_body(
+        "<p><q><w>Ok</w> <w>sagði</w></q> <persName><forename><w>Ari</w></forename> <w>fróði</w></persName><pc>.</pc>\
+         <choice><sic><w>nu</w></choice> <hi rend=\"red\"><w>A</w></hi><seg type=\"nb\"><w>b</w></seg></p>"
+            .replace("<choice><sic><w>nu</w></choice>", "<choice><sic><w>nu</w></sic><corr><w>nú</w></corr></choice>")
+            .as_str(),
+    );
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p .q{Ok sagði} .psname{.fname{Ari} fróði} . .corr{nu=nú} *{A}* &{b}");
+    let doc = import.imported_document.as_ref().unwrap();
+    let from_xml: Vec<String> = doc.segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
+    assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap());
+    let (_, body) = imported_render(&xml, |dsl| dsl.to_string()).unwrap();
+    assert_eq!(body.xml, xml);
+}
+
+
+/// A project from before markup was shown (rules 9) gets it in its
+/// shorthand when opened, where it stands among the unedited words, so the
+/// first compile doesn't take it out of the file.
+#[test]
+fn test_markup_goes_into_an_older_projects_shorthand() {
+    use crate::importer::tei::extraction::segments_to_dsl;
+    use crate::importer::tei::onto_tree;
+    use crate::importer::tei::patching::keep_as_written;
+    let xml = menota_body(
+        r#"<w><me:dipl>a</me:dipl></w> <q><w><me:dipl>b</me:dipl></w> <persName><w><me:dipl>c</me:dipl></w></persName></q> <w><me:dipl>d</me:dipl></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p a .q{b .psname{c}} d");
+    let body = import.original_body_xml.clone().unwrap();
+    let (pre, post) = (import.original_preamble.clone().unwrap(), import.original_postamble.clone().unwrap());
+    let mut stored = import.imported_document.clone().unwrap();
+    stored.dsl_rules = 9;
+    for segment in &mut stored.segments {
+        if let Segment::Structural { shown, .. } = segment {
+            *shown = None;
+        }
+    }
+    let old = segments_to_dsl(&stored.segments, 9);
+    assert_eq!(old.trim(), ".p a b c d");
+    let on_tree = onto_tree(&stored, old.trim(), &pre, &body, &post).unwrap();
+    assert_eq!(on_tree.dsl, ".p a .q{b .psname{c}} d");
+    // With edits around it, and a new word at its edge outside it
+    let on_tree = onto_tree(&stored, ".p ax b\nc y d", &pre, &body, &post).unwrap();
+    assert_eq!(on_tree.dsl, ".p ax .q{b\n.psname{c}} y d");
+    let patches = compute_patches(&on_tree.document.segments, on_tree.document.dsl_rules, &on_tree.dsl).unwrap();
+    assert!(!patches.iter().any(|p| matches!(p, PatchOperation::Delete { .. })), "{patches:?}");
+
+    // A project saved as its file (2.0) keeps its shorthand, the markup put in
+    let (dsl, _) = keep_as_written(".p a b\nc d", &import.dsl);
+    let tokens = crate::importer::tei::patching::dsl_tokens;
+    assert_eq!(tokens(&dsl).unwrap(), tokens(&import.dsl).unwrap(), "{dsl}");
+}
+
+

@@ -12,20 +12,24 @@
 //!   (`<num><w>…</w></num>`), short of a block such as `<p>`;
 //! - new words go after the token before them, in the same element;
 //! - `.p` added splits its paragraph (the rest of it moves to a new `<p>`),
-//!   `.p` removed merges the paragraph into the one before.
+//!   `.p` removed merges the paragraph into the one before;
+//! - markup around words (`.q{` … `}`) added wraps what is between its start
+//!   and end in a new element, removed puts the element's content in its
+//!   place, renamed (`.q{` to `.seg{`) puts its content in an element of the
+//!   new name, with its attributes.
 //!
 //! Text outside words (a body without `<w>`) is split into text nodes where
 //! a word in it is edited.
 
 use super::patching::{
-    inserted_xml, keeps_word_data, render_insert, render_modify, token_kind, Origin, Originals, ParagraphStructure,
-    PatchOperation, RenderedBody, TokenKind,
+    inserted_xml, keeps_word_data, markup_segment, markup_token, render_insert, render_modify, token_kind, MarkupPart,
+    Origin, Originals, ParagraphStructure, PatchOperation, RenderedBody, TokenKind,
 };
 use super::segments::Segment;
 use crate::document::{find_body, Element, NodeId, NodeKind, Piece, Tree};
 use crate::identity::PARAGRAPH;
 use crate::parser::Compiler;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 /// Where a segment is in the tree.
@@ -253,13 +257,23 @@ struct Applier<'a> {
     edited: Vec<NodeId>,
     /// Edited words with levels that couldn't follow the edit, by segment
     stale: Vec<(usize, Vec<String>)>,
+    /// Markup the shorthand shows: never removed with the words in it
+    shown: HashSet<NodeId>,
+    /// Markup added, still open: what follows goes into it
+    wraps: Vec<NodeId>,
+    /// Markup open in the edited shorthand, innermost last: kept or added
+    open: Vec<NodeId>,
+    /// Kept markup whose end has passed: nothing after it may be in it
+    closed: HashSet<NodeId>,
+    /// Markup renamed: the element now in its place
+    renamed: HashMap<NodeId, NodeId>,
 }
 
 impl Applier<'_> {
     /// The node of segment `id`, splitting text where it is part of one.
     fn node(&mut self, id: usize) -> Option<NodeId> {
         match self.source.places.get(id)?.clone()? {
-            Place::Node(node) | Place::Open(node) | Place::Close(node) => Some(node),
+            Place::Node(node) | Place::Open(node) | Place::Close(node) => Some(*self.renamed.get(&node).unwrap_or(&node)),
             Place::Text { node, chars } => self.split_text(node, chars),
         }
     }
@@ -302,7 +316,7 @@ impl Applier<'_> {
             Anchor::Start(element) => Some((element, 0)),
             // After a paragraph's start tag is inside it
             Anchor::Segment(id) => match self.source.places.get(id)?.clone()? {
-                Place::Open(element) => Some((element, 0)),
+                Place::Open(element) => Some((*self.renamed.get(&element).unwrap_or(&element), 0)),
                 _ => {
                     let node = self.node(id)?;
                     self.position(Anchor::After(node))
@@ -351,7 +365,8 @@ impl Applier<'_> {
     fn delete(&mut self, node: NodeId) -> Option<Anchor> {
         let mut gone = node;
         while let Some(parent) = self.tree.parent(gone) {
-            let wrapper = self.tree.element(parent).is_some_and(|e| !BLOCKS.contains(&local(&e.name)));
+            let kept = self.shown.contains(&parent) || self.wraps.contains(&parent);
+            let wrapper = !kept && self.tree.element(parent).is_some_and(|e| !BLOCKS.contains(&local(&e.name)));
             let alone = self.tree.children(parent).iter().all(|&c| c == gone || is_whitespace(&self.tree, c));
             if !(wrapper && alone) {
                 break;
@@ -366,6 +381,163 @@ impl Applier<'_> {
         self.tree.remove(gone);
         Some(self.anchor_at(parent, index))
     }
+}
+
+impl Applier<'_> {
+    /// The end of the innermost markup open in the shorthand (whichever end
+    /// token it is: they are alike). Added markup takes what was written
+    /// since its start; kept markup must end here in the file too. Returns
+    /// the anchor after it.
+    fn close(&mut self, anchor: Anchor) -> Option<Anchor> {
+        let element = self.open.pop()?;
+        if self.wraps.last() == Some(&element) {
+            let last = self.anchor_node(anchor)?;
+            self.absorb(last)?;
+            self.wraps.pop();
+        } else {
+            let last = self.anchor_node(anchor)?;
+            if last != element && !self.is_inside(last, element) {
+                return None;
+            }
+            self.closed.insert(element);
+        }
+        if !self.wraps.is_empty() {
+            self.absorb(element)?;
+        }
+        Some(Anchor::After(element))
+    }
+
+    /// Moves what was written since markup was added (up to `last`) into
+    /// it. `None` if `last` isn't after it in the same element.
+    fn absorb(&mut self, last: NodeId) -> Option<()> {
+        // Outermost first: what goes into nested markup goes into its outer
+        for i in 0..self.wraps.len() {
+            let wrap = self.wraps[i];
+            if last != wrap && !self.is_inside(last, wrap) {
+                self.absorb_into(wrap, last)?;
+            }
+        }
+        Some(())
+    }
+
+    fn absorb_into(&mut self, wrap: NodeId, last: NodeId) -> Option<()> {
+        let parent = self.tree.parent(wrap)?;
+        if self.tree.parent(last) != Some(parent) {
+            return None;
+        }
+        // Space before the first thing in it stays outside (`a <q><w>b`)
+        if self.tree.children(wrap).is_empty() {
+            let at = self.tree.index_in_parent(wrap)?;
+            while let Some(&next) = self.tree.children(parent).get(at + 1) {
+                if next == last || !is_whitespace(&self.tree, next) {
+                    break;
+                }
+                self.tree.move_to(next, parent, at);
+            }
+        }
+        let (from, to) = (self.tree.index_in_parent(wrap)? + 1, self.tree.index_in_parent(last)?);
+        if to < from {
+            return None;
+        }
+        let moving: Vec<NodeId> = self.tree.children(parent)[from..=to].to_vec();
+        for node in moving {
+            let at = self.tree.children(wrap).len();
+            self.tree.move_to(node, wrap, at);
+        }
+        Some(())
+    }
+
+    /// Whether segment `id` is in kept markup whose end has passed.
+    fn in_closed(&self, id: usize) -> bool {
+        let node = match self.source.places.get(id).cloned().flatten() {
+            Some(Place::Node(node) | Place::Open(node) | Place::Close(node) | Place::Text { node, .. }) => node,
+            None => return false,
+        };
+        let mut current = self.tree.parent(node);
+        while let Some(parent) = current {
+            if self.closed.contains(&parent) {
+                return true;
+            }
+            current = self.tree.parent(parent);
+        }
+        false
+    }
+
+    fn is_inside(&self, node: NodeId, ancestor: NodeId) -> bool {
+        let mut current = self.tree.parent(node);
+        while let Some(parent) = current {
+            if parent == ancestor {
+                return true;
+            }
+            current = self.tree.parent(parent);
+        }
+        false
+    }
+
+    /// The node an anchor stands after (or in), for [`absorb`](Self::absorb).
+    fn anchor_node(&mut self, anchor: Anchor) -> Option<NodeId> {
+        match anchor {
+            Anchor::After(node) | Anchor::Start(node) => Some(node),
+            Anchor::Segment(id) => self.node(id),
+        }
+    }
+
+    /// Puts an element's content in its place (its markup was removed).
+    fn unwrap(&mut self, element: NodeId) -> Option<Anchor> {
+        let parent = self.tree.parent(element)?;
+        let index = self.tree.index_in_parent(element)?;
+        for (i, node) in self.tree.children(element).to_vec().into_iter().enumerate() {
+            self.tree.move_to(node, parent, index + 1 + i);
+        }
+        self.tree.remove(element);
+        Some(self.anchor_at(parent, index))
+    }
+
+    /// Puts an element's content in a new element `markup` (shorthand such
+    /// as `.seg{`) stands for, with the old element's attributes.
+    fn rename(&mut self, element: NodeId, markup: &str) -> Option<()> {
+        let new = markup_element(markup)?;
+        let old = self.tree.element(element)?.clone();
+        if old.name == new.name && new.attributes.is_empty() {
+            return Some(());
+        }
+        let mut attributes = old.attributes.clone();
+        for attribute in new.attributes {
+            match attributes.iter_mut().find(|a| a.name == attribute.name) {
+                Some(a) => a.value = attribute.value,
+                None => attributes.push(attribute),
+            }
+        }
+        let parent = self.tree.parent(element)?;
+        let index = self.tree.index_in_parent(element)?;
+        let replacement = Element { name: new.name, namespaces: Vec::new(), attributes };
+        let node = self.tree.insert(parent, index, NodeKind::Element(Box::new(replacement)));
+        for (i, child) in self.tree.children(element).to_vec().into_iter().enumerate() {
+            self.tree.move_to(child, node, i);
+        }
+        self.tree.remove(element);
+        self.renamed.insert(element, node);
+        self.shown.insert(node);
+        Some(())
+    }
+}
+
+/// The element markup's start (`.q{`, `*{`, `.rdg[A]{`) stands for.
+fn markup_element(opener: &str) -> Option<Element> {
+    let closer = if opener == "*{" { "}*" } else { "}" };
+    let source = format!("{opener}x{closer}");
+    let tree = crate::parser::syntax::parse(&source);
+    let [node] = tree.nodes.as_slice() else { return None };
+    let crate::parser::syntax::SyntaxKind::Markup { markup, .. } = &node.kind else { return None };
+    if markup.pair.is_some() {
+        return None;
+    }
+    let attributes = markup
+        .attributes
+        .iter()
+        .map(|(name, value)| crate::document::Attribute { name: name.clone(), value: value.clone() })
+        .collect();
+    Some(Element { name: markup.name.clone(), namespaces: Vec::new(), attributes })
 }
 
 /// Parses compiled XML (any number of nodes) inside a wrapper declaring the
@@ -398,6 +570,18 @@ pub(super) fn apply_to_tree(
         created: HashMap::new(),
         edited: Vec::new(),
         stale: Vec::new(),
+        shown: segments
+            .iter()
+            .filter(|s| markup_segment(s) == Some(MarkupPart::Open))
+            .filter_map(|s| match source.places.get(s.id())?.as_ref()? {
+                Place::Open(node) => Some(*node),
+                _ => None,
+            })
+            .collect(),
+        wraps: Vec::new(),
+        open: Vec::new(),
+        closed: HashSet::new(),
+        renamed: HashMap::new(),
     };
     let mut anchor: Option<Anchor> = None;
     let mut anchor_segment: Option<usize> = None;
@@ -431,6 +615,18 @@ pub(super) fn apply_to_tree(
                 }
                 anchor = Some(Anchor::Start(new));
             }
+            PatchOperation::Insert { dsl, token, .. } if markup_token(dsl) == Some(MarkupPart::Open) => {
+                let (parent, index) = applier.position(anchor?)?;
+                let element = markup_element(dsl)?;
+                let node = applier.tree.insert(parent, index, NodeKind::Element(Box::new(element)));
+                applier.created.insert(node, *token);
+                applier.wraps.push(node);
+                applier.open.push(node);
+                anchor = Some(Anchor::Start(node));
+            }
+            PatchOperation::Insert { dsl, .. } if markup_token(dsl) == Some(MarkupPart::Close) => {
+                anchor = Some(applier.close(anchor?)?);
+            }
             PatchOperation::Insert { dsl, token, moved } => match anchor {
                 Some(at) => {
                     let (parent, index) = applier.position(at)?;
@@ -440,6 +636,7 @@ pub(super) fn apply_to_tree(
                     applier.mark_moved(&roots, *moved);
                     anchor = Some(Anchor::After(roots.last().copied().unwrap_or(newline)));
                 }
+                None if markup_token(dsl).is_some() => return None,
                 None => pending.push((dsl, *token, *moved)),
             },
             PatchOperation::Keep { segment_id }
@@ -459,7 +656,44 @@ pub(super) fn apply_to_tree(
                         index += 1;
                     }
                 }
+                let part = markup_segment(segment);
+                if part.is_none() && !applier.closed.is_empty() && applier.in_closed(*segment_id) {
+                    // In kept markup whose end the shorthand has passed
+                    return None;
+                }
                 anchor = Some(match patch {
+                    // Markup: kept or renamed (its start), removed, or ended
+                    PatchOperation::Keep { .. } | PatchOperation::Modify { .. } if part == Some(MarkupPart::Open) => {
+                        let node = applier.node(*segment_id)?;
+                        if let PatchOperation::Modify { new_dsl, .. } = patch {
+                            applier.rename(node, new_dsl)?;
+                        }
+                        let node = applier.node(*segment_id)?;
+                        if !applier.wraps.is_empty() {
+                            applier.absorb(node)?;
+                        }
+                        applier.open.push(node);
+                        Anchor::Segment(*segment_id)
+                    }
+                    PatchOperation::Keep { .. } | PatchOperation::Modify { .. } if part == Some(MarkupPart::Close) => {
+                        anchor_segment = Some(*segment_id);
+                        anchor = Some(applier.close(anchor?)?);
+                        continue;
+                    }
+                    PatchOperation::Delete { .. } if part == Some(MarkupPart::Open) => {
+                        let node = applier.node(*segment_id)?;
+                        applier.shown.remove(&node);
+                        applier.unwrap(node)?
+                    }
+                    // A pair's `=`, kept; or the end of markup removed (its
+                    // element went with its start)
+                    _ if part.is_some() => {
+                        if matches!(patch, PatchOperation::Keep { .. }) && part == Some(MarkupPart::Middle) {
+                            Anchor::Segment(*segment_id)
+                        } else {
+                            anchor?
+                        }
+                    }
                     PatchOperation::Modify { new_dsl, token, fresh, .. } => {
                         let node = applier.node(*segment_id)?;
                         match (segment, token_kind(new_dsl)) {
@@ -537,6 +771,10 @@ pub(super) fn apply_to_tree(
                     }
                     _ => Anchor::Segment(*segment_id),
                 });
+                if !applier.wraps.is_empty() {
+                    let last = applier.anchor_node(anchor?)?;
+                    applier.absorb(last)?;
+                }
                 anchor_segment = Some(*segment_id);
             }
         }

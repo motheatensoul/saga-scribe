@@ -263,6 +263,41 @@ struct Projector<'a> {
     spans: Vec<Option<(usize, usize)>>,
 }
 
+/// Elements the shorthand shows by name around the tokens they hold
+/// (`.q{…}`), besides those with short forms (`markup_of`).
+const SHOWN_AROUND: &[&str] = &[
+    "s", "q", "quote", "name", "surname", "addName", "roleName", "country", "region", "settlement", "geogName",
+    "title", "gloss", "damage", "sic", "orig", "reg", "me:expunged",
+];
+
+/// Whether the shorthand shows an element named `name` (with its prefix)
+/// when it stands around tokens, as `markup_of` does (if it holds something
+/// and no paragraph).
+pub(crate) fn shown_around(name: &str) -> bool {
+    SHOWN_AROUND.contains(&name)
+        || matches!(name, "hi" | "seg" | "surplus" | "persName" | "forename" | "placeName" | "rdg" | "corr")
+}
+
+/// How the shorthand shows an element around tokens.
+enum Shown {
+    /// `.q{` … `}`
+    Around { open: String, close: String },
+    /// `.corr{` first `=` second `}`
+    Pair { open: String, first: NodeId, middle: String, second: NodeId, close: String },
+}
+
+/// Text in `[…]` with `]` and `\` escaped.
+fn escape_brackets(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, ']' | '[' | '{' | '<' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 impl Projector<'_> {
     // ------------------------------------------------------------------
     // The tree, as the extractor read libxml2's
@@ -395,6 +430,11 @@ impl Projector<'_> {
                         };
                         self.push(segment, Some(id), self.element_span(id));
                     }
+                    "choice" if matches!(self.markup_of(id), Some(Shown::Pair { .. })) => {
+                        if let Some(Shown::Pair { open, first, middle, second, close }) = self.markup_of(id) {
+                            self.emit_pair(id, open, first, middle, second, close);
+                        }
+                    }
                     "choice" => {
                         let segment = self.extract_choice(id);
                         self.push(segment, Some(id), self.element_span(id));
@@ -467,12 +507,18 @@ impl Projector<'_> {
                             }
                         }
                     }
-                    _ => self.emit_structural(id),
+                    _ => match self.markup_of(id) {
+                        Some(Shown::Around { open, close }) => self.emit_tags(id, Some(open), Some(close)),
+                        Some(Shown::Pair { open, first, middle, second, close }) => {
+                            self.emit_pair(id, open, first, middle, second, close)
+                        }
+                        None => self.emit_structural(id),
+                    },
                 }
             }
             NodeKind::Text(content) => self.process_text(id, content),
             NodeKind::Comment(text) => {
-                let segment = Segment::Structural { id: self.next_id(), xml: format!("<!--{}-->", text) };
+                let segment = Segment::Structural { id: self.next_id(), xml: format!("<!--{}-->", text), shown: None };
                 self.push(segment, Some(id), None);
             }
             _ => {}
@@ -571,22 +617,97 @@ impl Projector<'_> {
     }
 
     fn emit_structural(&mut self, id: NodeId) {
+        self.emit_tags(id, None, None);
+    }
+
+    /// An element's start tag, its content and its end tag, the tags shown
+    /// as `open` and `close` if the shorthand shows them.
+    fn emit_tags(&mut self, id: NodeId, open: Option<String>, close: Option<String>) {
         let tags = self.tree.tags(id);
         let open_span = tags.as_ref().and_then(|(open, _)| self.relative(open.clone()));
         let xml = self.open_tag(id);
-        let open = if self.local(id) == "p" {
+        let start = if self.local(id) == "p" {
             Segment::Paragraph { id: self.next_id(), xml }
         } else {
-            Segment::Structural { id: self.next_id(), xml }
+            Segment::Structural { id: self.next_id(), xml, shown: open }
         };
-        self.push(open, Some(id), open_span);
+        self.push(start, Some(id), open_span);
         for child in self.tree.children(id).to_vec() {
             self.process_node(child);
         }
         let close_span = tags.and_then(|(_, close)| self.relative(close));
         let name = &self.tree.element(id).expect("an element").name;
-        let close = Segment::Structural { id: self.next_id(), xml: format!("</{}>", name) };
-        self.push(close, Some(id), close_span);
+        let end = Segment::Structural { id: self.next_id(), xml: format!("</{}>", name), shown: close };
+        self.push(end, Some(id), close_span);
+    }
+
+    /// A pair in a `<choice>` (`<sic>`, `<corr>`): `.corr{` on the choice's
+    /// start tag, `=` on the first half's end tag, `}` on the choice's end.
+    fn emit_pair(&mut self, id: NodeId, open: String, first: NodeId, middle: String, second: NodeId, close: String) {
+        let tags = self.tree.tags(id);
+        let open_span = tags.as_ref().and_then(|(open, _)| self.relative(open.clone()));
+        let xml = self.open_tag(id);
+        self.push(Segment::Structural { id: self.next_id(), xml, shown: Some(open) }, Some(id), open_span);
+        for child in self.tree.children(id).to_vec() {
+            if child == first {
+                self.emit_tags(child, None, Some(middle.clone()));
+            } else if child == second {
+                self.emit_tags(child, None, None);
+            } else {
+                self.process_node(child);
+            }
+        }
+        let close_span = tags.and_then(|(_, close)| self.relative(close));
+        let name = &self.tree.element(id).expect("an element").name;
+        let end = Segment::Structural { id: self.next_id(), xml: format!("</{}>", name), shown: Some(close) };
+        self.push(end, Some(id), close_span);
+    }
+
+    /// How the shorthand shows element `id` around the tokens in it, if it
+    /// does: markup it has a sign for (`.q{…}`, `*{…}*`, a pair), holding
+    /// something and no paragraph (`.p` can't be inside markup).
+    fn markup_of(&self, id: NodeId) -> Option<Shown> {
+        let element = self.tree.element(id)?;
+        let holds_something = self.tree.children(id).iter().any(|&c| match self.tree.kind(c) {
+            NodeKind::Element(_) => true,
+            NodeKind::Text(t) => !t.trim().is_empty(),
+            _ => false,
+        });
+        if !holds_something || self.tree.descendants(id).iter().any(|&d| self.local(d) == "p") {
+            return None;
+        }
+        let local = self.local(id);
+        if local == "choice" {
+            let halves: Vec<NodeId> = self.tree.children(id).iter().copied().filter(|&c| self.is_element(c)).collect();
+            let [first, second] = halves.as_slice() else { return None };
+            let opener = match (self.local(*first), self.local(*second)) {
+                ("sic", "corr") => ".corr{",
+                ("orig", "reg") => ".trans{",
+                _ => return None,
+            };
+            return Some(Shown::Pair {
+                open: opener.to_string(),
+                first: *first,
+                middle: "=".to_string(),
+                second: *second,
+                close: "}".to_string(),
+            });
+        }
+        let (open, close) = match local {
+            "hi" => ("*{".to_string(), "}*"),
+            "seg" => ("&{".to_string(), "}"),
+            "surplus" => ("${".to_string(), "}"),
+            "persName" => (".psname{".to_string(), "}"),
+            "forename" => (".fname{".to_string(), "}"),
+            "placeName" => (".plname{".to_string(), "}"),
+            "rdg" => match self.property(id, "wit") {
+                Some(wit) => (format!(".rdg[{}]{{", escape_brackets(&wit)), "}"),
+                None => (".rdg{".to_string(), "}"),
+            },
+            _ if SHOWN_AROUND.contains(&element.name.as_str()) => (format!(".{}{{", element.name), "}"),
+            _ => return None,
+        };
+        Some(Shown::Around { open, close: close.to_string() })
     }
 
     fn has_element_children(&self, id: NodeId) -> bool {

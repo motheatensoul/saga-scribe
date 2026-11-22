@@ -212,7 +212,7 @@ impl Patcher {
         if let Some(at) = tokens.iter().position(|t| not_yet_in_files(t)) {
             let (line, column) = crate::parser::syntax::line_col(edited_dsl, spans[at].start);
             return Err(format!(
-                "Line {line}, column {column}: {} can't be used in an imported file yet (markup around words, column breaks and changes of hand)",
+                "Line {line}, column {column}: {} can't be used in an imported file yet (column breaks and changes of hand)",
                 tokens[at]
             ));
         }
@@ -517,14 +517,21 @@ pub fn rewrite_unedited(
     let mut edits = Vec::with_capacity(a.len().max(b.len()));
     diff_range(&a, &b, 0, 0, &mut edits);
     let mut kept_at: HashMap<usize, usize> = HashMap::new();
+    // Also the edited ones: which token of `dsl` each old token became
+    let mut became: HashMap<usize, usize> = HashMap::new();
     let mut j = 0;
     for edit in &edits {
         match *edit {
             Edit::Keep(i) => {
                 kept_at.insert(i, j);
+                became.insert(i, j);
                 j += 1;
             }
-            Edit::Insert(k) | Edit::Replace(_, k) => j = k + 1,
+            Edit::Replace(i, k) => {
+                became.insert(i, k);
+                j = k + 1;
+            }
+            Edit::Insert(k) => j = k + 1,
             Edit::Delete(_) => {}
         }
     }
@@ -603,6 +610,33 @@ pub fn rewrite_unedited(
     }
 
     let mut replacements: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
+    // Fresh tokens of markup that had none before
+    let mut new_markup: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for segment in fresh {
+        if !matches!(segment, Segment::Structural { shown: Some(_), .. }) {
+            continue;
+        }
+        let Some(&[f]) = fresh_of.get(&segment.id()).map(Vec::as_slice) else { continue };
+        let root = find(&mut parent, m + f);
+        if groups.get(&root).is_some_and(|(olds, _, _)| olds.is_empty()) {
+            new_markup.insert(f);
+        }
+    }
+    // Such markup inside a run of a group, rewritten with it
+    let mut in_runs: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    // Where in `dsl` each fresh token of an unedited group is
+    let mut stored_at: std::collections::BTreeMap<usize, std::ops::Range<usize>> = Default::default();
+    for (olds, freshes, broken) in groups.values() {
+        if *broken || olds.is_empty() || freshes.is_empty() {
+            continue;
+        }
+        let at: Vec<usize> = olds.iter().filter_map(|i| became.get(i).copied()).collect();
+        let (Some(&first), Some(&last)) = (at.iter().min(), at.iter().max()) else { continue };
+        let range = spans[first].start..spans[last].end;
+        for &f in freshes {
+            stored_at.insert(f, range.clone());
+        }
+    }
     for (olds, freshes, broken) in groups.values() {
         if *broken || olds.is_empty() {
             continue;
@@ -617,8 +651,13 @@ pub fn rewrite_unedited(
         // Every old token unedited, and next to each other in `dsl`
         let Some(at) = olds.iter().map(|i| kept_at.get(i).copied()).collect::<Option<Vec<usize>>>() else { continue };
         let consecutive = |v: &[usize]| v.windows(2).all(|w| w[1] == w[0] + 1);
-        if !consecutive(&at) || !consecutive(freshes) {
+        // Fresh tokens next to each other, or with new markup between them
+        let fresh_run = freshes.windows(2).all(|w| (w[0] + 1..w[1]).all(|f| new_markup.contains(&f)));
+        if !consecutive(&at) || !fresh_run {
             continue;
+        }
+        for w in freshes.windows(2) {
+            in_runs.extend(w[0] + 1..w[1]);
         }
         let (first, last) = (freshes[0], freshes[freshes.len() - 1]);
         let text = fresh_dsl.get(fresh_spans[first].start..fresh_spans[last].end)?;
@@ -627,10 +666,61 @@ pub fn rewrite_unedited(
             replacements.push((range, text));
         }
     }
-    replacements.sort_by_key(|(range, _)| range.start);
+    // Markup shown now that wasn't before (rules 10): its tokens go in
+    // where they stand among the unedited tokens, a start before the next,
+    // an end (or a pair's `=`) after the one before. Inside a run of
+    // tokens that were one before (`///3vtil`, rules 1), it comes with the
+    // run's new text.
+    let mut added: Vec<(usize, usize, String)> = Vec::new();
+    for segment in fresh {
+        let Segment::Structural { shown: Some(shown), .. } = segment else { continue };
+        let Some(&[f]) = fresh_of.get(&segment.id()).map(Vec::as_slice) else { continue };
+        if !new_markup.contains(&f) || in_runs.contains(&f) {
+            continue;
+        }
+        // Its neighbours (other new markup aside): a start goes before the
+        // next if that is in `dsl`, else after the one before; an end the
+        // other way round
+        let next = (f + 1..n).find(|g| !new_markup.contains(g));
+        let previous = (0..f).rev().find(|g| !new_markup.contains(g));
+        let before_next = next.and_then(|g| stored_at.get(&g)).map(|r| r.start);
+        let after_previous = previous.and_then(|g| stored_at.get(&g)).map(|r| r.end);
+        let opens = shown.ends_with('{');
+        let at = match (opens, before_next, after_previous) {
+            (true, Some(at), _) | (true, None, Some(at)) | (false, _, Some(at)) | (false, Some(at), None) => at,
+            (true, None, None) | (false, None, None) => {
+                // Neither neighbour unedited: the nearest unedited token
+                match if opens { stored_at.range(f + 1..).next() } else { stored_at.range(..f).next_back() } {
+                    Some((_, range)) if opens => range.start,
+                    Some((_, range)) => range.end,
+                    None => return None,
+                }
+            }
+        };
+        // Never before markup added before it (an empty `*{}*`)
+        let at = added.last().map_or(at, |&(last, _, _)| at.max(last));
+        let joins = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace() && c != '{' && c != '=');
+        let text = if opens && joins(dsl[..at].chars().next_back()) {
+            format!(" {shown}")
+        } else if !opens && dsl[at..].chars().next().is_some_and(|c| !c.is_whitespace() && c != '}' && c != '=') {
+            format!("{shown} ")
+        } else {
+            shown.clone()
+        };
+        added.push((at, f, text));
+    }
+    // Markup added goes before a replacement at its place (a start) and
+    // after one ending there (an end); several in the order they stand
+    let count = replacements.len() + added.len();
+    let mut replacements: Vec<(std::ops::Range<usize>, usize, &str)> = replacements
+        .into_iter()
+        .map(|(range, text)| (range, usize::MAX, text))
+        .chain(added.iter().map(|(at, f, text)| (*at..*at, *f, text.as_str())))
+        .collect();
+    replacements.sort_by_key(|(range, f, _)| (range.start, range.end, *f));
     let mut out = String::with_capacity(dsl.len() + 64);
     let mut from = 0;
-    for (range, text) in &replacements {
+    for (range, _, text) in &replacements {
         if range.start < from {
             return None;
         }
@@ -639,7 +729,7 @@ pub fn rewrite_unedited(
         from = range.end;
     }
     out.push_str(&dsl[from..]);
-    Some((out, replacements.len()))
+    Some((out, count))
 }
 
 /// The shorthand `stored` (saved with a project) with the places where it
@@ -1067,6 +1157,10 @@ impl OriginalTokens {
 /// breaks, paragraph starts), for checking both readings agree.
 #[cfg(test)]
 pub fn segment_dsl_token(seg: &Segment) -> Option<String> {
+    // Markup's start or end is a token, but doesn't parse on its own
+    if let Segment::Structural { shown: Some(shown), .. } = seg {
+        return Some(shown.clone());
+    }
     let text = segment_token_text(seg)?;
     let tokens = parse_dsl_to_tokens(&text).ok()?;
     match tokens.as_slice() {
@@ -1096,15 +1190,15 @@ fn segment_token_text(seg: &Segment) -> Option<String> {
             None => "///".to_string(),
         }),
         Segment::Paragraph { .. } => Some(PARAGRAPH.to_string()),
+        Segment::Structural { shown: Some(shown), .. } => Some(shown.clone()),
         _ => None,
     }
 }
 
 /// A token the importer doesn't write yet, so it has no place in the file's
-/// tree: the start or end of markup around words, a column break, a change
-/// of hand.
+/// tree: a column break, a change of hand.
 fn not_yet_in_files(token: &str) -> bool {
-    token.ends_with('{') || matches!(token, "}" | "}*") || token.starts_with(".hs{") || token.starts_with("///c=")
+    token.starts_with(".hs{") || token.starts_with("///c=")
 }
 
 fn parse_dsl_to_tokens(dsl: &str) -> Result<Vec<String>, String> {
@@ -1280,12 +1374,17 @@ pub fn render_body(
     }
 
     let patches = separate_paragraph_edits(&doc.segments, patches);
+    let patches = separate_markup_edits(&doc.segments, &patches);
     check_paragraph_edits(&doc.segments, &patches)?;
+    let markup = check_markup_edits(&doc.segments, &patches)?;
     let originals = Originals::new(tree);
 
     if let Some(tree) = tree {
         if let Some(rendered) = apply_to_tree(tree, &doc.segments, &patches, compiler) {
             return Ok(rendered);
+        }
+        if markup {
+            return Err(MARKUP_DOESNT_FIT.to_string());
         }
         log::warn!("The edits don't fit the document's tree; falling back to reconstruction");
         // Tests that give a tree expect it to take the edits
@@ -1294,6 +1393,9 @@ pub fn render_body(
         }
     }
 
+    if markup {
+        return Err(MARKUP_DOESNT_FIT.to_string());
+    }
     // Rebuilding inserts at segment boundaries only, which may not be where
     // the split belongs (after closing tags); merges are still fine
     if patches
@@ -1391,6 +1493,167 @@ fn separate_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) ->
         }
     }
     out
+}
+
+/// Markup's part a token is: the start (`.q{`, `*{`, `.rdg[A]{`), or the
+/// end (`}`, `}*`). The `=` of a pair is only known from its segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MarkupPart {
+    Open,
+    Middle,
+    Close,
+}
+
+/// The markup part `token` is, if it is one.
+pub(super) fn markup_token(token: &str) -> Option<MarkupPart> {
+    if matches!(token, "}" | "}*") {
+        return Some(MarkupPart::Close);
+    }
+    let open = token.ends_with('{')
+        && !token.contains(char::is_whitespace)
+        && (matches!(token, "*{" | "&{" | "${") || crate::parser::syntax::markup_name(token).is_some());
+    open.then_some(MarkupPart::Open)
+}
+
+/// The markup part a segment is (a shown tag), if it is one.
+pub(super) fn markup_segment(segment: &Segment) -> Option<MarkupPart> {
+    let Segment::Structural { shown: Some(shown), .. } = segment else { return None };
+    Some(match shown.as_str() {
+        "=" => MarkupPart::Middle,
+        s if s.ends_with('{') => MarkupPart::Open,
+        _ => MarkupPart::Close,
+    })
+}
+
+/// Whether a markup start is a pair's (`.corr{`, `.trans{`).
+fn is_pair_opener(token: &str) -> bool {
+    matches!(token, ".corr{" | ".trans{")
+}
+
+pub(super) const MARKUP_DOESNT_FIT: &str = "Markup around words must start and end in the same element of the file (inside one paragraph, sentence or other markup); this change to it can't be made here";
+
+/// Rewrites patches so that markup's starts and ends are only ever kept,
+/// deleted, inserted or (a start) renamed on their own, never "modified"
+/// into a word or from one.
+fn separate_markup_edits(segments: &[Segment], patches: &[PatchOperation]) -> Vec<PatchOperation> {
+    let markup: HashMap<usize, MarkupPart> =
+        segments.iter().filter_map(|s| Some((s.id(), markup_segment(s)?))).collect();
+    let mut out = Vec::with_capacity(patches.len());
+    for patch in patches {
+        let PatchOperation::Modify { segment_id, new_dsl, token, fresh } = patch else {
+            out.push(patch.clone());
+            continue;
+        };
+        let was = markup.get(segment_id).copied();
+        let chunks: Vec<&str> = new_dsl.split(' ').collect();
+        let has_markup = chunks.iter().any(|c| markup_token(c).is_some());
+        if was.is_none() && !has_markup {
+            out.push(patch.clone());
+            continue;
+        }
+        if let (Some(part), [only]) = (was, chunks.as_slice()) {
+            if markup_token(only) == Some(part) || (part == MarkupPart::Middle && *only == "=") {
+                out.push(patch.clone());
+                continue;
+            }
+        }
+        // The runs of other tokens between markup, each inserted (or, the
+        // first, modifying a word that was one)
+        let mut pieces: Vec<String> = Vec::new();
+        let mut run: Vec<&str> = Vec::new();
+        for chunk in chunks {
+            if markup_token(chunk).is_some() {
+                if !run.is_empty() {
+                    pieces.push(run.join(" "));
+                    run.clear();
+                }
+                pieces.push(chunk.to_string());
+            } else {
+                run.push(chunk);
+            }
+        }
+        if !run.is_empty() {
+            pieces.push(run.join(" "));
+        }
+        let insert = |dsl: String| PatchOperation::Insert { dsl, token: *token, moved: None };
+        match pieces.iter().position(|p| markup_token(p).is_none()) {
+            Some(0) if was.is_none() => {
+                let mut pieces = pieces.into_iter();
+                let first = pieces.next().unwrap_or_default();
+                out.push(PatchOperation::Modify { segment_id: *segment_id, new_dsl: first, token: *token, fresh: *fresh });
+                out.extend(pieces.map(insert));
+            }
+            _ => {
+                out.push(PatchOperation::Delete { segment_id: *segment_id });
+                out.extend(pieces.into_iter().map(insert));
+            }
+        }
+    }
+    out
+}
+
+/// Checks that markup edits are ones the tree can take: a start and end
+/// added together, removed together, or a start renamed; pairs (`.corr{…}`)
+/// are kept as they are. Returns whether markup is edited at all.
+///
+/// # Errors
+///
+/// Describes the first edit that can't be made.
+fn check_markup_edits(segments: &[Segment], patches: &[PatchOperation]) -> Result<bool, String> {
+    let by_id: HashMap<usize, &Segment> = segments.iter().map(|s| (s.id(), s)).collect();
+    #[derive(PartialEq)]
+    enum Open {
+        Kept,
+        Removed,
+        Added,
+    }
+    let mut stack: Vec<Open> = Vec::new();
+    let mut edited = false;
+    let mismatch = || "Markup around words doesn't close where it was opened: each start (such as .q{) needs its end (}) around the same words".to_string();
+    for patch in patches {
+        let (part, kind, renamed) = match patch {
+            PatchOperation::Insert { dsl, .. } => match markup_token(dsl) {
+                Some(part) => {
+                    if is_pair_opener(dsl) {
+                        return Err(format!("{dsl}…}} can't be added to an imported file yet"));
+                    }
+                    (part, Open::Added, false)
+                }
+                None => continue,
+            },
+            PatchOperation::Keep { segment_id } | PatchOperation::Delete { segment_id } | PatchOperation::Modify { segment_id, .. } => {
+                let Some(segment) = by_id.get(segment_id) else { continue };
+                let Some(part) = markup_segment(segment) else { continue };
+                let shown = match segment {
+                    Segment::Structural { shown: Some(shown), .. } => shown.as_str(),
+                    _ => "",
+                };
+                let deleted = matches!(patch, PatchOperation::Delete { .. });
+                let renamed = matches!(patch, PatchOperation::Modify { new_dsl, .. } if new_dsl != shown);
+                let pair = is_pair_opener(shown) || part == MarkupPart::Middle;
+                if (deleted || renamed) && (pair || (part == MarkupPart::Open && matches!(patch, PatchOperation::Modify { new_dsl, .. } if is_pair_opener(new_dsl)))) {
+                    return Err("A pair (.corr{…=…}, .trans{…=…}) can't be changed in an imported file yet".to_string());
+                }
+                (part, if deleted { Open::Removed } else { Open::Kept }, renamed)
+            }
+        };
+        edited |= kind != Open::Kept || renamed;
+        // Ends are alike: each closes the innermost markup open in the
+        // edited shorthand (removed ones aren't in it)
+        match (part, kind) {
+            (MarkupPart::Open, Open::Removed) | (MarkupPart::Close, Open::Removed) | (MarkupPart::Middle, _) => {}
+            (MarkupPart::Open, kind) => stack.push(kind),
+            (MarkupPart::Close, _) => {
+                if stack.pop().is_none() {
+                    return Err(mismatch());
+                }
+            }
+        }
+    }
+    if !stack.is_empty() {
+        return Err(mismatch());
+    }
+    Ok(edited)
 }
 
 /// Where paragraph breaks can be inserted or removed, from the document's

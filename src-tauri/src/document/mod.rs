@@ -24,7 +24,7 @@ mod write;
 
 pub use merge::{as_different_word, merge_word_edit, with_annotation_markup, with_compiled_attributes};
 pub use project::{find_body, project_body, project_body_with, word_dsl};
-pub use tree::{Element, NodeId, NodeKind, Tree};
+pub use tree::{Attribute, Element, NodeId, NodeKind, Tree};
 #[cfg(test)]
 pub use tree::node_data_size;
 pub use write::Piece;

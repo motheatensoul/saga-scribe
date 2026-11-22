@@ -247,7 +247,7 @@ pub fn onto_tree(stored: &ImportedDocument, dsl: &str, preamble: &str, body: &st
         .iter()
         .filter_map(|s| Some(((kind(s), (*fresh_spans.get(s.id())?)?), s.id())))
         .collect();
-    let structural = std::mem::discriminant(&Segment::Structural { id: 0, xml: String::new() });
+    let structural = std::mem::discriminant(&Segment::Structural { id: 0, xml: String::new(), shown: None });
     // Where the fresh segments the shorthand shows are, in order
     let mut shown: Vec<(usize, usize)> = projection
         .segments

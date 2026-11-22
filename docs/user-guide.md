@@ -153,7 +153,8 @@ Where the markup stands on its own between words, it goes around the words it ho
 each still a word of its own (`.psname{.fname{Ari} fróði}` is a `<persName>` around two
 `<w>`). Attached to letters, it is inside the word (`*{A}*nnat` is `<w><hi>A</hi>nnat</w>`,
 on each level of a MENOTA word). Markup around words can't contain a paragraph break
-(`.p`). In an imported file it can't be added yet; inside words it can.
+(`.p`). For imported files, see [TEI-XML](#tei-xml); column breaks and changes of hand
+can't be added to them yet.
 
 ### Abbreviations
 
@@ -551,8 +552,8 @@ After a TEI file is imported, **Transcription of the imported file** shows how t
 encodes its transcription, as read from it: which levels its words have (facsimile,
 diplomatic, normalized) and how many of them have each, whether the levels are in a
 `<choice>`, how abbreviations and punctuation are encoded, the file's lineations if it has
-several, and the markup the shorthand has no syntax for (such as `<hi>` or `<s>`), with
-counts. That markup is kept as it is, also in words you edit. Words you add in the editor
+several, and the markup the shorthand doesn't show (such as `<l>`, or `<hi>` inside a
+word), with counts. That markup is kept as it is, also in words you edit. Words you add in the editor
 are written with the levels ticked under **Levels**: change them if the file's reading is
 wrong, then **Confirm**. Words already in the file are not changed. The choice is saved
 with the project.
@@ -574,6 +575,18 @@ nothing between them, the shorthand sets them apart: a note by a space (`skrims 
 where `skrims^{sic}` would put the note inside the word), others by `|` (`þꝩi|at`, two words
 written together). Characters that would otherwise split a word are escaped (`iðran\;`), and
 a `<num>` is written `#…#`.
+
+Markup around words that the shorthand has a sign for is shown around them
+([Other markup](#other-markup)): `<s>` as `.s{…}`, `<q>` as `.q{…}`, `<persName>` as
+`.psname{…}`, `<hi>` as `*{…}*`, `<seg>` as `&{…}`, `<sic>` and `<corr>` in a `<choice>` as
+`.corr{…=…}`, and so on, unless it holds a paragraph. Its attributes are kept (a reading's
+witness is shown, `.rdg[AM70]{…}`). Typing such markup around words puts them in a new
+element; deleting its start and end takes the element away and leaves its words; changing
+its name (`.q{` to `.seg{`) puts the words in an element of the new name, with the old one's
+attributes. Markup has to start and end in the same element of the file: around words of
+one sentence, say, not from the middle of one sentence into the next. Moving where
+existing markup ends, and changing a pair (`.corr{…=…}`), isn't possible in the shorthand
+yet. Projects imported before have the markup put into their shorthand when opened.
 
 An imported document is marked **Imported** in the editor header. In this mode, the
 original file is kept and only edited passages are rewritten when the document is saved or

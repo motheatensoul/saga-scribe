@@ -121,15 +121,21 @@ when it is done (and record it in CHANGELOG.md if users notice).
     The aim is at least every element the MENOTA handbook recommends. Done (2026-11-22):
     parsing and compiling all of the forms below (new documents), the editor's
     highlighting, the help dialog and the user guide. Left:
-    - the importer writing them (a `DSL_RULES` bump): markup around tokens as its start
-      and end tokens (`Node::Open`/`Close`) paired with the element's tags (`Structural`
-      segments today), so wrapping, unwrapping and moving them is applied to the tree;
-      until then they are refused in imported files (`not_yet_in_files`). Corpus survey
+    - (done 2026-11-22, DSL rules 10: markup around tokens is shown on import, its tags
+      `Structural` segments with `shown`; wrapping, unwrapping and renaming are applied
+      to the tree, `apply.rs`; older projects get it in their shorthand, `rewrite_unedited`)
+      left for imported files: moving where kept markup ends (`.s{a b} c` to
+      `.s{a b c}`) and editing pairs are refused; `<cb>` (`///c=`) and `<handShift>`
+      (`.hs{…}`) aren't shown and are refused (`not_yet_in_files`); markup inside a word's
+      levels isn't shown. Corpus survey
       of where each sits (2026-11-22): around tokens `<s>` 8,419, `<seg>` 8,446, `<q>`
       5,592, `<name>` 4,981, `<rdg>` 4,505, `<persName>` 754, `<hi>` 3,201, `<surplus>`
       319; inside a word's levels `<c>` 9,180, `<hi>` 7,408, `<sic>`/`<corr>` 1,462/1,196
       (mostly in a `<choice>` there), `<seg>` 908, `<cb>` 771, `<space>` 64, `<subst>` 48;
       between tokens `<cb>` 2,676, `<handShift>` 85;
+    - a `<choice><sic>…</sic><corr>…</corr></choice>` inside a word's level (AM 178 fol)
+      reads as both texts run together (`hiørthiørtur`), and a letter typed at its end is
+      lost (the level is kept as it was); it should read `.corr{hiørt=hiørtur}`;
     - markup inside a word that is on some levels only (`<hi>` on facs and dipl): the
       shorthand puts it on every level;
     - attributes from the word panel (below).

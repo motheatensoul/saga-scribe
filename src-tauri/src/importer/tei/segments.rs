@@ -30,6 +30,11 @@ pub enum Segment {
     Structural {
         id: usize,
         xml: String, // Exact XML fragment: "<div type=\"chapter\" n=\"1\">"
+        /// The shorthand of a tag of markup the shorthand shows around
+        /// tokens: `.q{` for `<q>`, `}` for `</q>`, `=` between the halves
+        /// of a pair (DSL rules 10)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shown: Option<String>,
     },
 
     /// The start tag of a paragraph (`<p>`), shown as `.p` in the DSL so
@@ -195,7 +200,10 @@ fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
 /// - 9: a word whose levels differ in letterforms too (facs `ꝼ`, dipl `f`)
 ///   is written with its facsimile text and `{mark=expansion}`, no longer
 ///   as a whole `.abbr[facs]{dipl}`.
-pub const DSL_RULES: u32 = 9;
+/// - 10: markup around tokens that the shorthand has a sign for is shown
+///   (`.q{…}`, `*{…}*`, `&{…}`, `.psname{…}`, `.corr{sic=corr}`, …), its
+///   tags `Structural` segments with `shown` set.
+pub const DSL_RULES: u32 = 10;
 
 impl ImportedDocument {
     /// Drops the copies of the file's XML that words and punctuation hold
