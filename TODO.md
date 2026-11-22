@@ -136,6 +136,12 @@ when it is done (and record it in CHANGELOG.md if users notice).
     - a `<choice><sic>…</sic><corr>…</corr></choice>` inside a word's level (AM 178 fol)
       reads as both texts run together (`hiørthiørtur`), and a letter typed at its end is
       lost (the level is kept as it was); it should read `.corr{hiørt=hiørtur}`;
+    - (done 2026-11-22: markup inside a word is shown where it covers part of it, from
+      the level the shorthand follows) markup over a whole word (`<w><hi>ok</hi></w>`,
+      a whole-word `<choice><sic>…</sic><corr>…</corr></choice>`) stays hidden: shown, it
+      would read as markup around the word. Text typed at its edge goes outside it, so
+      the word then shows it (`Aꝸ` reads `*{A}*ꝸ` once compiled or opened again). The
+      import dialog still counts markup inside words as unsupported;
     - markup inside a word that is on some levels only (`<hi>` on facs and dipl): the
       shorthand puts it on every level;
     - attributes from the word panel (below).

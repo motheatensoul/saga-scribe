@@ -587,6 +587,10 @@ attributes. Markup has to start and end in the same element of the file: around 
 one sentence, say, not from the middle of one sentence into the next. Moving where
 existing markup ends, and changing a pair (`.corr{…=…}`), isn't possible in the shorthand
 yet. Projects imported before have the markup put into their shorthand when opened.
+Inside a word, `<hi>`, `<c>`, `<seg>`, `<surplus>`, `<damage>` and a `<sic>`/`<corr>` pair
+are shown where they stand (`*{A}*nnat`, `.c{S}tephan`, `mikill.corr{mikit=mikit}`) when they
+cover part of the word; markup over the whole word stays hidden there (it would read as
+markup around the word), as does markup on the other levels, which an edit keeps.
 
 An imported document is marked **Imported** in the editor header. In this mode, the
 original file is kept and only edited passages are rewritten when the document is saved or

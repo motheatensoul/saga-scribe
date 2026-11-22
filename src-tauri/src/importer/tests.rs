@@ -1826,7 +1826,7 @@ fn test_deletions_and_unclear_readings_with_markup_read_as_tokens() {
 #[test]
 fn test_edited_numeral_keeps_its_attributes_and_markup() {
     let xml = menota_body(
-        r#"<w><me:facs>ok</me:facs></w> <num value="10"><me:facs>.<hi rend="red">x</hi>.</me:facs><me:dipl>.x.</me:dipl></num> <w><me:facs>ok</me:facs></w>"#,
+        r#"<w><me:facs>ok</me:facs></w> <num value="10"><me:facs>.<foreign rend="red">x</foreign>.</me:facs><me:dipl>.x.</me:dipl></num> <w><me:facs>ok</me:facs></w>"#,
     );
     let (_, body) = imported_roundtrip(&xml, |d| {
         assert!(d.contains("#.x.#"), "{d}");
@@ -1834,15 +1834,15 @@ fn test_edited_numeral_keeps_its_attributes_and_markup() {
     })
     .unwrap();
     assert!(
-        body.contains(r#"<num value="10"><me:facs>.<hi rend="red">x</hi>v.</me:facs><me:dipl>.xv.</me:dipl></num>"#),
+        body.contains(r#"<num value="10"><me:facs>.<foreign rend="red">x</foreign>v.</me:facs><me:dipl>.xv.</me:dipl></num>"#),
         "{body}"
     );
 }
 
 const MOVABLE: &str = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
-<p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé" me:msa="xNC"><me:dipl>b<hi rend="red">e</hi></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p>
+<p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé" me:msa="xNC"><me:dipl>b<foreign rend="red">e</foreign></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p>
 </body></text></TEI>"#;
-const MOVED_WORD: &str = r#"<w lemma="bé" me:msa="xNC"><me:dipl>b<hi rend="red">e</hi></me:dipl></w>"#;
+const MOVED_WORD: &str = r#"<w lemma="bé" me:msa="xNC"><me:dipl>b<foreign rend="red">e</foreign></me:dipl></w>"#;
 
 #[test]
 fn test_a_word_cut_and_pasted_elsewhere_is_moved_with_its_markup() {
@@ -2187,3 +2187,17 @@ fn test_markup_goes_into_an_older_projects_shorthand() {
 }
 
 
+
+/// Markup inside a word is shown where it stands (rules 10), unless it
+/// would read as markup around the word; an edit of the word keeps it on the
+/// levels that have it.
+#[test]
+fn test_markup_inside_words_is_shown() {
+    let xml = menota_body(
+        r#"<w><me:facs><hi rend="orncp">A</hi>nnat</me:facs><me:dipl>Annat</me:dipl></w> <w><me:facs><c type="littNot">S</c>tephan</me:facs><me:dipl>Stephan</me:dipl></w> <w><me:facs><hi>ok</hi></me:facs><me:dipl>ok</me:dipl></w> <w><me:dipl>mikill<choice><sic>mikit</sic><corr>mikit</corr></choice></me:dipl></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p *{A}*nnat .c{S}tephan ok mikill.corr{mikit=mikit}");
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace("*{A}*nnat", "*{A}*nnatt")).unwrap();
+    assert_eq!(body, original.replace("<hi rend=\"orncp\">A</hi>nnat</me:facs><me:dipl>Annat", "<hi rend=\"orncp\">A</hi>nnatt</me:facs><me:dipl>Annatt"));
+}

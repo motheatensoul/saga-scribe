@@ -1603,7 +1603,7 @@ mod imported_identity_tests {
 
     #[test]
     fn test_a_word_cut_and_pasted_in_two_compiles_is_parked_and_comes_back() {
-        let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé"><me:dipl>b<hi rend="red">e</hi></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p></body></text></TEI>"#;
+        let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé"><me:dipl>b<foreign rend="red">e</foreign></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p></body></text></TEI>"#;
         let (mut source, dsl) = open(xml);
         assert_eq!(dsl, ".p a be c");
         compile(&mut source, &dsl, None, &[]);
@@ -1613,7 +1613,7 @@ mod imported_identity_tests {
         assert_eq!(cut.parked[0].word, 1);
         let pasted = compile_guided(&mut source, ".p a c", ".p a c be", &[], &[]);
         assert_eq!(pasted.returned, vec![ReturnedWord { ticket: cut.parked[0].ticket.clone(), word: 2 }]);
-        assert!(pasted.xml.contains(r#"<w lemma="bé"><me:dipl>b<hi rend="red">e</hi></me:dipl></w></p>"#), "{}", pasted.xml);
+        assert!(pasted.xml.contains(r#"<w lemma="bé"><me:dipl>b<foreign rend="red">e</foreign></me:dipl></w></p>"#), "{}", pasted.xml);
         // Back is back: nothing is parked twice
         let again = compile_guided(&mut source, ".p a c be", ".p a c", &[], &[]);
         assert_eq!(again.parked.len(), 1);

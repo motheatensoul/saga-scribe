@@ -174,6 +174,13 @@ fn test_entity_reference_content_is_not_copied() {
 /// Every file of the Menota catalogue, from `scripts/fetch-menota-corpus.sh`.
 /// Run with `MENOTA_CORPUS=<dir> cargo test --release corpus_ -- --test-threads=1 --nocapture`
 /// (one at a time: each test loads the whole corpus).
+/// Whether a word has markup the shorthand shows inside words (`*{A}*nnat`)
+/// but hides here, as it covers the whole word: an edit at its edge makes it
+/// partial, and the word then reads with it.
+fn hides_inline_markup(word_xml: &str) -> bool {
+    ["<hi", "<c ", "<c>", "<seg", "<surplus", "<damage", "<sic"].iter().any(|m| word_xml.contains(m))
+}
+
 fn corpus_files() -> Vec<std::path::PathBuf> {
     let Ok(dir) = std::env::var("MENOTA_CORPUS") else { return Vec::new() };
     let mut files = Vec::new();
@@ -633,11 +640,11 @@ fn corpus_edits_are_put_back_locally() {
                 let text = &dsl[span.clone()];
                 let Some(region) = xml_span(segment) else { continue };
                 let edit = match segment {
-                    // (Not a word with a `<sic>`/`<corr>` pair inside its level,
-                    // whose shorthand shows both texts: TODO.md)
+                    // (Not a word with markup over all of it, which the
+                    // shorthand hides and an edit makes partial: TODO.md)
                     Segment::Word { original_xml, .. }
                         if original_xml.starts_with("<w")
-                            && !original_xml.contains("<sic")
+                            && !hides_inline_markup(original_xml)
                             && text.chars().all(char::is_alphabetic) =>
                     {
                         kind += 1;
@@ -884,7 +891,7 @@ fn corpus_saved_projects_open_as_they_were() {
             let pairs: Vec<bool> = segments
                 .iter()
                 .filter(|s| crate::importer::tei::patching::segment_dsl_token(s).is_some())
-                .map(|s| matches!(s, crate::importer::tei::segments::Segment::Word { original_xml, .. } if original_xml.contains("<sic")))
+                .map(|s| matches!(s, crate::importer::tei::segments::Segment::Word { original_xml, .. } if hides_inline_markup(original_xml)))
                 .collect();
             let mut edited = dsl.clone();
             for (k, span) in spans.iter().enumerate().rev() {

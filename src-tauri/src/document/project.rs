@@ -235,6 +235,8 @@ pub fn project_body_with(tree: &Tree, body: NodeId, line_edition: Option<&str>) 
         has_words,
         line_edition: line_edition.map(str::to_string),
         marking: std::cell::Cell::new(false),
+        inline_markup: std::cell::Cell::new(true),
+        wrote_inline: std::cell::Cell::new(false),
         segments: Vec::new(),
         nodes: Vec::new(),
         spans: Vec::new(),
@@ -258,6 +260,11 @@ struct Projector<'a> {
     /// While reading a word's levels for `{mark=expansion}`: `<am>` and
     /// `<ex>` are written between markers ([`MARKS`])
     marking: std::cell::Cell<bool>,
+    /// Whether markup inside a word is shown (`*{A}*nnat`, rules 10): not
+    /// where it would read as markup around the word (`*{Annat}*`)
+    inline_markup: std::cell::Cell<bool>,
+    /// Markup inside a word was written since this was last cleared
+    wrote_inline: std::cell::Cell<bool>,
     segments: Vec<Segment>,
     nodes: Vec<Option<NodeId>>,
     spans: Vec<Option<(usize, usize)>>,
@@ -773,13 +780,22 @@ impl Projector<'_> {
 
     fn extract_word(&mut self, id: NodeId) -> Segment {
         let mut lb = false;
-        let dsl_content = match self.inline_abbreviations(id, &mut lb) {
+        let word = |lb: &mut bool| match self.inline_abbreviations(id, lb) {
             Some(dsl) => dsl,
-            None => match self.abbr_expansion(id, &mut lb) {
+            None => match self.abbr_expansion(id, lb) {
                 Some((abbr, expan)) => format!(".abbr[{}]{{{}}}", abbr, expan),
-                None => self.levels_dsl(id, &mut lb),
+                None => self.levels_dsl(id, lb),
             },
         };
+        self.wrote_inline.set(false);
+        let mut dsl_content = word(&mut lb);
+        // Markup inside it must leave it one word
+        if self.wrote_inline.get() && !dsl_tokens(&join_written_words(&dsl_content)).is_some_and(|t| matches!(t.as_slice(), [crate::parser::Node::Word(_)])) {
+            self.inline_markup.set(false);
+            lb = false;
+            dsl_content = word(&mut lb);
+            self.inline_markup.set(true);
+        }
         Segment::Word {
             id: self.next_id(),
             original_xml: self.original_xml(id),
@@ -1194,9 +1210,31 @@ impl Projector<'_> {
                         let mut inner = String::new();
                         self.node_to_dsl(c, &mut inner, lb, allow_norm);
                         if inner.is_empty() {
-                            out.push_str(&escape_dsl(&self.text_content(c), self.text_context(c)));
+                            inner = escape_dsl(&self.text_content(c), self.text_context(c));
+                        }
+                        if self.shows_inline(c) && !inner.is_empty() {
+                            self.wrote_inline.set(true);
+                            out.push_str(&format!(".c{{{inner}}}"));
                         } else {
                             out.push_str(&inner);
+                        }
+                    }
+                    name @ ("hi" | "seg" | "surplus" | "damage") if self.shows_inline(c) => {
+                        let mut inner = String::new();
+                        self.node_to_dsl(c, &mut inner, lb, allow_norm);
+                        if inner.trim().is_empty() || inner != inner.trim() {
+                            out.push_str(&inner);
+                        } else {
+                            let (open, close) = match name {
+                                "hi" => ("*{", "}*"),
+                                "seg" => ("&{", "}"),
+                                "surplus" => ("${", "}"),
+                                _ => (".damage{", "}"),
+                            };
+                            self.wrote_inline.set(true);
+                            out.push_str(open);
+                            out.push_str(&inner);
+                            out.push_str(close);
                         }
                     }
                     name @ ("add" | "del" | "unclear" | "note") => {
@@ -1290,7 +1328,34 @@ impl Projector<'_> {
     }
 
     /// A `<choice>` inside other content.
+    /// Whether markup `id` inside a word is shown (`*{A}*nnat`).
+    fn shows_inline(&self, id: NodeId) -> bool {
+        self.inline_markup.get() && !self.marking.get() && self.in_token_or_construct(id)
+    }
+
     fn choice_to_dsl(&self, id: NodeId, out: &mut String, lb: &mut bool, allow_norm: bool) {
+        // A pair inside a word: `.corr{sic=corr}`, `.trans{orig=reg}`
+        if self.shows_inline(id) {
+            let halves: Vec<NodeId> = self.tree.children(id).iter().copied().filter(|&c| self.is_element(c)).collect();
+            if let [first, second] = halves.as_slice() {
+                let opener = match (self.local(*first), self.local(*second)) {
+                    ("sic", "corr") => Some(".corr{"),
+                    ("orig", "reg") => Some(".trans{"),
+                    _ => None,
+                };
+                if let Some(opener) = opener {
+                    let (mut a, mut b) = (String::new(), String::new());
+                    self.node_to_dsl(*first, &mut a, lb, allow_norm);
+                    self.node_to_dsl(*second, &mut b, lb, allow_norm);
+                    let (a, b) = (a.trim().to_string(), b.trim().to_string());
+                    if !a.contains('=') && !a.is_empty() {
+                        self.wrote_inline.set(true);
+                        out.push_str(&format!("{opener}{a}={b}}}"));
+                        return;
+                    }
+                }
+            }
+        }
         let (mut abbr, mut expan) = (String::new(), String::new());
         let (mut found_abbr, mut found_expan) = (false, false);
         let mut facs = None;
