@@ -949,6 +949,11 @@ pub async fn compile_imported(
             p.abbreviations == crate::document::profile::Abbreviations::ChoiceAbbrExpan
         });
         compiler = compiler.with_choice_abbreviations(choice);
+        // A file whose punctuation is in <me:punct>
+        let me_punct = source.document.profile.as_ref().is_some_and(|p| {
+            p.punctuation == crate::document::profile::Punctuation::MePunct
+        });
+        compiler = compiler.with_menota_punctuation(me_punct);
 
         let decisions = decisions.unwrap_or_default();
         let annotated = annotated_words.unwrap_or_default();

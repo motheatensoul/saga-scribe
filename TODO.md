@@ -25,11 +25,9 @@ when it is done (and record it in CHANGELOG.md if users notice).
   step 6 (`.teis` 2.0: imported documents saved as `document.xml` with their profile, open
   records and annotation anchors; new documents keep words set in the XML tab), and the
   word panel's XML tab of step 5 (all 2026-11-21). Left:
-  - step 4: the profile's punctuation element in the compiler (`<me:punct>`; abbreviations
-    follow the profile since 2026-11-22);
-  - step 5: levels, ranges and attributes in their own controls in the word panel (the
-    XML tab edits them as XML; a pinned normalized form can be reset with **From the
-    shorthand** since 2026-11-22);
+  - step 5: inline markup (ranges such as `<ex>`, `<supplied>`) with their attributes in
+    their own controls in the word panel; attributes and levels have controls, and
+    the rest is edited in the XML tab (2026-11-22);
   - a word typed in the shorthand of an imported file can only get its XML set after
     the project is saved and opened again.
   Corpus gates: `scripts/fetch-menota-corpus.sh`, then
@@ -112,8 +110,7 @@ when it is done (and record it in CHANGELOG.md if users notice).
       DSL rules 8; the **Abbreviations** dialog, 2026-11-22) JSON export/import of a store
       for reuse;
     - (done 2026-11-22: in files whose profile says `<choice><abbr><expan>`, words
-      without levels get that) the profile's punctuation element (`<me:punct>`) in the
-      compiler: new punctuation is still `<pc>`.
+      without levels get that; `<me:punct>` files get their punctuation element)
   - **Supplied text with markup.** `<…>` and `[...3<ab>]` take shorthand content (done,
     DSL rules 4). Left: `.supplied{…}` is still how supplied text spanning several words
     is written (`<a b>` is one token); retiring it needs `<…>` to hold several words.

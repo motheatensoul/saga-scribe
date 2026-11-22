@@ -565,7 +565,9 @@ exported:
   [Annotations](#annotations)); a word without annotations stays as the file has it.
 - The word panel's **XML** tab shows a word as the file has it: its levels, attributes and
   the markup in it (such as `<ex>` or `<hi>`), and its XML, which can be edited there for
-  anything the shorthand and the other tabs don't cover. **Apply** sets the word in the
+  anything the shorthand and the other tabs don't cover. Under **Attributes** each attribute
+  can be changed, removed or added, and under **Levels** each level's content (as XML); both
+  change the XML below. **Apply** sets the word in the
   file and puts its shorthand in the editor; the XML must be a single, well-formed element
   of the same kind (a `<w>` stays a `<w>`). A word added in the shorthand can be edited
   this way once the project has been saved and opened again. (In a new document, any word

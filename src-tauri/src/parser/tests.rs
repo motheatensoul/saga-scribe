@@ -1456,3 +1456,12 @@ fn test_expansion_as_choice_where_the_file_uses_it() {
     let xml = compiler.compile("{kgs=konungs}").unwrap();
     assert!(xml.contains("<w><choice><abbr>kgs</abbr><expan>konungs</expan></choice></w>"), "{xml}");
 }
+
+#[test]
+fn test_punctuation_in_me_punct_where_the_file_uses_it() {
+    let config = CompilerConfig { word_wrap: true, multi_level: true, ..Default::default() };
+    let mut compiler = Compiler::new().with_config(config).with_menota_punctuation(true);
+    let xml = compiler.compile("ok .").unwrap();
+    assert!(xml.contains("<me:punct>\n  <choice>") && xml.contains("</choice>\n</me:punct>"), "{xml}");
+    assert!(!xml.contains("<pc>"), "{xml}");
+}

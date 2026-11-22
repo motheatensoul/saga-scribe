@@ -56,6 +56,64 @@
 
     const LEVEL_NAMES: Record<string, string> = { facs: "facsimile", dipl: "diplomatic", norm: "normalized" };
 
+    /** The word's start tag in `xml`: where it is and its attributes as written */
+    function startTag(text: string): { end: number; attributes: [string, string][] } | null {
+        const match = /^\s*<[^\s>/]+((?:\s+[^\s=]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/.exec(text);
+        if (!match) return null;
+        const attributes: [string, string][] = [];
+        for (const a of match[1].matchAll(/([^\s=]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) {
+            attributes.push([a[1], a[2] ?? a[3] ?? ""]);
+        }
+        return { end: match[0].length, attributes };
+    }
+
+    const escapeAttribute = (value: string) =>
+        value.replace(/&(?![a-zA-Z][\w.-]*;|#)/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+    /** `xml` with the word's attributes set to `attributes` (in that order) */
+    function withAttributes(text: string, attributes: [string, string][]): string {
+        const tag = startTag(text);
+        if (!tag) return text;
+        const name = /^\s*<([^\s>/]+)/.exec(text)?.[1] ?? "w";
+        const closing = text.slice(0, tag.end).trimEnd().endsWith("/>") ? "/>" : ">";
+        const written = attributes
+            .filter(([n]) => n.trim() !== "")
+            .map(([n, v]) => ` ${n.trim()}="${escapeAttribute(v)}"`)
+            .join("");
+        const lead = /^\s*/.exec(text)?.[0] ?? "";
+        return `${lead}<${name}${written}${closing}${text.slice(tag.end)}`;
+    }
+
+    /** The content of the level element `me:<level>` in `xml` (the first), or null */
+    function levelContent(text: string, level: string): string | null {
+        const match = new RegExp(`<me:${level}(\\s[^>]*)?>([\\s\\S]*?)</me:${level}>`).exec(text);
+        return match ? match[2] : null;
+    }
+
+    function withLevelContent(text: string, level: string, content: string): string {
+        return text.replace(new RegExp(`(<me:${level}(?:\\s[^>]*)?>)[\\s\\S]*?(</me:${level}>)`), (_, open, close) => `${open}${content}${close}`);
+    }
+
+    // The attributes and levels as controls, kept in step with the XML text
+    let attributes = $derived(startTag(xml)?.attributes ?? []);
+    let levelTexts = $derived(
+        ["facs", "dipl", "norm"]
+            .map((level) => [level, levelContent(xml, level)] as const)
+            .filter((entry): entry is readonly [string, string] => entry[1] !== null),
+    );
+
+    function setAttribute(index: number, name: string, value: string) {
+        const next = attributes.map((a) => [...a] as [string, string]);
+        next[index] = [name, value];
+        xml = withAttributes(xml, next);
+    }
+    function removeAttribute(index: number) {
+        xml = withAttributes(xml, attributes.filter((_, i) => i !== index));
+    }
+    function addAttribute() {
+        xml = withAttributes(xml, [...attributes, ["name", ""]]);
+    }
+
     async function apply() {
         busy = true;
         error = null;
@@ -85,6 +143,48 @@
             <dt class="font-medium">Markup</dt>
             <dd class="font-mono text-xs">{parts.inline.map((n) => `<${n}>`).join(" ") || "none"}</dd>
         </dl>
+    {/if}
+    <fieldset class="flex flex-col gap-1">
+        <legend class="font-medium mb-1">Attributes</legend>
+        {#each attributes as [name, value], i (i)}
+            <div class="flex items-center gap-2">
+                <label class="sr-only" for={`word-attribute-name-${i}`}>Attribute {i + 1} name</label>
+                <input
+                    id={`word-attribute-name-${i}`}
+                    class="input input-bordered input-xs font-mono w-32"
+                    value={name}
+                    onchange={(e) => setAttribute(i, e.currentTarget.value, value)}
+                />
+                <label class="sr-only" for={`word-attribute-value-${i}`}>Value of {name}</label>
+                <input
+                    id={`word-attribute-value-${i}`}
+                    class="input input-bordered input-xs font-mono flex-1"
+                    value={value}
+                    onchange={(e) => setAttribute(i, name, e.currentTarget.value)}
+                />
+                <button type="button" class="btn btn-ghost btn-xs" aria-label={`Remove the attribute ${name}`} onclick={() => removeAttribute(i)}>
+                    Remove
+                </button>
+            </div>
+        {/each}
+        <div>
+            <button type="button" class="btn btn-ghost btn-xs" onclick={addAttribute}>Add an attribute</button>
+        </div>
+    </fieldset>
+    {#if levelTexts.length > 0}
+        <fieldset class="flex flex-col gap-1">
+            <legend class="font-medium mb-1">Levels</legend>
+            {#each levelTexts as [level, content] (level)}
+                <label class="flex items-center gap-2">
+                    <span class="w-24">{LEVEL_NAMES[level]}</span>
+                    <input
+                        class="input input-bordered input-xs font-mono flex-1"
+                        value={content}
+                        onchange={(e) => (xml = withLevelContent(xml, level, e.currentTarget.value))}
+                    />
+                </label>
+            {/each}
+        </fieldset>
     {/if}
     <label for="word-xml" class="font-medium">XML</label>
     <textarea

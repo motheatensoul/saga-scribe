@@ -129,6 +129,9 @@ pub struct Compiler<'a> {
     /// Abbreviations as TEI's `<choice><abbr><expan>` (a file's profile says
     /// so) instead of MENOTA's `<am>`/`<ex>`, where words have no levels
     choice_abbreviations: bool,
+    /// The element punctuation is written in: `pc`, or `me:punct` (a file's
+    /// profile says so)
+    punctuation: &'static str,
     /// Compiler configuration options
     config: CompilerConfig,
     /// Running line number counter (for auto_line_numbers)
@@ -158,6 +161,7 @@ impl<'a> Compiler<'a> {
             annotations: None,
             abbreviations: None,
             choice_abbreviations: false,
+            punctuation: "pc",
             config: CompilerConfig::default(),
             line_number: 0,
             word_index: 0,
@@ -239,6 +243,12 @@ impl<'a> Compiler<'a> {
     /// `<choice><abbr>mark</abbr><expan>expansion</expan></choice>`.
     pub fn with_choice_abbreviations(mut self, choice: bool) -> Self {
         self.choice_abbreviations = choice;
+        self
+    }
+
+    /// Writes punctuation in `<me:punct>` instead of `<pc>`.
+    pub fn with_menota_punctuation(mut self, menota: bool) -> Self {
+        self.punctuation = if menota { "me:punct" } else { "pc" };
         self
     }
 
@@ -869,6 +879,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_punctuation_single(&mut self, children: &[Node]) -> String {
+        let pc = self.punctuation;
         let mut content = String::new();
         for child in children {
             content.push_str(&self.node_to_xml(child));
@@ -876,11 +887,12 @@ impl<'a> Compiler<'a> {
         if content.is_empty() {
             String::new()
         } else {
-            format!("<pc>{}</pc>\n", content)
+            format!("<{pc}>{}</{pc}>\n", content)
         }
     }
 
     fn compile_punctuation_multi_level(&mut self, children: &[Node]) -> String {
+        let pc = self.punctuation;
         let facs = self.nodes_to_facs(children);
         let dipl = self.nodes_to_diplomatic(children);
         let norm = self.nodes_to_normalized(children);
@@ -889,7 +901,7 @@ impl<'a> Compiler<'a> {
             String::new()
         } else {
             format!(
-                "<pc>{}\n</pc>\n",
+                "<{pc}>{}\n</{pc}>\n",
                 self.levels_xml(&facs, &dipl, &norm)
             )
         }
@@ -1250,11 +1262,12 @@ impl<'a> Compiler<'a> {
     /// Compile a DSL fragment for a punctuation element.
     /// Used by patching module to recompile modified punctuation.
     pub fn compile_punctuation_from_dsl(&mut self, dsl: &str) -> String {
+        let pc = self.punctuation;
         // Parse the DSL fragment
         let mut lexer = Lexer::new(dsl);
         let doc = match lexer.parse() {
             Ok(d) => d,
-            Err(_) => return format!("<pc><!-- parse error: {} --></pc>\n", self.escape_xml(dsl)),
+            Err(_) => return format!("<{pc}><!-- parse error: {} --></{pc}>\n", self.escape_xml(dsl)),
         };
 
         // Tokenize to get Word/Punctuation nodes
@@ -1265,7 +1278,7 @@ impl<'a> Compiler<'a> {
         for node in &nodes {
             if let Node::Punctuation(children) = node {
                 if !self.config.multi_level {
-                    return format!("<pc>{}</pc>\n", self.nodes_to_xml(children));
+                    return format!("<{pc}>{}</{pc}>\n", self.nodes_to_xml(children));
                 }
 
                 // Generate the three levels for punctuation
@@ -1274,17 +1287,18 @@ impl<'a> Compiler<'a> {
                 let norm = self.nodes_to_normalized(children);
 
                 return format!(
-                    "<pc>{}\n</pc>\n",
+                    "<{pc}>{}\n</{pc}>\n",
                     self.levels_xml(&facs, &dipl, &norm)
                 );
             }
         }
 
         // Fallback: compile as plain punctuation
-        format!("<pc>{}</pc>\n", self.escape_xml(dsl))
+        format!("<{pc}>{}</{pc}>\n", self.escape_xml(dsl))
     }
 
     fn compile_normalized_fragment(&mut self, dsl: &str) -> String {
+        let pc = self.punctuation;
         if !self.config.multi_level {
             return String::new();
         }
@@ -1317,7 +1331,7 @@ impl<'a> Compiler<'a> {
                     let norm = self.nodes_to_normalized(children);
                     if !norm.is_empty() {
                         output.push_str(&format!(
-                            "<pc>\n  <choice>\n    <me:facs></me:facs>\n    <me:dipl></me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</pc>\n",
+                            "<{pc}>\n  <choice>\n    <me:facs></me:facs>\n    <me:dipl></me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</{pc}>\n",
                             norm
                         ));
                     }
@@ -1353,6 +1367,7 @@ impl<'a> Compiler<'a> {
     ///
     /// Its words are numbered and annotated like the main `compile()`'s.
     pub fn compile_fragment_from_dsl(&mut self, dsl: &str) -> String {
+        let pc = self.punctuation;
         // Parse the DSL fragment
         let mut lexer = Lexer::new(dsl);
         let doc = match lexer.parse() {
@@ -1373,7 +1388,7 @@ impl<'a> Compiler<'a> {
                     output.push_str(&self.compile_word(children));
                 }
                 Node::Punctuation(children) if !self.config.multi_level => {
-                    output.push_str(&format!("<pc>{}</pc>\n", self.nodes_to_xml(children)));
+                    output.push_str(&format!("<{pc}>{}</{pc}>\n", self.nodes_to_xml(children)));
                 }
                 Node::Word(children) => {
                     output.push_str(&self.compile_word(children));
@@ -1384,7 +1399,7 @@ impl<'a> Compiler<'a> {
                     let norm = self.nodes_to_normalized(children);
 
                     output.push_str(&format!(
-                        "<pc>{}\n</pc>\n",
+                        "<{pc}>{}\n</{pc}>\n",
                         self.levels_xml(&facs, &dipl, &norm)
                     ));
                 }

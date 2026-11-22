@@ -35,6 +35,22 @@ describe("WordXmlPanel", () => {
         expect(target.textContent).toContain("diplomatic");
         expect(target.textContent).toContain("<ex>");
 
+        // The attribute and level controls write into the XML
+        const lemma = target.querySelector("#word-attribute-value-0") as HTMLInputElement;
+        lemma.value = "maður";
+        lemma.dispatchEvent(new Event("change", { bubbles: true }));
+        flushSync();
+        expect(textarea.value).toContain('<w lemma="maður">');
+        (([...target.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Add an attribute")) as HTMLButtonElement).click();
+        flushSync();
+        expect(textarea.value).toContain('<w lemma="maður" name="">');
+        const dipl = [...target.querySelectorAll("label")].find((l) => l.textContent?.includes("diplomatic"))!.querySelector("input")!;
+        expect(dipl.value).toBe("ma<ex>n</ex>n");
+        dipl.value = "ma<ex>n</ex>nr";
+        dipl.dispatchEvent(new Event("change", { bubbles: true }));
+        flushSync();
+        expect(textarea.value).toContain("<me:dipl>ma<ex>n</ex>nr</me:dipl>");
+
         textarea.value = "oops";
         textarea.dispatchEvent(new Event("input"));
         flushSync();
