@@ -192,7 +192,10 @@ fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
 ///   whole word is `.abbr[facs]{dipl}`.
 /// - 8: an abbreviation whose expansion is its mark's commonest in the file
 ///   (the abbreviation store) is written `{mark}`.
-pub const DSL_RULES: u32 = 8;
+/// - 9: a word whose levels differ in letterforms too (facs `ꝼ`, dipl `f`)
+///   is written with its facsimile text and `{mark=expansion}`, no longer
+///   as a whole `.abbr[facs]{dipl}`.
+pub const DSL_RULES: u32 = 9;
 
 impl ImportedDocument {
     /// Drops the copies of the file's XML that words and punctuation hold

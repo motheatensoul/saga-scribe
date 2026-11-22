@@ -899,3 +899,85 @@ fn corpus_saved_projects_open_as_they_were() {
     std::fs::remove_dir_all(&dir).ok();
     assert!(failures.is_empty(), "{} of {} files failed: {:?}", failures.len(), files.len(), failures);
 }
+
+/// Not a gate: with `MARKUP_SURVEY=<file>`, writes a CSV of the markup in the
+/// corpus's bodies the shorthand can't show: elements it has no syntax for,
+/// and attributes of the elements it shows that it doesn't write.
+#[test]
+fn corpus_zz_markup_survey() {
+    use crate::document::anchor::body_words;
+    use std::collections::BTreeMap;
+    let Ok(out) = std::env::var("MARKUP_SURVEY") else { return };
+    let local = |name: &str| name.rsplit(':').next().unwrap_or(name).to_string();
+    // What the shorthand writes of the elements it shows
+    let expressed = |element: &str, attribute: &str| {
+        matches!(
+            (element, attribute),
+            ("lb" | "pb", "n") | ("w", "lemma" | "me:msa" | "msa") | ("gap", "quantity") | ("xml" | _, "xml:space")
+        )
+    };
+    #[derive(Default)]
+    struct Row {
+        occurrences: usize,
+        files: std::collections::BTreeSet<String>,
+        texts: usize,
+        charters: usize,
+        example_file: String,
+        example: String,
+    }
+    let mut rows: BTreeMap<(String, String), Row> = BTreeMap::new();
+    let files = corpus_files();
+    for path in &files {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let Ok(tree) = super::Tree::parse(&source) else { continue };
+        let Some(body) = super::find_body(&tree) else { continue };
+        let _ = body_words;
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        let charter = path.to_string_lossy().contains("diploma");
+        for id in tree.descendants(body) {
+            let Some(element) = tree.element(id) else { continue };
+            let shown = super::profile::SHOWN.contains(&local(&element.name).as_str());
+            let mut keys = Vec::new();
+            if !shown {
+                keys.push(("element".to_string(), element.name.clone()));
+            } else {
+                for attribute in &element.attributes {
+                    if !expressed(&local(&element.name), &attribute.name) {
+                        keys.push(("attribute".to_string(), format!("{}@{}", element.name, attribute.name)));
+                    }
+                }
+            }
+            for key in keys {
+                let row = rows.entry(key).or_default();
+                row.occurrences += 1;
+                if row.files.insert(name.clone()) {
+                    if charter { row.charters += 1 } else { row.texts += 1 }
+                }
+                if row.example.is_empty() {
+                    row.example_file = name.clone();
+                    let xml = tree.node_xml(id).unwrap_or_default();
+                    row.example = xml.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect();
+                }
+            }
+        }
+    }
+    let field = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+    let mut csv = String::from("kind,name,occurrences,files,texts,charters,example_file,example,shorthand\n");
+    let mut sorted: Vec<_> = rows.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.occurrences.cmp(&a.1.occurrences).then_with(|| a.0.cmp(&b.0)));
+    for ((kind, name), row) in sorted {
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{},{},\n",
+            kind,
+            field(&name),
+            row.occurrences,
+            row.files.len(),
+            row.texts,
+            row.charters,
+            field(&row.example_file),
+            field(&row.example)
+        ));
+    }
+    std::fs::write(&out, csv).expect("the survey file is written");
+    eprintln!("wrote {out} from {} files", files.len());
+}

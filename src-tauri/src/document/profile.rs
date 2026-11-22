@@ -76,7 +76,7 @@ pub struct ProfileCounts {
 
 /// Elements the shorthand shows (by local name), or that hold the text it
 /// shows: everything else in the body is hidden from it.
-const SHOWN: &[&str] = &[
+pub(crate) const SHOWN: &[&str] = &[
     "body", "div", "p", "head", "w", "pc", "punct", "num", "choice", "facs", "dipl", "norm", "abbr", "expan", "am", "ex",
     "lb", "pb", "gap", "supplied", "del", "add", "unclear", "note",
 ];

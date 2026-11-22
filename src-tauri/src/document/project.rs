@@ -17,6 +17,34 @@ use crate::importer::tei::segments::{Segment, SourceSpans};
 use crate::importer::tei::source_map::SourceCursor;
 use std::collections::HashMap;
 
+/// How many letters a piece of shorthand has: an entity (`:rrot:`) or an
+/// escaped character (`\;`) is one, markup (`~//2`, braces) none.
+fn letters(dsl: &str) -> usize {
+    let mut count = 0;
+    let mut chars = dsl.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+                count += 1;
+            }
+            ':' => {
+                // An entity, if a name and a closing colon follow
+                let name: String = chars.clone().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                if !name.is_empty() && chars.clone().nth(name.chars().count()) == Some(':') {
+                    for _ in 0..=name.chars().count() {
+                        chars.next();
+                    }
+                }
+                count += 1;
+            }
+            c if c.is_alphabetic() || c.is_numeric() => count += 1,
+            _ => {}
+        }
+    }
+    count
+}
+
 /// The markers around `<am>` and `<ex>` while a word's levels are read for
 /// `{mark=expansion}` (noncharacters, which no text has): am open, am close,
 /// ex open, ex close.
@@ -728,8 +756,10 @@ impl Projector<'_> {
     /// with `k<ex>onun</ex>gs` is `k{:bar:=onun}gs`, `<am>&kbar;</am>gs` with
     /// `k<ex>onun</ex>gs` is `{:kbar:=konun}gs` (the fused letter's base letter
     /// belongs to the expansion), `hæn<ex>n</ex>aR` alone is `hæn{=n}aR`.
-    /// `None` if the word has neither, or its levels differ elsewhere too
-    /// (then the whole word is `.abbr[…]{…}`).
+    /// The shorthand follows the facsimile text; where the diplomatic level
+    /// has other letterforms (`ꝼ` and `f`), they stay as the file has them
+    /// (DSL rules 9). `None` if the word has neither, or its marks and
+    /// expansions don't pair up (then the whole word is `.abbr[…]{…}`).
     fn inline_abbreviations(&self, id: NodeId, lb: &mut bool) -> Option<String> {
         let facs = self.find_descendant(id, "facs");
         let dipl = self.find_descendant(id, "dipl");
@@ -854,7 +884,11 @@ impl Projector<'_> {
                     dipl_text = rest.to_string();
                 }
             }
-            if *text != dipl_text {
+            // The shorthand follows the facsimile; where the diplomatic level
+            // has other letterforms (`ꝼ`, `f`), the file keeps them. Letter
+            // for letter, though: otherwise the expansion isn't where the
+            // mark is (facs `kn¯gr`, dipl `k<ex>ono</ex>ngr`)
+            if letters(text) != letters(&dipl_text) {
                 return None;
             }
             out.push_str(text);

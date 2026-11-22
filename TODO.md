@@ -103,9 +103,9 @@ when it is done (and record it in CHANGELOG.md if users notice).
     on facs, `<ex>` on dipl, the word on norm; a fused letter's base letter comes from
     MUFI's character list (`static/characters/mufi-export.json`, `entities::base_letter`);
     `{=n}` has no mark; `.abbr[…]{…}` still parses. Left:
-    - (done 2026-11-22: the importer writes `<am>`/`<ex>` as `{…=…}` where the levels
-      differ only by them, DSL rules 7) words whose levels differ in other ways too
-      (facs `ꝼ`, dipl `f`) are still `.abbr[facs]{dipl}` as a whole;
+    - (done 2026-11-22: the importer writes `<am>`/`<ex>` as `{…=…}` in the facsimile
+      text, DSL rules 7 and 9) words whose marks and expansions don't pair up letter for
+      letter (facs `kn¯gr`, dipl `k<ex>ono</ex>ngr`) are still `.abbr[facs]{dipl}`;
     - (done 2026-11-22: the store, `{mark}`, import filling it and writing short forms,
       DSL rules 8; the **Abbreviations** dialog, 2026-11-22) JSON export/import of a store
       for reuse;

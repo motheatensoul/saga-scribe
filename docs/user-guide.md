@@ -170,8 +170,10 @@ The store is saved with the project (`abbreviations.json`).
 
 The older form `.abbr[kgs]{konungs}`, for a whole word, still works and is encoded as
 `<choice><abbr>kgs</abbr><expan>konungs</expan></choice>`. When a TEI file is imported, its
-`<am>` and `<ex>` are written as `{mark=expansion}` where they stand in the word; a word
-whose levels differ in other ways too is written whole, as `.abbr[facsimile]{diplomatic}`.
+`<am>` and `<ex>` are written as `{mark=expansion}` where they stand in the word, in the
+word's facsimile text; where the diplomatic level has other letterforms (`ꝼ` and `f`), it
+keeps them. Only a word whose marks and expansions don't pair up letter for letter is
+written whole, as `.abbr[facsimile]{diplomatic}`.
 
 ### Word division
 

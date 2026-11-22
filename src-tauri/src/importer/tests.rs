@@ -1988,9 +1988,14 @@ fn test_abbreviations_are_read_where_they_stand() {
     );
     // Facsimile only, with a mark (Holm A 49)
     assert_eq!(dsl(r#"<w><me:facs>k<am>&bar;</am>r</me:facs></w>"#), ".p k{:bar:=}r");
-    // The levels differ elsewhere too: the whole word, as before
+    // The levels differ in letterforms too: the facsimile's, with the expansion
     assert_eq!(
         dsl(r#"<w><choice><me:facs>ꝼ<am>&bar;</am>r</me:facs><me:dipl>f<ex>yri</ex>r</me:dipl><me:norm>fyrir</me:norm></choice></w>"#),
+        ".p ꝼ{:bar:=yri}r"
+    );
+    // Marks and expansions that don't pair up: the whole word
+    assert_eq!(
+        dsl(r#"<w><choice><me:facs>ꝼ<am>&bar;</am>r</me:facs><me:dipl>fyrir</me:dipl><me:norm>fyrir</me:norm></choice></w>"#),
         ".p .abbr[ꝼ:bar:r]{fyrir}"
     );
 }
