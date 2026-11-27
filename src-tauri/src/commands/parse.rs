@@ -4,7 +4,7 @@ use crate::identity::{numbers_by_key, renumbering, Guidance, ParkedWord, Parking
 use crate::importer::tei::patching::{
     apply_decisions, compiler_config_for, render_body, write_lemmas_placed, Originals, Patcher, SavedRecord, WordRecord,
 };
-use crate::importer::tei::apply::TreeSource;
+use crate::importer::tei::apply::{ElementInfo, TreeSource};
 use crate::importer::tei::segments::{Decision, ImportedDocument};
 use crate::normalizer::LevelDictionary;
 use crate::parser::{Compiler, CompilerConfig, LemmaMapping, WordKey};
@@ -636,6 +636,21 @@ impl ImportedSource {
         Ok(WordXmlChange { from, to, dsl, lemma: attribute("lemma"), msa: attribute("me:msa").or_else(|| attribute("msa")) })
     }
 
+    /// The elements word `word` is in, has in it and has before it (the word
+    /// panel's Markup tab).
+    pub fn word_elements(&self, word: usize) -> Result<Vec<ElementInfo>, String> {
+        self.tree.as_ref().ok_or("The file's XML can't be edited element by element")?.word_elements(word)
+    }
+
+    /// Sets the attributes of an element of the file (the word panel's
+    /// Markup tab); the next compile writes them.
+    pub fn set_element_attributes(&mut self, name: &str, ordinal: usize, attributes: &[(String, String)]) -> Result<(), String> {
+        self.tree
+            .as_mut()
+            .ok_or("The file's XML can't be edited element by element")?
+            .set_element_attributes(name, ordinal, attributes)
+    }
+
     /// The profile, for saving (`profile.json`).
     pub fn profile(&self) -> Option<&crate::document::profile::Profile> {
         self.document.profile.as_ref()
@@ -779,6 +794,36 @@ pub async fn set_imported_word_xml(session: State<'_, ImportedSession>, word: us
     let mut slots = session.0.lock().map_err(|_| "Imported document state is poisoned")?;
     let source = slots.current.as_mut().ok_or("No imported document is loaded")?;
     source.set_word_xml(word, &xml)
+}
+
+/// The elements word `word` of the current imported document is in, has in
+/// it and has before it, with their attributes (the word panel's Markup tab).
+///
+/// # Errors
+///
+/// If no imported document is loaded, or there is no such word.
+#[tauri::command(async)]
+pub async fn imported_word_elements(session: State<'_, ImportedSession>, word: usize) -> Result<Vec<ElementInfo>, String> {
+    session.with_current(|source| source.word_elements(word))?.ok_or("No imported document is loaded")?
+}
+
+/// Sets the attributes of the `ordinal`-th element named `name` of the
+/// current imported document's body; the editor then compiles.
+///
+/// # Errors
+///
+/// If there is no such element, it was added since the file was opened, an
+/// attribute name isn't one, or an attribute the shorthand writes changes.
+#[tauri::command(async)]
+pub async fn set_imported_element_attributes(
+    session: State<'_, ImportedSession>,
+    name: String,
+    ordinal: usize,
+    attributes: Vec<(String, String)>,
+) -> Result<(), String> {
+    let mut slots = session.0.lock().map_err(|_| "Imported document state is poisoned")?;
+    let source = slots.current.as_mut().ok_or("No imported document is loaded")?;
+    source.set_element_attributes(&name, ordinal, &attributes)
 }
 
 /// The XML of word `word` of the new document, as the last compile wrote it
@@ -1018,7 +1063,7 @@ pub(crate) fn compile_imported_source(
     timer.lap("compile.records", [("records", records.len().into())]);
 
     // Apply patches to the document's tree
-    let body = render_body(
+    let mut body = render_body(
         &source.document,
         // A word's XML set in the word panel: the body is no longer the file's
         (!source.tree.as_ref().is_some_and(TreeSource::is_changed)).then_some(source.original_body_xml.as_str()),
@@ -1026,6 +1071,8 @@ pub(crate) fn compile_imported_source(
         &patches,
         compiler,
     )?;
+    // Where the word panel finds the elements, kept once the rest is done
+    let applied = body.tree.take();
     timer.lap("compile.render_body", []);
 
     // Which word is which: lemmas follow their words (no guidance: the
@@ -1139,7 +1186,6 @@ pub(crate) fn compile_imported_source(
     timer.lap("compile.renumber", []);
     // Annotations (other than lemmas) into their words, as a new document
     // has them: the exported file is the edition
-    let mut body = body;
     if let Some(set) = annotations {
         write_annotations(&mut body, set, &words, previous, &source.config);
         timer.lap("compile.write_annotations", [("annotations", set.annotations.len().into())]);
@@ -1153,6 +1199,9 @@ pub(crate) fn compile_imported_source(
     source.last_records.clone_from(&records);
     source.last_body.clone_from(&body_xml);
     source.last_word_offsets = word_offsets;
+    if let Some(tree) = source.tree.as_mut() {
+        tree.set_current(applied);
+    }
 
     // Combine with preamble (everything before body) and postamble (everything after)
     Ok(CompileOutput {
@@ -1599,6 +1648,35 @@ mod imported_identity_tests {
         let mut compiler = Compiler::new().with_config(source.config.clone());
         let decisions: HashMap<usize, Decision> = decisions.iter().copied().collect();
         compile_imported_source(source, &mut compiler, dsl, Some(&guidance), &decisions, HashMap::new(), annotated, None).unwrap()
+    }
+
+    /// The word panel's Markup tab: a word's elements, with their
+    /// attributes, set in the file; the shorthand's attributes stay its own.
+    #[test]
+    fn test_element_attributes_are_set_in_the_file() {
+        let xml = r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body><p><s><lb n="1"/><w><me:dipl>a</me:dipl></w> <w><me:dipl>b<hi>c</hi></me:dipl></w></s></p></body></text></TEI>"#;
+        let (mut source, dsl) = open(xml);
+        assert_eq!(dsl, ".p .s{\n//1 a b*{c}*}");
+        compile(&mut source, &dsl, None, &[]);
+        let elements = source.word_elements(0).unwrap();
+        let shown: Vec<(&str, &str)> = elements.iter().map(|e| (e.name.as_str(), e.place)).collect();
+        assert_eq!(shown, [("p", "around"), ("s", "around"), ("lb", "before")]);
+        assert_eq!(source.word_elements(1).unwrap().iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["p", "s", "hi"]);
+        // The break: its `ed` set, its `n` the shorthand's
+        source.set_element_attributes("lb", 0, &[("n".into(), "1".into()), ("ed".into(), "ms".into())]).unwrap();
+        assert!(source.set_element_attributes("lb", 0, &[("n".into(), "2".into())]).is_err());
+        source.set_element_attributes("s", 0, &[("n".into(), "1".into())]).unwrap();
+        let out = compile(&mut source, &dsl, None, &[]);
+        assert!(out.xml.contains(r#"<s n="1"><lb n="1" ed="ms"/>"#), "{}", out.xml);
+        // After an edit too, and the attributes stay
+        let edited = dsl.replace("a b", "ax b");
+        let out = compile(&mut source, &edited, None, &[]);
+        assert!(out.xml.contains(r#"<s n="1"><lb n="1" ed="ms"/>"#), "{}", out.xml);
+        // A word typed since: its markup isn't in the file yet
+        let edited = edited.replace("ax b", "ax .q{y} b");
+        compile(&mut source, &edited, None, &[]);
+        let q = source.word_elements(1).unwrap().into_iter().find(|e| e.name == "q").unwrap();
+        assert!(source.set_element_attributes("q", q.ordinal, &[("who".into(), "A".into())]).is_err());
     }
 
     #[test]

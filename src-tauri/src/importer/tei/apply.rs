@@ -61,6 +61,36 @@ pub struct TreeSource {
     /// and their segment, by their new node (which has no span)
     replaced: HashMap<usize, String>,
     replaced_nodes: HashMap<NodeId, usize>,
+    /// The tree as the last compile wrote it (the edits applied), if they
+    /// changed it: where the word panel finds elements
+    current: Option<Tree>,
+    /// Attributes were set in the word panel: the body is no longer the file's
+    attributes_set: bool,
+}
+
+/// An element of the file as the word panel shows it: found again by its
+/// name and how many elements of that name come before it in the body.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ElementInfo {
+    pub name: String,
+    pub ordinal: usize,
+    /// "around" (the word is in it), "inside" (in the word), "before"
+    /// (between the word and the token before it: a break, a note)
+    pub place: &'static str,
+    pub attributes: Vec<(String, String)>,
+    /// Attributes the shorthand writes (a break's `n`): set there
+    pub fixed: Vec<String>,
+}
+
+/// Attributes of an element the shorthand writes, which the word panel
+/// doesn't set.
+fn fixed_attributes(name: &str) -> &'static [&'static str] {
+    match local(name) {
+        "lb" | "pb" | "cb" => &["n"],
+        "rdg" => &["wit"],
+        _ => &[],
+    }
 }
 
 impl TreeSource {
@@ -149,7 +179,18 @@ impl TreeSource {
             let offset = |o: usize| u32::try_from(o).map_err(|_| "the file is too large".to_string());
             located[id] = Some((offset(key.0)?, offset(key.1)?));
         }
-        Ok(Self { tree, body_start, postamble_len, places, spans: located, words, replaced: HashMap::new(), replaced_nodes: HashMap::new() })
+        Ok(Self {
+            tree,
+            body_start,
+            postamble_len,
+            places,
+            spans: located,
+            words,
+            replaced: HashMap::new(),
+            replaced_nodes: HashMap::new(),
+            current: None,
+            attributes_set: false,
+        })
     }
 
     /// Segment `id` as written in the file (a word, punctuation, a tag), or
@@ -177,7 +218,145 @@ impl TreeSource {
     /// Whether a word's XML was set since the file was read: the body is
     /// then no longer the file's.
     pub fn is_changed(&self) -> bool {
-        !self.replaced.is_empty()
+        !self.replaced.is_empty() || self.attributes_set
+    }
+
+    /// Keeps the tree a compile wrote (`None`: the file's, unedited).
+    pub fn set_current(&mut self, tree: Option<Tree>) {
+        self.current = tree;
+    }
+
+    /// The tree as the last compile wrote it.
+    fn current(&self) -> &Tree {
+        self.current.as_ref().unwrap_or(&self.tree)
+    }
+
+    /// The elements word `word` (as the previews count) is in, has in it,
+    /// and has before it, with their attributes, as the last compile wrote
+    /// them.
+    pub fn word_elements(&self, word: usize) -> Result<Vec<ElementInfo>, String> {
+        let tree = self.current();
+        let body = find_body(tree).ok_or("no <body>")?;
+        let order = tree.descendants(body);
+        let w = order
+            .iter()
+            .copied()
+            .filter(|&n| tree.element(n).is_some_and(|e| local(&e.name) == "w"))
+            .nth(word)
+            .ok_or("There is no such word")?;
+        let is_token = |n: NodeId| tree.element(n).is_some_and(|e| matches!(local(&e.name), "w" | "pc" | "num"));
+        let has_token = |n: NodeId| tree.descendants(n).into_iter().any(is_token);
+        let mut wanted: Vec<(NodeId, &'static str)> = Vec::new();
+        // Before it: breaks, notes and the like back to the token before
+        let mut node = w;
+        'back: loop {
+            let parent = tree.parent(node).ok_or("no parent")?;
+            let index = tree.index_in_parent(node).ok_or("not in its parent")?;
+            let mut first = true;
+            for &sibling in tree.children(parent)[..index].iter().rev() {
+                if is_whitespace(tree, sibling) || tree.element(sibling).is_none() {
+                    continue;
+                }
+                first = false;
+                if is_token(sibling) || has_token(sibling) {
+                    break 'back;
+                }
+                wanted.push((sibling, "before"));
+            }
+            let stop = parent == body || tree.element(parent).is_some_and(|e| BLOCKS.contains(&local(&e.name)));
+            if !first || stop {
+                break;
+            }
+            node = parent;
+        }
+        wanted.reverse();
+        let mut ancestors = Vec::new();
+        let mut current = tree.parent(w);
+        while let Some(parent) = current.filter(|&p| p != body) {
+            ancestors.push((parent, "around"));
+            current = tree.parent(parent);
+        }
+        ancestors.reverse();
+        let mut all = ancestors;
+        all.extend(wanted);
+        for node in tree.descendants(w).into_iter().skip(1) {
+            let Some(e) = tree.element(node) else { continue };
+            let levels = |n: NodeId| tree.children(n).iter().any(|&c| tree.element(c).is_some_and(|e| matches!(local(&e.name), "facs" | "dipl" | "norm")));
+            if matches!(local(&e.name), "facs" | "dipl" | "norm") || (local(&e.name) == "choice" && levels(node)) {
+                continue;
+            }
+            all.push((node, "inside"));
+        }
+        // Ordinals: elements of the same name before each in the body
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        let mut ordinal: HashMap<NodeId, usize> = HashMap::new();
+        let looked_for: HashSet<NodeId> = all.iter().map(|(n, _)| *n).collect();
+        for &n in &order {
+            let Some(e) = tree.element(n) else { continue };
+            let count = counts.entry(e.name.as_str()).or_default();
+            if looked_for.contains(&n) {
+                ordinal.insert(n, *count);
+            }
+            *count += 1;
+        }
+        Ok(all
+            .into_iter()
+            .filter_map(|(n, place)| {
+                let e = tree.element(n)?;
+                Some(ElementInfo {
+                    name: e.name.clone(),
+                    ordinal: *ordinal.get(&n)?,
+                    place,
+                    attributes: e.attributes.iter().map(|a| (a.name.clone(), a.value.clone())).collect(),
+                    fixed: fixed_attributes(&e.name).iter().map(|s| s.to_string()).collect(),
+                })
+            })
+            .collect())
+    }
+
+    /// Sets the attributes of the `ordinal`-th element named `name` in the
+    /// body (as the last compile wrote it) to `attributes`, in the file. The
+    /// element must be in the file, not added in the shorthand since it was
+    /// opened, and the attributes the shorthand writes stay as they are.
+    pub fn set_element_attributes(&mut self, name: &str, ordinal: usize, attributes: &[(String, String)]) -> Result<(), String> {
+        let tree = self.current();
+        let body = find_body(tree).ok_or("no <body>")?;
+        let node = tree
+            .descendants(body)
+            .into_iter()
+            .filter(|&n| tree.element(n).is_some_and(|e| e.name == name))
+            .nth(ordinal)
+            .ok_or_else(|| format!("There is no such <{name}>"))?;
+        if !Tree::is_older(node, self.tree.node_count()) || self.tree.element(node).is_none_or(|e| e.name != name) {
+            return Err("This element was added in the shorthand; its attributes can be set once the project is saved and opened again".into());
+        }
+        let before = self.tree.element(node).map(|e| e.attributes.clone()).unwrap_or_default();
+        let valid = |n: &str| {
+            let mut chars = n.chars();
+            chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                && chars.all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
+        };
+        if let Some((bad, _)) = attributes.iter().find(|(n, _)| !valid(n)) {
+            return Err(format!("\"{bad}\" isn't an attribute name"));
+        }
+        for fixed in fixed_attributes(name) {
+            let was = before.iter().find(|a| a.name == *fixed).map(|a| a.value.as_str());
+            let now = attributes.iter().find(|(n, _)| n == fixed).map(|(_, v)| v.as_str());
+            if was != now {
+                return Err(format!("A <{name}>'s {fixed} is set in the shorthand"));
+            }
+        }
+        let names: HashSet<&str> = attributes.iter().map(|(n, _)| n.as_str()).collect();
+        for tree in std::iter::once(&mut self.tree).chain(self.current.as_mut()) {
+            for a in before.iter().filter(|a| !names.contains(a.name.as_str())) {
+                tree.set_attribute(node, &a.name, None)?;
+            }
+            for (n, v) in attributes {
+                tree.set_attribute(node, n, Some(v))?;
+            }
+        }
+        self.attributes_set = true;
+        Ok(())
     }
 
     /// Sets the XML of the word that is segment `id` (an element, such as a
@@ -841,5 +1020,5 @@ pub(super) fn apply_to_tree(
             }
         }
     }
-    Some(RenderedBody { xml: written[start..end].to_string(), edited_words, words, stale: applier.stale })
+    Some(RenderedBody { xml: written[start..end].to_string(), edited_words, words, stale: applier.stale, tree: Some(applier.tree) })
 }

@@ -1365,7 +1365,7 @@ pub fn render_body(
             // a `<w` in a comment
             if let Some(tree) = tree {
                 let words = tree.word_offsets().into_iter().map(|w| (w, Origin::Source(w))).collect();
-                return Ok(RenderedBody { xml: body.to_string(), edited_words: Vec::new(), words, stale: Vec::new() });
+                return Ok(RenderedBody { xml: body.to_string(), edited_words: Vec::new(), words, stale: Vec::new(), tree: None });
             }
             let mut out = Output::with_capacity(body.len());
             out.push(body, Origin::Source(0));
@@ -1422,6 +1422,8 @@ pub struct RenderedBody {
     /// Edited words (by segment) with levels that couldn't follow the edit
     /// and were kept as they were: to be reviewed
     pub stale: Vec<(usize, Vec<String>)>,
+    /// The file's tree with the edits applied, when they were applied to it
+    pub tree: Option<crate::document::Tree>,
 }
 
 impl RenderedBody {
@@ -1855,7 +1857,7 @@ impl Output {
                 (at, origin)
             })
             .collect();
-        RenderedBody { xml: self.xml, edited_words, words, stale: Vec::new() }
+        RenderedBody { xml: self.xml, edited_words, words, stale: Vec::new(), tree: None }
     }
 }
 

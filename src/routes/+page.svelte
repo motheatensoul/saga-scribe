@@ -10,6 +10,7 @@
     import MetadataEditor from "$lib/components/MetadataEditor.svelte";
     import ImportProfileDialog from "$lib/components/ImportProfileDialog.svelte";
     import WordXmlPanel from "$lib/components/WordXmlPanel.svelte";
+    import WordMarkupPanel from "$lib/components/WordMarkupPanel.svelte";
     import AbbreviationsDialog from "$lib/components/AbbreviationsDialog.svelte";
     import { abbreviationStore } from "$lib/stores/abbreviations";
     import EntityBrowser from "$lib/components/EntityBrowser.svelte";
@@ -90,7 +91,7 @@
     let showErrorPanel = $state(false);
     let showValidationPanel = $state(false);
     let showLemmatizer = $state(false);
-    let wordPanelTab = $state<"lemmatize" | "annotate" | "xml">("lemmatize");
+    let wordPanelTab = $state<"lemmatize" | "annotate" | "xml" | "markup">("lemmatize");
     let showSettings = $state(false);
     let showHelp = $state(false);
     let selectedWordFacsimile = $state<string | null>(null);
@@ -328,6 +329,12 @@
     function handleEntityInsert(text: string) {
         editorComponent?.insertText(text);
         showEntityBrowser = false;
+    }
+
+    /** A break in the rendered text: the word after it, on the Markup tab */
+    function handleBreakClick(facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) {
+        handleWordClick(facsimile, diplomatic, wordIndex, element);
+        wordPanelTab = "markup";
     }
 
     function handleWordClick(
@@ -1154,6 +1161,7 @@
                     content={previewContent}
                     xslPath={activeStylesheetPath}
                     onwordclick={handleWordClick}
+                    onbreakclick={importedStore.isImportedMode ? handleBreakClick : undefined}
                 />
             </Pane>
         </Splitpanes>
@@ -1326,6 +1334,19 @@
                     >
                         XML
                     </button>
+                    <button
+                        type="button"
+                        id="word-tab-markup"
+                        class="tab"
+                        class:tab-active={wordPanelTab === "markup"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "markup"}
+                        aria-controls="word-panel-markup"
+                        tabindex={wordPanelTab === "markup" ? 0 : -1}
+                        onclick={() => wordPanelTab = "markup"}
+                    >
+                        Markup
+                    </button>
                 </div>
                 <!-- Tab content -->
                 <div class="p-4">
@@ -1374,6 +1395,20 @@
                                 wordIndex={selectedWordIndex}
                                 imported={importedStore.isImportedMode}
                                 onapplied={handleWordXmlApplied}
+                            />
+                        {/if}
+                    </div>
+                    <div
+                        id="word-panel-markup"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-markup"
+                        class:hidden={wordPanelTab !== "markup"}
+                    >
+                        {#if wordPanelTab === "markup"}
+                            <WordMarkupPanel
+                                wordIndex={selectedWordIndex}
+                                imported={importedStore.isImportedMode}
+                                onapplied={() => void compileNow()}
                             />
                         {/if}
                     </div>

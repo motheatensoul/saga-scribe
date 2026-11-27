@@ -13,10 +13,13 @@
         content = '',
         xslPath = '/xsl/simple.xsl',
         onwordclick,
+        onbreakclick,
     }: {
         content?: string;
         xslPath?: string;
         onwordclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) => void;
+        /** A line or page break was clicked in the rendered text: the word after it */
+        onbreakclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) => void;
     } = $props();
 
     let viewMode = $state<'xml' | 'rendered' | 'xslt'>('rendered');
@@ -121,7 +124,7 @@
                 role="tabpanel"
                 aria-labelledby="preview-tab-rendered"
             >
-                <RenderedText content={shown} marks={shownMarks} active={viewMode === 'rendered'} {onwordclick} />
+                <RenderedText content={shown} marks={shownMarks} active={viewMode === 'rendered'} {onwordclick} {onbreakclick} />
             </div>
         {/if}
         {#if visited.xslt}

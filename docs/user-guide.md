@@ -623,6 +623,15 @@ exported:
   of the same kind (a `<w>` stays a `<w>`). A word added in the shorthand can be edited
   this way once the project has been saved and opened again. (In a new document, any word
   can be: see [Projects and files](#projects-and-files).)
+- The word panel's **Markup** tab lists the elements of the file around the word (its
+  sentence, quotation, name, paragraph, division), in it (`<hi>`, `<c>`, `<ex>`) and right
+  before it (the line or page break that starts its line, a note), each with its
+  attributes: change, remove or add them, then **Apply** sets them in the file. Clicking a
+  line number or page number in the rendered text opens this tab for the word after the
+  break. Attributes the shorthand writes, such as a break's number (`n`), are set in the
+  shorthand and shown read-only. Markup added in the shorthand gets its attributes once
+  the project has been saved and opened again. New documents don't have the tab's controls
+  yet.
 - A paragraph can be split by adding `.p` and joined by removing one. A split has to fall
   between elements such as sentences (`<s>`), not inside one.
 - If the shorthand contains an error, the document is not saved or exported, rather than

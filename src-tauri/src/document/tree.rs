@@ -305,6 +305,17 @@ impl Tree {
     }
 
     /// `id` and every node below it, in document order.
+    /// How many nodes the tree has made (removed ones too): nodes of a copy
+    /// made since have higher IDs.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Whether `id` is a node this tree had when it had `count` nodes.
+    pub fn is_older(id: NodeId, count: usize) -> bool {
+        id.index() < count
+    }
+
     pub fn descendants(&self, id: NodeId) -> Vec<NodeId> {
         let mut out = Vec::new();
         let mut stack = vec![id];

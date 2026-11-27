@@ -6,7 +6,7 @@
     import { getInflections } from '$lib/stores/dictionary';
     import type { AnnotationType } from '$lib/stores/annotations';
     import { validationStore } from '$lib/stores/validation';
-    import type { ParsedDocument, TextToken } from '$lib/rendered/document';
+    import type { Page, ParsedDocument, TextToken } from '$lib/rendered/document';
     import { renderFull, renderUpdate, type RenderedState } from '$lib/rendered/incremental';
     import { perfRecord } from '$lib/perf';
     import type { EntityMap } from '$lib/stores/entities';
@@ -17,6 +17,7 @@
         marks = NO_MARKS,
         active = true,
         onwordclick,
+        onbreakclick,
     }: {
         content?: string;
         /** What to mark on the words of `content`, numbered as it is */
@@ -24,6 +25,8 @@
         /** Hidden views skip updates and catch up when shown again */
         active?: boolean;
         onwordclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement, isSpanExtend?: boolean) => void;
+        /** A line or page break was clicked: the word after it, whose markup tab shows the break */
+        onbreakclick?: (facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) => void;
     } = $props();
 
 
@@ -149,6 +152,24 @@
         // Shift-click extends selection for span annotations
         const isSpanExtend = event.shiftKey;
         onwordclick?.(facsimile, diplomatic, token.wordIndex ?? -1, target, isSpanExtend);
+    }
+
+    /** The word after token `i` of `page` (on a later page if need be) */
+    function wordAfter(page: Page, i: number): TextToken | undefined {
+        const pages = document?.pages ?? [];
+        for (let p = pages.indexOf(page); p >= 0 && p < pages.length; p++) {
+            const tokens = pages[p].tokens;
+            const from = pages[p] === page ? i + 1 : 0;
+            const word = tokens.slice(from).find((t) => t.type === "word");
+            if (word) return word;
+        }
+        return undefined;
+    }
+
+    function handleBreakClick(page: Page, i: number, event: MouseEvent) {
+        const word = wordAfter(page, i);
+        if (!word || word.wordIndex === undefined) return;
+        onbreakclick?.(word.displayText, word.diplomatic || word.displayText, word.wordIndex, event.currentTarget as HTMLElement);
     }
 
     function hasKnownLemma(word: string): boolean {
@@ -376,10 +397,28 @@
                             {#if i > 0 && page.tokens[i - 1]?.type !== 'pagebreak'}
                                 <br />
                             {/if}
-                            <span class="line-number">{token.lineNumber || ''}</span>
+                            {#if onbreakclick}
+                                <button
+                                    type="button"
+                                    class="line-number break-button"
+                                    title="Line {token.lineNumber || ''}: its markup"
+                                    onclick={(e) => handleBreakClick(page, i, e)}
+                                >{token.lineNumber || ''}</button>
+                            {:else}
+                                <span class="line-number">{token.lineNumber || ''}</span>
+                            {/if}
                         {:else if token.type === 'pagebreak'}
                             <div class="pagebreak">
-                                <span class="page-indicator">{token.pageNumber || '?'}</span>
+                                {#if onbreakclick}
+                                    <button
+                                        type="button"
+                                        class="page-indicator break-button"
+                                        title="Page {token.pageNumber || '?'}: its markup"
+                                        onclick={(e) => handleBreakClick(page, i, e)}
+                                    >{token.pageNumber || '?'}</button>
+                                {:else}
+                                    <span class="page-indicator">{token.pageNumber || '?'}</span>
+                                {/if}
                             </div>
                         {:else if token.type === 'space'}
                             {' '}
@@ -508,6 +547,17 @@
 
     .punctuation {
         color: var(--color-base-content);
+    }
+
+    .break-button {
+        border: 1px solid transparent;
+        background: transparent;
+        cursor: pointer;
+        font: inherit;
+    }
+
+    .break-button:hover {
+        border-color: var(--color-base-300);
     }
 
     .line-number {

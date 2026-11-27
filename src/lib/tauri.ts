@@ -149,6 +149,32 @@ export async function setImportedWordXml(word: number, xml: string): Promise<Wor
   return invoke("set_imported_word_xml", { word, xml });
 }
 
+/** An element of the file as the word panel's Markup tab shows it. */
+export interface ElementInfo {
+  name: string;
+  /** How many elements of the same name come before it in the body */
+  ordinal: number;
+  /** "around": the word is in it; "inside": in the word; "before": between the word and the token before it */
+  place: "around" | "inside" | "before";
+  attributes: [string, string][];
+  /** Attributes the shorthand writes (a break's `n`) */
+  fixed: string[];
+}
+
+/** The elements word `word` of the current imported document is in, has in it and has before it. */
+export async function importedWordElements(word: number): Promise<ElementInfo[]> {
+  return invoke("imported_word_elements", { word });
+}
+
+/** Sets the attributes of an element of the current imported document (the editor then compiles). */
+export async function setImportedElementAttributes(
+  name: string,
+  ordinal: number,
+  attributes: [string, string][],
+): Promise<void> {
+  return invoke("set_imported_element_attributes", { name, ordinal, attributes });
+}
+
 /** The XML of word `word` of the new document, as the last compile wrote it. */
 export async function nativeWordXml(word: number): Promise<string> {
   return invoke("native_word_xml", { word });

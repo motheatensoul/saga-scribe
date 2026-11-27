@@ -144,7 +144,12 @@ when it is done (and record it in CHANGELOG.md if users notice).
       import dialog still counts markup inside words as unsupported;
     - markup inside a word that is on some levels only (`<hi>` on facs and dipl): the
       shorthand puts it on every level;
-    - attributes from the word panel (below).
+    - (done 2026-11-26 for imported files: the word panel's **Markup** tab,
+      `TreeSource::word_elements` / `set_element_attributes`) attributes from the word
+      panel in new documents: they should be patched like imported files, the XML
+      the record, so attributes set there stay (not recompiled from the shorthand);
+      markup added in the shorthand of an imported file gets attributes only after
+      saving and opening again.
     - **Attributes are set by clicking, not typed.** Every element with attributes
       becomes clickable in the rendered text, like words, and opens in the word panel
       (the window's secondary part), whose controls set its attributes. This covers the
