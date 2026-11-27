@@ -16,6 +16,7 @@
 //!   anything that is saved.
 
 pub mod anchor;
+pub mod header;
 mod merge;
 pub mod profile;
 mod project;

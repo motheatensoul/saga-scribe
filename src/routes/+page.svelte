@@ -51,6 +51,7 @@
         importFile,
         exportInflections,
         generateTeiHeader,
+        setImportedMetadata,
         validateXml,
         setImportedLevels,
         importedDerivedNormalized,
@@ -1192,8 +1193,17 @@
     <MetadataEditor
         bind:isopen={showMetadataEditor}
         bind:metadata={currentMetadata}
-        onSave={(meta) => {
+        onSave={async (meta) => {
             metadataStore.updateMetadata(meta);
+            // The header is the file's: the metadata goes into it
+            if (importedStore.isImportedMode) {
+                try {
+                    await setImportedMetadata(JSON.stringify(meta));
+                    await compileNow();
+                } catch (e) {
+                    errorStore.error("Metadata", `The metadata couldn't be written into the file's header: ${e}`);
+                }
+            }
         }}
     />
 

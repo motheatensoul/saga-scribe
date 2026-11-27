@@ -161,6 +161,11 @@ export interface ElementInfo {
   fixed: string[];
 }
 
+/** Writes the metadata editor's metadata into the current imported document's `<teiHeader>` (the editor then compiles). */
+export async function setImportedMetadata(metadataJson: string): Promise<void> {
+  return invoke("set_imported_metadata", { metadataJson });
+}
+
 /** The elements word `word` of the current imported document is in, has in it and has before it. */
 export async function importedWordElements(word: number): Promise<ElementInfo[]> {
   return invoke("imported_word_elements", { word });

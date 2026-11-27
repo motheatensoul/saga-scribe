@@ -119,6 +119,7 @@ pub fn run() {
             commands::parse::set_imported_word_xml,
             commands::parse::imported_word_elements,
             commands::parse::set_imported_element_attributes,
+            commands::parse::set_imported_metadata,
             commands::parse::native_word_xml,
             commands::parse::set_native_word_xml,
             commands::parse::imported_derived_normalized,

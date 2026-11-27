@@ -309,7 +309,10 @@ and the manuscript, in collapsible sections:
 - **Languages Used**: all languages occurring in the transcription.
 
 The metadata is written into the document's `<teiHeader>` and saved with the project. When a
-TEI file is imported, its header is read into the metadata editor.
+TEI file is imported, its header is read into the metadata editor, and saving the editor
+writes what was changed into the file's header: only the sections changed, and in them
+only the elements whose text or attributes differ. Everything in the header the editor
+doesn't show (other elements, attributes, comments, the layout) stays as the file has it.
 
 ## MENOTA transcription levels
 

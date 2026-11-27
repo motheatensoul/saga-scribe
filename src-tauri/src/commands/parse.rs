@@ -651,6 +651,15 @@ impl ImportedSource {
             .set_element_attributes(name, ordinal, attributes)
     }
 
+    /// Writes `metadata` (the metadata editor's) into the file's header,
+    /// where it differs from what the header says now; the rest of the
+    /// header stays as written. The next compile has it.
+    pub fn set_metadata(&mut self, metadata: &crate::metadata::Metadata) -> Result<(), String> {
+        let now = crate::importer::tei::metadata_of(&format!("{}{}", self.preamble, self.postamble))?.unwrap_or_default();
+        self.preamble = crate::document::header::with_metadata(&self.preamble, &now, metadata)?;
+        Ok(())
+    }
+
     /// The profile, for saving (`profile.json`).
     pub fn profile(&self) -> Option<&crate::document::profile::Profile> {
         self.document.profile.as_ref()
@@ -824,6 +833,22 @@ pub async fn set_imported_element_attributes(
     let mut slots = session.0.lock().map_err(|_| "Imported document state is poisoned")?;
     let source = slots.current.as_mut().ok_or("No imported document is loaded")?;
     source.set_element_attributes(&name, ordinal, &attributes)
+}
+
+/// Writes the metadata editor's metadata into the current imported
+/// document's `<teiHeader>`, where it differs from it; the editor then
+/// compiles.
+///
+/// # Errors
+///
+/// If no imported document is loaded, the metadata doesn't parse, or the
+/// file's header can't be read.
+#[tauri::command(async, rename_all = "camelCase")]
+pub async fn set_imported_metadata(session: State<'_, ImportedSession>, metadata_json: String) -> Result<(), String> {
+    let metadata: crate::metadata::Metadata = serde_json::from_str(&metadata_json).map_err(|e| format!("The metadata doesn't read: {e}"))?;
+    let mut slots = session.0.lock().map_err(|_| "Imported document state is poisoned")?;
+    let source = slots.current.as_mut().ok_or("No imported document is loaded")?;
+    source.set_metadata(&metadata)
 }
 
 /// The XML of word `word` of the new document, as the last compile wrote it
@@ -1677,6 +1702,19 @@ mod imported_identity_tests {
         compile(&mut source, &edited, None, &[]);
         let q = source.word_elements(1).unwrap().into_iter().find(|e| e.name == "q").unwrap();
         assert!(source.set_element_attributes("q", q.ordinal, &[("who".into(), "A".into())]).is_err());
+    }
+
+    /// The metadata editor writes into the file's header, and only where
+    /// the metadata changed.
+    #[test]
+    fn test_metadata_is_written_into_the_files_header() {
+        let xml = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><teiHeader><fileDesc><titleStmt><title>Gamall</title><sponsor>X</sponsor></titleStmt><publicationStmt><p>-</p></publicationStmt><sourceDesc><msDesc><msIdentifier><idno>AM 1</idno></msIdentifier></msDesc></sourceDesc></fileDesc></teiHeader><text><body><p><w><me:dipl>a</me:dipl></w></p></body></text></TEI>"#;
+        let (mut source, dsl) = open(xml);
+        let mut metadata = crate::importer::tei::metadata_of(xml).unwrap().unwrap();
+        metadata.title_stmt.title = Some("Nýr".into());
+        source.set_metadata(&metadata).unwrap();
+        let out = compile(&mut source, &dsl, None, &[]);
+        assert_eq!(out.xml, xml.replace("Gamall", "Nýr"));
     }
 
     #[test]

@@ -389,6 +389,17 @@ pub fn parse_dsl_only(xml_content: &str) -> Result<String, String> {
 // Metadata Extraction
 // ============================================================================
 
+/// The metadata a TEI document's header holds (none without a header).
+///
+/// # Errors
+///
+/// If the document doesn't parse.
+pub fn metadata_of(xml: &str) -> Result<Option<Metadata>, String> {
+    let doc = parse_document(xml)?;
+    let root = doc.get_root_element().ok_or("No root element found")?;
+    Ok(extract_metadata(&doc, &root))
+}
+
 fn extract_metadata(_doc: &Document, root: &Node) -> Option<Metadata> {
     let header = find_element(root, "teiHeader")?;
 
