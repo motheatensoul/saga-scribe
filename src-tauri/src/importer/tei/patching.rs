@@ -1767,10 +1767,12 @@ fn check_paragraph_edits(segments: &[Segment], patches: &[PatchOperation]) -> Re
     for patch in patches {
         match patch {
             PatchOperation::Insert { dsl, .. } if dsl == PARAGRAPH => {
-                let Some(after) = anchor else {
-                    return Err("A paragraph break (.p) can't come before the first imported paragraph".to_string());
-                };
+                // Before everything, or outside any paragraph: one starts there
+                let Some(after) = anchor else { continue };
                 if let Err(inside) = structure.split_point_after(segments, after) {
+                    if inside.is_none_or(|name| matches!(name, "body" | "div" | "front" | "back")) {
+                        continue;
+                    }
                     let place = match inside {
                         Some(name) => format!("inside <{}>", name),
                         None => "outside any paragraph".to_string(),

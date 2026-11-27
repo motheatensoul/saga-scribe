@@ -15,6 +15,11 @@ import { compileSession } from "$lib/stores/compileSession";
 class ImportedStore {
   isImportedMode = $state(false);
   /**
+   * Where the document's file came from: imported ("file"), or made from the
+   * template for a new document ("new"); both are edited as their XML
+   */
+  origin = $state<"file" | "new">("file");
+  /**
    * Words to check since import: edited ones that kept the original's
    * lemma, analysis and normalized form, and replaced ones not yet answered
    * (an answered word is checked); updated by every compile
@@ -58,8 +63,9 @@ class ImportedStore {
   }
 
   /** Edits `document`, which the backend staged when it was imported or opened. */
-  load(document: StagedDocument) {
+  load(document: StagedDocument, origin: "file" | "new" = "file") {
     this.isImportedMode = true;
+    this.origin = origin;
     this.editedWords = new Set();
     this.records = [];
     this.recordsDsl = "";

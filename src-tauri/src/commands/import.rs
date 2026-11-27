@@ -82,6 +82,48 @@ pub(crate) fn stage(result: ImportResult, session: &ImportedSession) -> Result<I
     Ok(ImportReply { dsl, metadata, is_imported_mode: imported.is_some(), imported, words, not_well_formed: None })
 }
 
+/// Makes a new document's file: `xml` (compiled once from the template and
+/// the shorthand so far) is staged like an imported file, and the document
+/// is edited as its tree from then on, as every document is. Its profile is
+/// the file's if it has words, otherwise the template's (`multi_level`: the
+/// three MENOTA levels in a `<choice>`; else words without levels; words
+/// are `<w>` if `word_wrap`). `dsl`
+/// is kept where it reads as the file.
+///
+/// # Errors
+///
+/// If `xml` doesn't read as a TEI document with a body.
+#[tauri::command(async, rename_all = "camelCase")]
+pub async fn create_document(
+    xml: String,
+    dsl: String,
+    multi_level: bool,
+    word_wrap: bool,
+    session: State<'_, ImportedSession>,
+) -> Result<ImportReply, String> {
+    let session = session.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || created(&xml, &dsl, multi_level, word_wrap, &session))
+        .await
+        .map_err(|e| format!("Creating the document failed: {e}"))?
+}
+
+pub(crate) fn created(xml: &str, dsl: &str, multi_level: bool, word_wrap: bool, session: &ImportedSession) -> Result<ImportReply, String> {
+    use crate::document::profile::Profile;
+    let mut import = tei::parse(xml)?;
+    let document = import.imported_document.as_mut().ok_or("The new document has no body")?;
+    let has_words = document.profile.as_ref().is_some_and(|p| p.counts.tokens > 0);
+    if !has_words {
+        let counts = document.profile.take().map(|p| p.counts).unwrap_or_default();
+        let template = if multi_level { Profile::menota() } else { Profile::plain() };
+        document.profile = Some(Profile { counts, ..template });
+        // Words are `<w>` (the template's choice), with none in it yet
+        document.is_menota = word_wrap;
+    }
+    import.dsl = crate::importer::tei::patching::keep_as_written(dsl, &import.dsl).0;
+    import.is_imported_mode = true;
+    stage(import, session)
+}
+
 /// The file's text and its extension, lowercased.
 fn read_import(path: &str) -> Result<(String, String), String> {
     let extension = Path::new(path)
@@ -134,5 +176,33 @@ mod tests {
         let reply = import_from_path(path.to_str().unwrap(), None, &session).unwrap();
         assert_eq!(reply.not_well_formed, None);
         fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(test)]
+mod created_tests {
+    use super::*;
+    use crate::parser::{Compiler, CompilerConfig};
+
+    /// A new document as the app makes it: compiled once from the template,
+    /// then a tree edited like an imported file, words added with the
+    /// template's levels.
+    #[test]
+    fn a_new_document_is_a_tree_from_the_template() {
+        let header = Metadata::default().to_tei_header(true);
+        let footer = Metadata::tei_footer();
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false, levels: None };
+        let body = Compiler::new().with_config(config).compile("").unwrap();
+        let xml = format!("{header}{body}{footer}");
+        let session = ImportedSession::default();
+        let reply = created(&xml, "", true, true, &session).unwrap();
+        assert!(reply.is_imported_mode);
+        session.load(reply.imported.map(|s| s.handle)).unwrap();
+        let out = session.with_current_mut(|s| s.compile_plainly(".p ok //2 maþr")).unwrap().unwrap().unwrap();
+        assert!(out.xml.contains("<me:facs>ok</me:facs>") && out.xml.contains("<me:norm>maþr</me:norm>"), "{}", out.xml);
+        assert!(out.xml.contains("<lb n=\"2\"/>") && out.xml.contains("<teiHeader>"), "{}", out.xml);
+        // And edited again: the words stay, one more goes in
+        let out = session.with_current_mut(|s| s.compile_plainly(".p ok //2 maþr ok")).unwrap().unwrap().unwrap();
+        assert_eq!(out.xml.matches("<w>").count(), 3, "{}", out.xml);
     }
 }

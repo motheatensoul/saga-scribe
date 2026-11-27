@@ -56,25 +56,27 @@ A typical session:
 Work is saved as a project file with the extension `.teis`. It is a ZIP archive containing:
 
 - the transcription in shorthand (`source.dsl`);
-- the compiled TEI-XML (`output.xml`), or for an imported TEI file, the file as it now is
-  (`document.xml`), with how it encodes its transcription (`profile.json`) and the
-  replaced words still to be decided (`records.json`);
+- the document's TEI-XML as it now is (`document.xml`), with how it encodes its
+  transcription (`profile.json`) and the replaced words still to be decided
+  (`records.json`);
 - confirmed lemmas and analyses, word by word;
 - the abbreviation store (`abbreviations.json`, see [Abbreviations](#abbreviations));
 - annotations, with a fingerprint of each annotated word (`anchors.json`), so that if the
   file was changed outside Saga-Scribe they are found on their words again, and those whose
   words are gone are left out with a warning in the log;
-- manuscript metadata;
-- for a new document, the words whose XML was set in the word panel's **XML** tab
-  (`overrides.json`).
+- manuscript metadata.
 
-A new document's XML is compiled from the shorthand, with lemmas, notes and other
-annotations written into it, so the exported file is a complete edition. A word whose XML
-you set in the word panel's **XML** tab keeps it: later edits of the word in the shorthand
-are merged into it, and lemmas and annotations changed later are written into it too.
+Every document is its XML: a new document's file is made from the template (its header,
+or the metadata's, and the shorthand typed so far) when you start typing, and from then on
+it is edited like an imported file, each edit written into the XML where it was made, with
+lemmas, notes and other annotations written into their words, so the exported file is a
+complete edition. Changing the template before there is anything in the document makes
+its file anew from the new template.
 
-For an imported file, `document.xml` is the file with your edits: what you didn't edit is
-in it exactly as in the file you imported. When the project is opened, the shorthand is
+`document.xml` is the file with your edits: what you didn't edit is in it exactly as it
+was, in the file you imported or as it was last saved. Projects saved before, with the
+compiled XML (`output.xml`), are opened as before, and their file is made from that
+shorthand when they are first compiled. When the project is opened, the shorthand is
 compared with that file, and any place where it doesn't read as the file is rewritten from
 it (the log says how many). Projects saved with Saga-Scribe 0.8 can't be opened with
 earlier versions.
@@ -600,9 +602,8 @@ are shown where they stand (`*{A}*nnat`, `.c{S}tephan`, `mikill.corr{mikit=mikit
 cover part of the word; markup over the whole word stays hidden there (it would read as
 markup around the word), as does markup on the other levels, which an edit keeps.
 
-An imported document is marked **Imported** in the editor header. In this mode, the
-original file is kept and only edited passages are rewritten when the document is saved or
-exported:
+The original file is kept and only edited passages are rewritten when the document is
+saved or exported (so are a new document's, once its file is made):
 
 - Everything you have not edited is written out exactly as it was, byte for byte,
   including the header, comments, namespaces and markup the shorthand cannot express.
@@ -638,8 +639,7 @@ exported:
   line number or page number in the rendered text opens this tab for the word after the
   break. Attributes the shorthand writes, such as a break's number (`n`), are set in the
   shorthand and shown read-only. Markup added in the shorthand gets its attributes once
-  the project has been saved and opened again. New documents don't have the tab's controls
-  yet.
+  the project has been saved and opened again.
 - A paragraph can be split by adding `.p` and joined by removing one. A split has to fall
   between elements such as sentences (`<s>`), not inside one.
 - If the shorthand contains an error, the document is not saved or exported, rather than

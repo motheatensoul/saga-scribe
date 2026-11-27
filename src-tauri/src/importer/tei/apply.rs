@@ -413,6 +413,9 @@ enum Anchor {
     Segment(usize),
 }
 
+/// Elements a paragraph can be started in (`.p` outside any paragraph).
+const CONTAINERS: &[&str] = &["body", "div", "front", "back"];
+
 /// Elements that a deleted word's emptied wrapper never is.
 const BLOCKS: &[&str] = &["p", "div", "body", "front", "back", "text", "head", "lg", "l", "ab", "list", "item", "table", "row", "cell"];
 
@@ -444,6 +447,9 @@ struct Applier<'a> {
     open: Vec<NodeId>,
     /// Kept markup whose end has passed: nothing after it may be in it
     closed: HashSet<NodeId>,
+    /// A paragraph started outside any (`.p` in a new document's body):
+    /// what follows goes into it, up to the next paragraph or structure
+    paragraph: Option<NodeId>,
     /// Markup renamed: the element now in its place
     renamed: HashMap<NodeId, NodeId>,
 }
@@ -589,6 +595,12 @@ impl Applier<'_> {
     /// Moves what was written since markup was added (up to `last`) into
     /// it. `None` if `last` isn't after it in the same element.
     fn absorb(&mut self, last: NodeId) -> Option<()> {
+        // Into a paragraph started outside any, while it can take it
+        if let Some(paragraph) = self.paragraph {
+            if last != paragraph && !self.is_inside(last, paragraph) && self.absorb_into(paragraph, last).is_none() {
+                self.paragraph = None;
+            }
+        }
         // Outermost first: what goes into nested markup goes into its outer
         for i in 0..self.wraps.len() {
             let wrap = self.wraps[i];
@@ -760,6 +772,7 @@ pub(super) fn apply_to_tree(
         wraps: Vec::new(),
         open: Vec::new(),
         closed: HashSet::new(),
+        paragraph: None,
         renamed: HashMap::new(),
     };
     let mut anchor: Option<Anchor> = None;
@@ -769,6 +782,25 @@ pub(super) fn apply_to_tree(
 
     for patch in patches {
         match patch {
+            // Outside any paragraph (a new document's body): a paragraph
+            // starts here, holding what follows up to the next
+            PatchOperation::Insert { dsl, token, .. }
+                if dsl == PARAGRAPH && anchor_segment.is_none_or(|after| structure.split_point_after(segments, after).is_err()) =>
+            {
+                applier.paragraph = None;
+                let (parent, index) = match anchor {
+                    Some(at) => applier.position(at)?,
+                    None => (find_body(&applier.tree)?, 0),
+                };
+                if !applier.tree.element(parent).is_some_and(|e| CONTAINERS.contains(&local(&e.name))) {
+                    return None;
+                }
+                let element = Element { name: "p".into(), namespaces: Vec::new(), attributes: Vec::new() };
+                let node = applier.tree.insert(parent, index, NodeKind::Element(Box::new(element)));
+                applier.created.insert(node, *token);
+                applier.paragraph = Some(node);
+                anchor = Some(Anchor::Start(node));
+            }
             PatchOperation::Insert { dsl, token, .. } if dsl == PARAGRAPH => {
                 // Split the paragraph after the point found for the token before
                 let after = anchor_segment?;
@@ -836,6 +868,10 @@ pub(super) fn apply_to_tree(
                     }
                 }
                 let part = markup_segment(segment);
+                // Structure of the file ends a paragraph started outside any
+                if matches!(segment, Segment::Paragraph { .. } | Segment::Structural { shown: None, .. }) {
+                    applier.paragraph = None;
+                }
                 if part.is_none() && !applier.closed.is_empty() && applier.in_closed(*segment_id) {
                     // In kept markup whose end the shorthand has passed
                     return None;
@@ -950,7 +986,7 @@ pub(super) fn apply_to_tree(
                     }
                     _ => Anchor::Segment(*segment_id),
                 });
-                if !applier.wraps.is_empty() {
+                if !applier.wraps.is_empty() || applier.paragraph.is_some() {
                     let last = applier.anchor_node(anchor?)?;
                     applier.absorb(last)?;
                 }

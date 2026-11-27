@@ -39,6 +39,8 @@
     import { isMetadataEmpty } from "$lib/types/metadata";
     import {
         compileDsl,
+        createDocument,
+        type CompileOptions,
         saveProject,
         openProject,
         exportTei,
@@ -147,6 +149,75 @@
         ({ normalizerJson, entityMappingsJson } = await loadAppResources());
     });
 
+    /**
+     * Makes a new document's file from `template` and the shorthand so far
+     * (compiled once, with the metadata, lemmas and annotations), and stages
+     * it: the document is edited as its tree from then on. Returns the
+     * shorthand as the file reads (the editor has it), or null.
+     */
+    async function createFromTemplate(
+        content: string,
+        template: NonNullable<typeof $templateStore.active>,
+        entityOptions: CompileOptions,
+    ): Promise<string | null> {
+        const currentMetadata = metadataStore.getMetadata();
+        let header = template.header;
+        if (currentMetadata && !isMetadataEmpty(currentMetadata)) {
+            try {
+                header = await generateTeiHeader(JSON.stringify(currentMetadata), template.multiLevel);
+            } catch (e) {
+                console.warn("Failed to generate TEI header from metadata, using template header:", e);
+            }
+        }
+        try {
+            return await createFrom(content, template, entityOptions, header);
+        } catch (e) {
+            console.warn("A new document's file couldn't be made:", e);
+            return null;
+        }
+    }
+
+    async function createFrom(
+        content: string,
+        template: NonNullable<typeof $templateStore.active>,
+        entityOptions: CompileOptions,
+        header: string,
+    ): Promise<string | null> {
+        const annotationSet = annotationStore.getSet();
+        const writes = annotationStore.getLemmaWrites();
+        const compiled = await compileDsl(content, header, template.footer, {
+            wordWrap: template.wordWrap,
+            autoLineNumbers: template.autoLineNumbers,
+            multiLevel: template.multiLevel,
+            wrapPages: template.wrapPages,
+            ...entityOptions,
+            lemmaMappingsJson: Object.keys(writes).length > 0 ? JSON.stringify(writes) : undefined,
+            abbreviationsJson: abbreviationStore.defaultsJson(),
+            annotationsJson: annotationSet.annotations.length > 0 ? JSON.stringify(annotationSet) : undefined,
+        });
+        if (!compiled.xml) return null;
+        const created = await createDocument(compiled.xml, content, template.multiLevel, template.wordWrap);
+        if (!created.imported) return null;
+        importedStore.load(created.imported, "new");
+        createdTemplateId = template.id;
+        // The shorthand as the file reads, where it doesn't already
+        if (created.dsl !== content) editorComponent?.setContent(created.dsl);
+        return created.dsl;
+    }
+
+    /** The template a new document's file was made from: another one makes it anew */
+    let createdTemplateId: string | null = null;
+    $effect(() => {
+        const id = $templateStore.active?.id ?? null;
+        untrack(() => {
+            if (importedStore.isImportedMode && importedStore.origin === "new" && createdTemplateId !== null && id !== createdTemplateId) {
+                createdTemplateId = null;
+                importedStore.reset();
+                void compileNow();
+            }
+        });
+    });
+
     // Compile without updating UI - returns the result
     async function compileOnly(content: string): Promise<string | null> {
         const template = $templateStore.active;
@@ -172,6 +243,13 @@
                 return json;
             });
 
+        // A new document: its file is made from the template once, and from
+        // then on it is edited as its XML, as every document is
+        if (!importedStore.isImportedMode) {
+            // (If the shorthand doesn't compile, the compile below says why)
+            const created = await createFromTemplate(content, template, entityOptions);
+            if (created !== null) content = created;
+        }
         if (importedStore.isImportedMode) {
             return perfTime(
                 "compile.roundtrip",
@@ -423,23 +501,6 @@
         spanEndWordIndex = null;
     }
 
-    let warnedAnnotationsNotExported = false;
-
-    /**
-     * Imported-mode output is spliced from the original XML: confirmed lemmas
-     * are written into it, other annotations (notes, semantic, paleographic)
-     * would add markup the file doesn't have, so they stay in the project.
-     * Say so once per session.
-     */
-    function warnIfAnnotationsNotExported() {
-        if (!importedStore.isImportedMode || warnedAnnotationsNotExported) return;
-        warnedAnnotationsNotExported = true;
-        errorStore.warning(
-            "Annotations",
-            "On an imported TEI file, lemmas are written into the file; notes and other annotations are kept in the project only.",
-        );
-    }
-
     /** A lemma or annotation changed: shows it in the output right away */
     async function handleLemmatizerSave() {
         // Wait for Svelte reactivity to propagate store updates
@@ -448,7 +509,6 @@
     }
 
     async function handleAnnotationSave() {
-        warnIfAnnotationsNotExported();
         await handleLemmatizerSave();
     }
 
@@ -1089,11 +1149,6 @@
                             <span class="text-md xl:text-lg font-bold">
                                 DSL Editor
                             </span>
-                            {#if importedStore.isImportedMode}
-                                <span class="badge badge-outline badge-sm text-xs">
-                                    Imported
-                                </span>
-                            {/if}
                         </div>
                         <!-- Only actions on the editor's text; document and
                              application actions are in the toolbar -->
