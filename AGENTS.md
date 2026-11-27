@@ -93,6 +93,9 @@ Docs drift silently, so update them in the same change as the code:
 
 ## Overview
 Saga-Scribe is a Tauri desktop application for manuscript transcription using a custom DSL that compiles to TEI-XML, with MENOTA support.
+
+**The XML is the source of truth; everything else is a view.** The TEI-XML file is the end product and must be complete: every edit (shorthand, word panel, metadata editor, annotations) is written into the document's XML tree, and nothing a view doesn't show may be lost or kept only on the side. A view reads the XML and writes its changes back into it; it never rebuilds the XML from its own state. New code that keeps edition data outside the XML, or regenerates the XML from the shorthand, breaks this (see `docs/DOCUMENT_MODEL.md`). New documents still go through the older compile-from-shorthand path (`NativeSession`) until they are trees from a template like imported files (`TODO.md`).
+
 **Stack:** Svelte 5 + SvelteKit (Frontend), Rust + Tauri 2.9 (Backend).
 
 ## Architecture

@@ -3,6 +3,11 @@
 This guide describes how to transcribe, annotate and export a manuscript with Saga-Scribe.
 For installation, see the [README](../README.md#getting-started).
 
+The document is its TEI-XML file: that is the edition, and it holds everything you record.
+The shorthand, the word panel, the metadata editor and the previews are views of it, each
+showing part of it; a change made in any of them is written into the XML, and what a view
+doesn't show stays in the XML as it was.
+
 ## Contents
 
 - [The window](#the-window)
