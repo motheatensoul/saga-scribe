@@ -266,7 +266,14 @@ pub fn onto_tree(stored: &ImportedDocument, dsl: &str, preamble: &str, body: &st
         .filter_map(|s| {
             let place = (*stored_spans.get(s.id())?)?;
             let hidden = || matches!(s, Segment::LineBreak { .. }).then(|| by_place.get(&(structural, place))).flatten();
-            match by_place.get(&(kind(s), place)).or_else(hidden) {
+            // A column break was structure before rules 11
+            let column = std::mem::discriminant(&Segment::ColumnBreak { id: 0, attributes: Default::default() });
+            let shown_since = || {
+                (matches!(s, Segment::Structural { xml, .. } if xml.starts_with("<cb") || xml.contains(":cb")))
+                    .then(|| by_place.get(&(column, place)))
+                    .flatten()
+            };
+            match by_place.get(&(kind(s), place)).or_else(hidden).or_else(shown_since) {
                 Some(&id) => Some((s.id(), id)),
                 // Shown before, but nothing of it is now (supplied text that
                 // held only another lineation's line break): it goes

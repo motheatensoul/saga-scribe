@@ -427,12 +427,13 @@ impl Projector<'_> {
                         self.push(segment, Some(id), self.element_span(id));
                     }
                     "lb" if self.is_hidden_break(id) => self.emit_structural(id),
-                    "lb" | "pb" | "handShift" => {
+                    "lb" | "pb" | "cb" | "handShift" => {
                         let id_ = self.next_id();
                         let attributes = self.attributes(id);
                         let segment = match local.as_str() {
                             "lb" => Segment::LineBreak { id: id_, attributes },
                             "pb" => Segment::PageBreak { id: id_, attributes },
+                            "cb" => Segment::ColumnBreak { id: id_, attributes },
                             _ => Segment::HandShift { id: id_, attributes },
                         };
                         self.push(segment, Some(id), self.element_span(id));
@@ -1296,6 +1297,17 @@ impl Projector<'_> {
                         if let Some(n) = self.property(c, "n") {
                             out.push_str(&crate::parser::syntax::break_number_dsl(&n, false));
                         }
+                    }
+                    // In a word (rules 11): a column break, as a page break
+                    "cb" if self.in_token_or_construct(c) => {
+                        *lb = true;
+                        // In braces: the word goes on right after it
+                        let n = self.property(c, "n").unwrap_or_default();
+                        out.push_str(&format!("~///c={{{}}}", n.replace('\\', "\\\\").replace('}', "\\}")));
+                    }
+                    "space" if self.shows_inline(c) => {
+                        self.wrote_inline.set(true);
+                        out.push_str(&format!(".space[{}]", escape_brackets(&self.property(c, "quantity").unwrap_or_default())));
                     }
                     "dipl" | "norm" => {}
                     _ => self.node_to_dsl(c, out, lb, allow_norm),

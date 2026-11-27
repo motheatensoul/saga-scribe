@@ -150,7 +150,7 @@ saga-scribe/
 | `#.x.#` | `<num>.x.</num>` | Numeral (a token of its own, not a word) |
 | `\c` | `c` | The character `c` as text, part of the word (`ꝼæ\;ðꝛ`); after punctuation it continues it (`,\,`) |
 | `.name{dsl}` | `<name>…</name>` | Any element; between words it goes around them (`Node::Open`/`Close`, each word still a token), attached to letters it is inside the word (`Node::Inline`). Short forms: `*{}*` hi, `&{}` seg, `${}` surplus, `.psname`/`.fname`/`.plname`, pairs `.corr{sic=corr}` and `.trans{orig=reg}`, `.rdg[wit]{}` |
-| `.space[n]`, `.hs{h}`, `///c=B` | `<space quantity/>`, `<handShift new/>`, `<cb n/>` | Not yet written by the importer; `.hs` and `///c=` are refused in imported files (`not_yet_in_files` in `patching.rs`) |
+| `.space[n]`, `.hs{h}`, `///c=B` | `<space quantity/>`, `<handShift new/>`, `<cb n/>` | The importer writes `<cb>` and `<handShift>` (DSL rules 11, `Segment::ColumnBreak`/`HandShift`); `<space>` inside words isn't shown yet |
 
 ## Testing
 - Rust: `cd src-tauri; cargo test` (~280 tests: parser incl. differential tests against the original lexer, compiler, importer round-trip, normalizer, dictionary, the document tree)

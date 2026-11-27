@@ -78,7 +78,14 @@ pub enum Segment {
         attributes: HashMap<String, String>,
     },
 
-    /// Hand shift marker
+    /// Column break (`<cb>`, `///c=n`, rules 11; structure before)
+    #[serde(rename = "column_break")]
+    ColumnBreak {
+        id: usize,
+        attributes: HashMap<String, String>,
+    },
+
+    /// Hand shift marker (`.hs{new}`, rules 11; not shown before)
     #[serde(rename = "hand_shift")]
     HandShift {
         id: usize,
@@ -88,6 +95,16 @@ pub enum Segment {
     /// Whitespace between elements (for formatting preservation)
     #[serde(rename = "whitespace")]
     Whitespace { id: usize, content: String },
+}
+
+/// The attribute a `<handShift>` names its hand with: `new` (TEI), or `n`
+/// where a file has that and no `new`.
+pub fn hand_attribute(attributes: &HashMap<String, String>) -> &'static str {
+    if !attributes.contains_key("new") && attributes.contains_key("n") {
+        "n"
+    } else {
+        "new"
+    }
 }
 
 impl Segment {
@@ -100,6 +117,7 @@ impl Segment {
             Segment::LineBreak { id, .. } => *id,
             Segment::PageBreak { id, .. } => *id,
             Segment::HandShift { id, .. } => *id,
+            Segment::ColumnBreak { id, .. } => *id,
             Segment::Whitespace { id, .. } => *id,
         }
     }
@@ -203,7 +221,9 @@ fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
 /// - 10: markup around tokens that the shorthand has a sign for is shown
 ///   (`.q{…}`, `*{…}*`, `&{…}`, `.psname{…}`, `.corr{sic=corr}`, …), its
 ///   tags `Structural` segments with `shown` set.
-pub const DSL_RULES: u32 = 10;
+/// - 11: column breaks are shown, `///c=n` (`ColumnBreak` segments, before
+///   structure), and changes of hand, `.hs{new}`.
+pub const DSL_RULES: u32 = 11;
 
 impl ImportedDocument {
     /// Drops the copies of the file's XML that words and punctuation hold

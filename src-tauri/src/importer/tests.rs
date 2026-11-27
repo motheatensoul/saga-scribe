@@ -2059,17 +2059,20 @@ fn test_an_expansion_after_an_unclear_reading_keeps_it_closed() {
     assert_eq!(body, original);
 }
 
-/// Column breaks and changes of hand have no place in an imported file's
-/// tree yet: typing them is an error, not a lost edit.
+/// Column breaks and changes of hand are shown (rules 11), and typed,
+/// changed or deleted in an imported file like page breaks.
 #[test]
-fn test_column_breaks_and_hands_are_refused_in_imported_files() {
-    let xml = wrap_body("<p><w>a</w> <w>b</w></p>");
-    for edit in ["a ///c=B b", "a .hs{h2} b"] {
-        let error = imported_render(&xml, |dsl| dsl.replace("a b", edit)).unwrap_err();
-        assert!(error.contains("can't be used in an imported file yet"), "{edit}: {error}");
-    }
+fn test_column_breaks_and_hands_in_imported_files() {
+    let xml = wrap_body(r#"<p><w>a</w><cb n="A"/><handShift new="h1"/> <w>b</w></p>"#);
+    assert_eq!(parse(&xml).unwrap().dsl, ".p a\n///c=A .hs{h1} b");
+    let body = |edit: &dyn Fn(&str) -> String| imported_render(&xml, |d| edit(d)).map(|(_, b)| b.xml);
+    assert_eq!(body(&|d| d.replace("///c=A", "///c=B")).unwrap(), r#"<body><p><w>a</w><cb n="B"/><handShift new="h1"/> <w>b</w></p></body>"#);
+    assert_eq!(body(&|d| d.replace(".hs{h1}", ".hs{h2}")).unwrap(), r#"<body><p><w>a</w><cb n="A"/><handShift new="h2"/> <w>b</w></p></body>"#);
+    assert_eq!(body(&|d| d.replace(".hs{h1}", "")).unwrap(), r#"<body><p><w>a</w><cb n="A"/> <w>b</w></p></body>"#);
+    let typed = body(&|d| d.replace("} b", "} .hs{h3} b ///c=C")).unwrap();
+    assert!(typed.contains(r#"<handShift new="h3"/>"#) && typed.contains(r#"<cb n="C"/>"#), "{typed}");
     // Inside a word, markup is part of the word
-    assert!(imported_render(&xml, |dsl| dsl.replace("a b", "*{a}*x b")).is_ok());
+    assert!(imported_render(&xml, |dsl| dsl.replace("a\n", "*{a}*x\n")).is_ok());
 }
 
 /// Markup typed around words in an imported file wraps them; removed, its
@@ -2200,4 +2203,13 @@ fn test_markup_inside_words_is_shown() {
     assert_eq!(import.dsl, ".p *{A}*nnat .c{S}tephan ok mikill.corr{mikit=mikit}");
     let (original, body) = imported_roundtrip(&xml, |d| d.replace("*{A}*nnat", "*{A}*nnatt")).unwrap();
     assert_eq!(body, original.replace("<hi rend=\"orncp\">A</hi>nnat</me:facs><me:dipl>Annat", "<hi rend=\"orncp\">A</hi>nnatt</me:facs><me:dipl>Annatt"));
+}
+
+#[test]
+fn test_column_breaks_and_spaces_inside_words() {
+    let xml = menota_body(r#"<w><me:facs>hel<cb n="B"/>lo</me:facs></w> <w><me:facs>a<space quantity="3"/>b</me:facs></w>"#);
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p hel~///c={B}lo a.space[3]b");
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace("lo ", "lox ")).unwrap();
+    assert_eq!(body, original.replace("lo</me:facs>", "lox</me:facs>"));
 }

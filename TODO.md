@@ -125,9 +125,8 @@ when it is done (and record it in CHANGELOG.md if users notice).
       `Structural` segments with `shown`; wrapping, unwrapping and renaming are applied
       to the tree, `apply.rs`; older projects get it in their shorthand, `rewrite_unedited`)
       left for imported files: moving where kept markup ends (`.s{a b} c` to
-      `.s{a b c}`) and editing pairs are refused; `<cb>` (`///c=`) and `<handShift>`
-      (`.hs{…}`) aren't shown and are refused (`not_yet_in_files`); markup inside a word's
-      levels isn't shown. Corpus survey
+      `.s{a b c}`) and editing pairs are refused (`<cb>` and `<handShift>` are shown
+      since DSL rules 11, 2026-11-27; `<cb>` inside a word isn't). Corpus survey
       of where each sits (2026-11-22): around tokens `<s>` 8,419, `<seg>` 8,446, `<q>`
       5,592, `<name>` 4,981, `<rdg>` 4,505, `<persName>` 754, `<hi>` 3,201, `<surplus>`
       319; inside a word's levels `<c>` 9,180, `<hi>` 7,408, `<sic>`/`<corr>` 1,462/1,196

@@ -458,10 +458,12 @@ pub fn node_to_dsl(node: &Node) -> String {
         // A break inside a word is one the word continues across: `~//`, so
         // the token reads the same on its own (`uppta-~//~//ka`, not the
         // page break in `uppta-////ka`)
+        // A column break's number is in braces there: the word goes on
         Node::Word(nodes) | Node::Punctuation(nodes) => nodes
             .iter()
             .map(|node| match node {
                 Node::LineBreak(_) | Node::PageBreak(_) => format!("~{}", node_to_dsl(node)),
+                Node::ColumnBreak(n) => format!("~///c={{{}}}", n.replace('\\', "\\\\").replace('}', "\\}")),
                 other => node_to_dsl(other),
             })
             .collect(),

@@ -968,6 +968,16 @@ pub(super) fn apply_to_tree(
                                 applier.tree.set_attribute(node, "n", n.as_deref()).ok()?;
                                 Anchor::After(node)
                             }
+                            (Segment::ColumnBreak { .. }, TokenKind::ColumnBreak(n)) => {
+                                applier.tree.set_attribute(node, "n", Some(&n)).ok()?;
+                                Anchor::After(node)
+                            }
+                            (Segment::HandShift { .. }, TokenKind::HandShift(hand)) => {
+                                let attributes = applier.tree.element(node).map(|e| e.attributes.iter().map(|a| (a.name.clone(), a.value.clone())).collect()).unwrap_or_default();
+                                let key = super::segments::hand_attribute(&attributes);
+                                applier.tree.set_attribute(node, key, Some(&hand)).ok()?;
+                                Anchor::After(node)
+                            }
                             _ => {
                                 // Another word in its place keeps the
                                 // transcription markup that follows the text

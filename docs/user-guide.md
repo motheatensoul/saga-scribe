@@ -160,8 +160,7 @@ Where the markup stands on its own between words, it goes around the words it ho
 each still a word of its own (`.psname{.fname{Ari} fróði}` is a `<persName>` around two
 `<w>`). Attached to letters, it is inside the word (`*{A}*nnat` is `<w><hi>A</hi>nnat</w>`,
 on each level of a MENOTA word). Markup around words can't contain a paragraph break
-(`.p`). For imported files, see [TEI-XML](#tei-xml); column breaks and changes of hand
-can't be added to them yet.
+(`.p`). For imported files, see [TEI-XML](#tei-xml).
 
 ### Abbreviations
 

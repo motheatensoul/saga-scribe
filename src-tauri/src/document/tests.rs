@@ -758,6 +758,13 @@ fn corpus_older_projects_are_brought_onto_the_tree() {
                 eprintln!("skip    {name}: rules {rules} make shorthand that doesn't parse");
                 continue;
             }
+            // Before rules 2, what followed a page break ran into its number
+            // (`///1r^{…}`, a note read as the page's number): no project's
+            // shorthand to bring onto the tree token for token
+            if rules < 2 && dsl_tokens(&old)?.iter().any(|t| t.starts_with("///") && t.contains(['{', '<', '^'])) {
+                eprintln!("skip    {name}: rules {rules} read a construct as a page number");
+                continue;
+            }
 
             let on_tree = crate::importer::tei::onto_tree(&stored, &old, &pre, &body, &post).ok_or("not brought onto the tree")?;
             if dsl_tokens(&on_tree.dsl).inspect_err(|e| {

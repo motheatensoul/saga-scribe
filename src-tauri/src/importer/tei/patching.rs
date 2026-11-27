@@ -134,7 +134,7 @@ pub struct Patcher {
 impl Patcher {
     pub fn new(segments: &[Segment], dsl_rules: u32) -> Self {
         let original_dsl = segments_to_dsl(segments, dsl_rules);
-        let original = OriginalTokens::build(segments, &original_dsl);
+        let original = OriginalTokens::build(segments, &original_dsl, dsl_rules);
         let token_of_segment = original
             .units
             .iter()
@@ -209,13 +209,6 @@ impl Patcher {
         guidance: Option<&Guidance>,
     ) -> Result<(Vec<PatchOperation>, Tracked), String> {
         let (tokens, spans) = spanned_dsl_tokens(edited_dsl)?;
-        if let Some(at) = tokens.iter().position(|t| not_yet_in_files(t)) {
-            let (line, column) = crate::parser::syntax::line_col(edited_dsl, spans[at].start);
-            return Err(format!(
-                "Line {line}, column {column}: {} can't be used in an imported file yet (column breaks and changes of hand)",
-                tokens[at]
-            ));
-        }
         let original_count = self.original.tokens.len();
         let previous = self.state.as_ref();
 
@@ -613,7 +606,7 @@ pub fn rewrite_unedited(
     // Fresh tokens of markup that had none before
     let mut new_markup: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for segment in fresh {
-        if !matches!(segment, Segment::Structural { shown: Some(_), .. }) {
+        if !matches!(segment, Segment::Structural { shown: Some(_), .. } | Segment::ColumnBreak { .. } | Segment::HandShift { .. }) {
             continue;
         }
         let Some(&[f]) = fresh_of.get(&segment.id()).map(Vec::as_slice) else { continue };
@@ -673,7 +666,16 @@ pub fn rewrite_unedited(
     // run's new text.
     let mut added: Vec<(usize, usize, String)> = Vec::new();
     for segment in fresh {
-        let Segment::Structural { shown: Some(shown), .. } = segment else { continue };
+        // Markup, or a token shown since (a column break, a change of hand:
+        // set apart on both sides)
+        let (shown, apart) = match segment {
+            Segment::Structural { shown: Some(shown), .. } => (shown.clone(), false),
+            Segment::ColumnBreak { .. } | Segment::HandShift { .. } => {
+                let Some(text) = segment_token_text(segment) else { continue };
+                (text, true)
+            }
+            _ => continue,
+        };
         let Some(&[f]) = fresh_of.get(&segment.id()).map(Vec::as_slice) else { continue };
         if !new_markup.contains(&f) || in_runs.contains(&f) {
             continue;
@@ -685,7 +687,7 @@ pub fn rewrite_unedited(
         let previous = (0..f).rev().find(|g| !new_markup.contains(g));
         let before_next = next.and_then(|g| stored_at.get(&g)).map(|r| r.start);
         let after_previous = previous.and_then(|g| stored_at.get(&g)).map(|r| r.end);
-        let opens = shown.ends_with('{');
+        let opens = apart || shown.ends_with('{');
         let at = match (opens, before_next, after_previous) {
             (true, Some(at), _) | (true, None, Some(at)) | (false, _, Some(at)) | (false, Some(at), None) => at,
             (true, None, None) | (false, None, None) => {
@@ -700,7 +702,11 @@ pub fn rewrite_unedited(
         // Never before markup added before it (an empty `*{}*`)
         let at = added.last().map_or(at, |&(last, _, _)| at.max(last));
         let joins = |c: Option<char>| c.is_some_and(|c| !c.is_whitespace() && c != '{' && c != '=');
-        let text = if opens && joins(dsl[..at].chars().next_back()) {
+        let text = if apart {
+            let before = if dsl[..at].ends_with(char::is_whitespace) || at == 0 { "" } else { "\n" };
+            let after = if dsl[at..].starts_with(char::is_whitespace) { "" } else { " " };
+            format!("{before}{shown}{after}")
+        } else if opens && joins(dsl[..at].chars().next_back()) {
             format!(" {shown}")
         } else if !opens && dsl[at..].chars().next().is_some_and(|c| !c.is_whitespace() && c != '}' && c != '=') {
             format!("{shown} ")
@@ -974,10 +980,14 @@ struct OriginalTokens {
 }
 
 impl OriginalTokens {
-    fn build(segments: &[Segment], original_dsl: &str) -> Self {
+    fn build(segments: &[Segment], original_dsl: &str, dsl_rules: u32) -> Self {
         let per_segment: Vec<(usize, Vec<String>)> = segments
             .iter()
             .filter_map(|seg| {
+                // Before rules 11, changes of hand weren't shown
+                if dsl_rules < 11 && matches!(seg, Segment::HandShift { .. }) {
+                    return None;
+                }
                 let text = segment_token_text(seg)?;
                 let tokens = parse_dsl_to_tokens(&text).unwrap_or_else(|_| vec![text]);
                 (!tokens.is_empty()).then(|| (seg.id(), tokens))
@@ -1191,14 +1201,15 @@ fn segment_token_text(seg: &Segment) -> Option<String> {
         }),
         Segment::Paragraph { .. } => Some(PARAGRAPH.to_string()),
         Segment::Structural { shown: Some(shown), .. } => Some(shown.clone()),
+        Segment::ColumnBreak { attributes, .. } => {
+            Some(format!("///c={}", break_number_dsl(attributes.get("n").map_or("", String::as_str), true)))
+        }
+        Segment::HandShift { attributes, .. } => Some(format!(
+            ".hs{{{}}}",
+            attributes.get(super::segments::hand_attribute(attributes)).map_or("", String::as_str).replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}")
+        )),
         _ => None,
     }
-}
-
-/// A token the importer doesn't write yet, so it has no place in the file's
-/// tree: a column break, a change of hand.
-fn not_yet_in_files(token: &str) -> bool {
-    token.starts_with(".hs{") || token.starts_with("///c=")
 }
 
 fn parse_dsl_to_tokens(dsl: &str) -> Result<Vec<String>, String> {
@@ -1998,6 +2009,8 @@ pub(super) enum TokenKind {
     Punctuation,
     LineBreak(Option<String>),
     PageBreak(Option<String>),
+    ColumnBreak(String),
+    HandShift(String),
     Other,
 }
 
@@ -2011,6 +2024,8 @@ pub(super) fn token_kind(dsl: &str) -> TokenKind {
         Some(Node::Punctuation(_)) => TokenKind::Punctuation,
         Some(Node::LineBreak(n)) => TokenKind::LineBreak(n),
         Some(Node::PageBreak(n)) => TokenKind::PageBreak(Some(n).filter(|n| !n.is_empty())),
+        Some(Node::ColumnBreak(n)) => TokenKind::ColumnBreak(n),
+        Some(Node::HandShift(hand)) => TokenKind::HandShift(hand),
         _ => TokenKind::Other,
     }
 }
@@ -2211,6 +2226,17 @@ fn render_modify_into(
         (Segment::PageBreak { attributes, .. }, TokenKind::PageBreak(n)) => {
             rewrite_break("pb", source, attributes, n.as_deref())
         }
+        (Segment::ColumnBreak { attributes, .. }, TokenKind::ColumnBreak(n)) => {
+            rewrite_break("cb", source, attributes, Some(n.as_str()))
+        }
+        (Segment::HandShift { attributes, .. }, TokenKind::HandShift(hand)) => match source {
+            Some(tag) => set_tag_attribute(tag, super::segments::hand_attribute(attributes), Some(hand.as_str())),
+            None => {
+                let mut attributes = attributes.clone();
+                attributes.insert(super::segments::hand_attribute(&attributes.clone()).into(), hand.clone());
+                format_tag("handShift", &attributes)
+            }
+        },
         _ => render_insert(new_dsl, compiler),
     }
 }
@@ -2270,6 +2296,8 @@ fn reconstruct(segments: &[Segment], originals: Originals, patches: &[PatchOpera
                 | Segment::Punctuation { .. }
                 | Segment::LineBreak { .. }
                 | Segment::PageBreak { .. }
+                | Segment::ColumnBreak { .. }
+                | Segment::HandShift { .. }
                 | Segment::Paragraph { .. }
         ) {
             let seg_id = seg.id();
@@ -2374,6 +2402,7 @@ fn serialize_original_segment(seg: &Segment) -> String {
         Segment::LineBreak { attributes, .. } => format_tag("lb", attributes),
         Segment::PageBreak { attributes, .. } => format_tag("pb", attributes),
         Segment::HandShift { attributes, .. } => format_tag("handShift", attributes),
+        Segment::ColumnBreak { attributes, .. } => format_tag("cb", attributes),
         Segment::Whitespace { content, .. } => content.clone(),
     }
 }

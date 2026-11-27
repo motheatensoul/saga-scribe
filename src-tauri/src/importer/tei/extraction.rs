@@ -296,8 +296,30 @@ fn write_segments(segments: &[Segment], dsl_rules: u32, mut places: Option<&mut 
                 pending_space = false;
                 previous = None;
             }
-            Segment::HandShift { .. } => {
-                // HandShift is preserved structurally, not shown in DSL
+            // A column break, as a page break; a change of hand set apart
+            Segment::ColumnBreak { attributes, .. } | Segment::HandShift { attributes, .. } if dsl_rules >= 11 => {
+                let column = matches!(segment, Segment::ColumnBreak { .. });
+                let text = if column {
+                    format!("///c={}", crate::parser::syntax::break_number_dsl(attributes.get("n").map_or("", String::as_str), true))
+                } else {
+                    format!(".hs{{{}}}", attributes.get(super::segments::hand_attribute(attributes)).map_or("", String::as_str).replace('\\', "\\\\").replace('{', "\\{").replace('}', "\\}"))
+                };
+                if dsl_rules >= 3 && previous.is_some_and(ends_with_continued_break) {
+                    dsl.push('|');
+                }
+                if !dsl.is_empty() && !dsl.ends_with(char::is_whitespace) {
+                    dsl.push(if column { '\n' } else { ' ' });
+                }
+                let at = dsl.len();
+                dsl.push_str(&text);
+                place(&mut places, segment.id(), at..dsl.len());
+                // What follows starts apart (a column number runs to a space)
+                last_was_linebreak = column;
+                pending_space = true;
+                previous = None;
+            }
+            Segment::ColumnBreak { .. } | Segment::HandShift { .. } => {
+                // Before rules 11: structure, not shown
             }
             Segment::Paragraph { .. } => {
                 // Standalone token: always set off by spaces
