@@ -166,8 +166,13 @@ export interface ElementInfo {
  * shorthand so far, is staged like an imported file and edited as its tree
  * from then on. `dsl` is kept where it reads as the file.
  */
-export async function createDocument(xml: string, dsl: string, multiLevel: boolean, wordWrap: boolean): Promise<ImportResult> {
-  return invoke("create_document", { xml, dsl, multiLevel, wordWrap });
+export async function createDocument(
+  xml: string,
+  dsl: string,
+  template: { multiLevel: boolean; wordWrap: boolean; autoLineNumbers: boolean; wrapPages: boolean },
+): Promise<ImportResult> {
+  const { multiLevel, wordWrap, autoLineNumbers, wrapPages } = template;
+  return invoke("create_document", { xml, dsl, multiLevel, wordWrap, autoLineNumbers, wrapPages });
 }
 
 /** Writes the metadata editor's metadata into the current imported document's `<teiHeader>` (the editor then compiles). */

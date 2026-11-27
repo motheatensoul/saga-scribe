@@ -99,16 +99,29 @@ pub async fn create_document(
     dsl: String,
     multi_level: bool,
     word_wrap: bool,
+    auto_line_numbers: bool,
+    wrap_pages: bool,
     session: State<'_, ImportedSession>,
 ) -> Result<ImportReply, String> {
     let session = session.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || created(&xml, &dsl, multi_level, word_wrap, &session))
+    let options = TemplateOptions { multi_level, word_wrap, auto_line_numbers, wrap_pages };
+    tauri::async_runtime::spawn_blocking(move || created(&xml, &dsl, options, &session))
         .await
         .map_err(|e| format!("Creating the document failed: {e}"))?
 }
 
-pub(crate) fn created(xml: &str, dsl: &str, multi_level: bool, word_wrap: bool, session: &ImportedSession) -> Result<ImportReply, String> {
+/// What a new document's template says about how it is encoded.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct TemplateOptions {
+    pub multi_level: bool,
+    pub word_wrap: bool,
+    pub auto_line_numbers: bool,
+    pub wrap_pages: bool,
+}
+
+pub(crate) fn created(xml: &str, dsl: &str, options: TemplateOptions, session: &ImportedSession) -> Result<ImportReply, String> {
     use crate::document::profile::Profile;
+    let TemplateOptions { multi_level, word_wrap, .. } = options;
     let mut import = tei::parse(xml)?;
     let document = import.imported_document.as_mut().ok_or("The new document has no body")?;
     let has_words = document.profile.as_ref().is_some_and(|p| p.counts.tokens > 0);
@@ -118,6 +131,10 @@ pub(crate) fn created(xml: &str, dsl: &str, multi_level: bool, word_wrap: bool, 
         document.profile = Some(Profile { counts, ..template });
         // Words are `<w>` (the template's choice), with none in it yet
         document.is_menota = word_wrap;
+    }
+    if let Some(profile) = document.profile.as_mut() {
+        profile.auto_line_numbers = options.auto_line_numbers;
+        profile.pages_as_paragraphs = options.wrap_pages;
     }
     import.dsl = crate::importer::tei::patching::keep_as_written(dsl, &import.dsl).0;
     import.is_imported_mode = true;
@@ -195,7 +212,8 @@ mod created_tests {
         let body = Compiler::new().with_config(config).compile("").unwrap();
         let xml = format!("{header}{body}{footer}");
         let session = ImportedSession::default();
-        let reply = created(&xml, "", true, true, &session).unwrap();
+        let options = TemplateOptions { multi_level: true, word_wrap: true, auto_line_numbers: true, wrap_pages: true };
+        let reply = created(&xml, "", options, &session).unwrap();
         assert!(reply.is_imported_mode);
         session.load(reply.imported.map(|s| s.handle)).unwrap();
         let out = session.with_current_mut(|s| s.compile_plainly(".p ok //2 maþr")).unwrap().unwrap().unwrap();
@@ -204,5 +222,11 @@ mod created_tests {
         // And edited again: the words stay, one more goes in
         let out = session.with_current_mut(|s| s.compile_plainly(".p ok //2 maþr ok")).unwrap().unwrap().unwrap();
         assert_eq!(out.xml.matches("<w>").count(), 3, "{}", out.xml);
+        // The template's options as edits: a typed `//` gets the next number,
+        // a page break starts the page's paragraph
+        let out = session.with_current_mut(|s| s.compile_plainly(".p ok //2 maþr // ok ///2r þa")).unwrap().unwrap().unwrap();
+        assert!(out.xml.contains(r#"<lb n="3"/>"#), "{}", out.xml);
+        let squashed: String = out.xml.split_whitespace().collect();
+        assert!(squashed.contains(r#"</p><pbn="2r"/><p>"#), "{}", out.xml);
     }
 }

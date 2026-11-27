@@ -149,10 +149,9 @@ when it is done (and record it in CHANGELOG.md if users notice).
       too, `create_document`) markup added in the shorthand since the file was opened
       gets attributes only after saving and opening again (its node isn't in the
       file's tree the session holds);
-    - a new document's template options that rebuilt the XML: **Automatic line
-      numbers** (`//` numbered by the compiler) and **Pages as paragraphs**
-      (`wrap_pages`) only apply when the file is made; afterwards a typed `//` or
-      `///` is inserted as written. They should become edits of the tree.
+    - (done 2026-11-27: auto line numbers and pages as paragraphs are edits of the
+      tree, `Profile::auto_line_numbers` / `pages_as_paragraphs`) the shorthand shows
+      a typed `//` as typed until the project is opened again (then `//3`).
     - **Attributes are set by clicking, not typed.** Every element with attributes
       becomes clickable in the rendered text, like words, and opens in the word panel
       (the window's secondary part), whose controls set its attributes. This covers the

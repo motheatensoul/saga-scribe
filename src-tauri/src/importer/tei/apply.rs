@@ -638,6 +638,28 @@ impl Applier<'_> {
         Some(())
     }
 
+    /// The number of the last numbered line break before `lb` (in the body,
+    /// in document order), on its page: none after a page break.
+    fn line_number_before(&self, lb: NodeId) -> Option<u64> {
+        let body = find_body(&self.tree)?;
+        let mut last = None;
+        for node in self.tree.descendants(body) {
+            if node == lb {
+                return last;
+            }
+            match self.tree.element(node).map(|e| local(&e.name)) {
+                Some("lb") => {
+                    if let Some(n) = self.tree.element(node).and_then(|e| e.attribute("n")).and_then(|n| n.trim().parse().ok()) {
+                        last = Some(n);
+                    }
+                }
+                Some("pb") => last = None,
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// Whether segment `id` is in kept markup whose end has passed.
     fn in_closed(&self, id: usize) -> bool {
         let node = match self.source.places.get(id).cloned().flatten() {
@@ -840,12 +862,41 @@ pub(super) fn apply_to_tree(
             }
             PatchOperation::Insert { dsl, token, moved } => match anchor {
                 Some(at) => {
-                    let (parent, index) = applier.position(at)?;
+                    let (mut parent, mut index) = applier.position(at)?;
+                    let kind = token_kind(dsl);
+                    // Pages as paragraphs: a new page break ends the paragraph
+                    // it is in, and the rest of it starts the page's
+                    let mut page_paragraph = None;
+                    if compiler.config().wrap_pages && moved.is_none() && matches!(kind, TokenKind::PageBreak(_)) {
+                        if let Some(name) = applier.tree.element(parent).filter(|e| local(&e.name) == "p").map(|e| e.name.clone()) {
+                            let container = applier.tree.parent(parent)?;
+                            let at = applier.tree.index_in_parent(parent)? + 1;
+                            let element = Element { name, namespaces: Vec::new(), attributes: Vec::new() };
+                            let new = applier.tree.insert(container, at, NodeKind::Element(Box::new(element)));
+                            applier.created.insert(new, *token);
+                            let rest: Vec<NodeId> = applier.tree.children(parent)[index..].to_vec();
+                            for (i, node) in rest.into_iter().enumerate() {
+                                applier.tree.move_to(node, new, i);
+                            }
+                            (parent, index) = (container, at);
+                            page_paragraph = Some(new);
+                        }
+                    }
                     let newline = applier.insert_text("\n", parent, index);
                     let xml = inserted_xml(dsl, *moved, segments, originals, compiler);
                     let roots = applier.insert_xml(&xml, parent, index + 1, *token)?;
                     applier.mark_moved(&roots, *moved);
-                    anchor = Some(Anchor::After(roots.last().copied().unwrap_or(newline)));
+                    // Automatic line numbers: one more than the line before
+                    if compiler.config().auto_line_numbers && matches!(kind, TokenKind::LineBreak(None)) {
+                        if let Some(&lb) = roots.iter().find(|&&r| applier.tree.element(r).is_some_and(|e| local(&e.name) == "lb")) {
+                            let n = applier.line_number_before(lb).map_or(1, |n| n + 1);
+                            applier.tree.set_attribute(lb, "n", Some(&n.to_string())).ok()?;
+                        }
+                    }
+                    anchor = Some(match page_paragraph {
+                        Some(new) => Anchor::Start(new),
+                        None => Anchor::After(roots.last().copied().unwrap_or(newline)),
+                    });
                 }
                 None if markup_token(dsl).is_some() => return None,
                 None => pending.push((dsl, *token, *moved)),

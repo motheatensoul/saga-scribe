@@ -284,8 +284,13 @@ Each template has three options:
 | Option            | Effect                                                                      |
 | ----------------- | --------------------------------------------------------------------------- |
 | Word wrapping     | Each word is wrapped in `<w>`, punctuation in `<pc>`. Required for lemmatization and annotations |
-| Auto line numbers | Line breaks without a number (`//`) are numbered consecutively              |
+| Auto line numbers | A line break typed without a number (`//`) gets the number after the line before it on its page |
 | Multi-level (MENOTA) | Each word contains `<me:facs>`, `<me:dipl>` and `<me:norm>` (see [below](#menota-transcription-levels)) |
+
+The template makes a new document's file when you start typing; its options then stay with
+the document (an imported file has none of them). A template can also wrap each page in a
+paragraph: a page break typed inside a paragraph then ends it, and the rest of it starts
+the page's paragraph.
 
 To create a template, click **+ New Template**, enter a name and description, the XML before
 the transcription (up to and including `<body>`) and after it, and choose the options.

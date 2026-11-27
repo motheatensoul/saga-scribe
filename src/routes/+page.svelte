@@ -196,7 +196,7 @@
             annotationsJson: annotationSet.annotations.length > 0 ? JSON.stringify(annotationSet) : undefined,
         });
         if (!compiled.xml) return null;
-        const created = await createDocument(compiled.xml, content, template.multiLevel, template.wordWrap);
+        const created = await createDocument(compiled.xml, content, template);
         if (!created.imported) return null;
         importedStore.load(created.imported, "new");
         createdTemplateId = template.id;

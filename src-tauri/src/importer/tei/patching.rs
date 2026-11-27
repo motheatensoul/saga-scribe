@@ -1328,10 +1328,11 @@ pub fn compiler_config_for(doc: &ImportedDocument, originals: Originals) -> Comp
     let levels = doc.profile.as_ref().and_then(crate::parser::Levels::of);
     CompilerConfig {
         word_wrap,
-        auto_line_numbers: false,
+        // The template's, for a new document (inserted breaks, `apply.rs`)
+        auto_line_numbers: doc.profile.as_ref().is_some_and(|p| p.auto_line_numbers),
         // Words get the profile's levels (MENOTA's three in files without one)
         multi_level: if doc.profile.is_some() { levels.is_some() } else { doc.is_menota },
-        wrap_pages: false,
+        wrap_pages: doc.profile.as_ref().is_some_and(|p| p.pages_as_paragraphs),
         levels,
     }
 }

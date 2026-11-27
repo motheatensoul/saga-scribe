@@ -95,6 +95,14 @@ pub struct Profile {
     /// several (`<lb ed="…">`); `None` if it has one
     pub line_edition: Option<String>,
     pub counts: ProfileCounts,
+    /// A line break typed without a number gets the next one (a new
+    /// document's template option)
+    #[serde(default)]
+    pub auto_line_numbers: bool,
+    /// A page break typed in a paragraph ends it, and the rest of it starts
+    /// the page's (a new document's template option)
+    #[serde(default)]
+    pub pages_as_paragraphs: bool,
 }
 
 impl Profile {
@@ -118,6 +126,8 @@ impl Profile {
             punctuation: Punctuation::Pc,
             line_edition: None,
             counts: ProfileCounts::default(),
+            auto_line_numbers: false,
+            pages_as_paragraphs: false,
         }
     }
 
@@ -227,6 +237,8 @@ pub fn infer(tree: &Tree, body: NodeId) -> Profile {
         line_edition: line_edition.flatten(),
         levels,
         counts,
+        auto_line_numbers: false,
+        pages_as_paragraphs: false,
     }
 }
 
