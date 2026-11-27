@@ -1,10 +1,11 @@
 <script lang="ts">
+    import { dialogFocus } from "$lib/utils/dialogFocus";
     import { templateStore, type Template } from "$lib/stores/template";
     import { listTemplates, saveTemplate, deleteTemplate } from "$lib/tauri";
     import { errorStore } from "$lib/stores/errors";
 
     //Icons
-    import { BookCopy, PencilRuler, X as CloseButton } from "@lucide/svelte";
+    import { BookCopy, PencilRuler, Trash2, CircleX, X as CloseButton } from "@lucide/svelte";
 
     let {
         isopen = $bindable(false),
@@ -244,6 +245,7 @@
         aria-modal="true"
         aria-labelledby="template-editor-title"
         tabindex="-1"
+        {@attach dialogFocus}
     >
         <div
             class="bg-base-100 rounded-lg shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col"
@@ -298,7 +300,7 @@
                                         {/if}
                                     </div>
                                     <p
-                                        class="text-sm text-base-content/70 mt-1"
+                                        class="text-sm text-base-content/80 mt-1"
                                     >
                                         {template.description}
                                     </p>
@@ -328,8 +330,9 @@
                                         onclick={() =>
                                             handleDuplicate(template)}
                                         title="Duplicate template"
+                                        aria-label="Duplicate template {template.name}"
                                     >
-                                        <BookCopy size="20" />
+                                        <BookCopy size="20" aria-hidden="true" />
                                     </button>
                                     <button
                                         class="btn btn-ghost btn-sm hover:btn-accent"
@@ -337,18 +340,22 @@
                                         title={isBuiltin(template.id)
                                             ? "Clone and customize"
                                             : "Edit template"}
+                                        aria-label="{isBuiltin(template.id)
+                                            ? 'Clone and customize'
+                                            : 'Edit template'} {template.name}"
                                     >
-                                        <PencilRuler size="20" />
+                                        <PencilRuler size="20" aria-hidden="true" />
                                     </button>
                                     {#if !isBuiltin(template.id)}
                                         <button
-                                            class="btn btn-ghost btn-sm text-error"
+                                            class="btn btn-ghost btn-sm hover:bg-error/15 focus-visible:bg-error/15"
                                             onclick={() =>
                                                 handleDelete(template)}
                                             disabled={isDeleting}
                                             title="Delete template"
+                                            aria-label="Delete template {template.name}"
                                         >
-                                            🗑️
+                                            <Trash2 size="20" aria-hidden="true" />
                                         </button>
                                     {/if}
                                 </div>
@@ -359,7 +366,8 @@
                     <!-- Edit/Create Form -->
                     <div class="space-y-4">
                         {#if validationError}
-                            <div class="alert alert-error">
+                            <div role="alert" class="alert alert-error alert-soft text-base-content">
+                                <CircleX size={18} class="text-error shrink-0" aria-hidden="true" />
                                 <span>{validationError}</span>
                             </div>
                         {/if}
@@ -441,7 +449,7 @@
                                             >Word wrapping</span
                                         >
                                         <span
-                                            class="label-text-alt text-base-content/60"
+                                            class="label-text-alt text-base-content/80"
                                         >
                                             Wrap words in &lt;w&gt; tags
                                         </span>
@@ -462,7 +470,7 @@
                                             >Auto line numbers</span
                                         >
                                         <span
-                                            class="label-text-alt text-base-content/60"
+                                            class="label-text-alt text-base-content/80"
                                         >
                                             Add n="..." to &lt;lb/&gt;
                                         </span>
@@ -483,7 +491,7 @@
                                             >Multi-level (MENOTA)</span
                                         >
                                         <span
-                                            class="label-text-alt text-base-content/60"
+                                            class="label-text-alt text-base-content/80"
                                         >
                                             facs/dipl/norm levels
                                         </span>

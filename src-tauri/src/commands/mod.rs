@@ -16,6 +16,7 @@
 //! - **[`settings`]**: User settings persistence
 //! - **[`stylesheet`]**: XSLT stylesheet management
 //! - **[`metadata`]**: TEI header metadata generation
+//! - **[`notify`]**: System notifications when long work ends in the background
 //!
 //! ## Async Patterns
 //!
@@ -42,6 +43,7 @@ pub mod entities;
 pub mod file;
 pub mod import;
 pub mod metadata;
+pub mod notify;
 pub mod parse;
 pub mod pdf;
 pub mod settings;

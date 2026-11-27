@@ -1,9 +1,11 @@
+mod base_letters;
 mod custom_entities;
 mod custom_mappings;
 mod menota;
 mod punctuation;
 mod registry;
 
+pub use base_letters::base_letter;
 pub use custom_entities::CustomEntitiesManager;
 pub use custom_mappings::CustomMappingsManager;
 pub use menota::{bundled, BundledEntity};

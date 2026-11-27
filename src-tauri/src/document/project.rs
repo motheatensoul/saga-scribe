@@ -1,0 +1,1425 @@
+//! The shorthand view of a tree (step 2 of `docs/DOCUMENT_MODEL.md`).
+//!
+//! [`project_body`] turns the `<body>` of a [`Tree`] into the segments the
+//! patcher works with, and records which tree node each segment comes from.
+//! `segments_to_dsl` writes the shorthand from the segments. Its rules began
+//! as the old extractor's on libxml2's tree; since DSL rules 3 every word,
+//! numeral and punctuation is one token of the shorthand (escaped
+//! characters, `#…#`, separated neighbours).
+//!
+//! A segment's `original_xml` is the node's text as written in the file,
+//! and the spans come from the tree.
+
+use super::tree::{NodeId, NodeKind, Tree};
+use crate::importer::tei::extraction::join_written_words;
+use crate::importer::tei::helpers::{escape_xml_attr, escape_xml_text};
+use crate::importer::tei::segments::{Segment, SourceSpans};
+use crate::importer::tei::source_map::SourceCursor;
+use std::collections::HashMap;
+
+/// How many letters a piece of shorthand has: an entity (`:rrot:`) or an
+/// escaped character (`\;`) is one, markup (`~//2`, braces) none.
+fn letters(dsl: &str) -> usize {
+    let mut count = 0;
+    let mut chars = dsl.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+                count += 1;
+            }
+            ':' => {
+                // An entity, if a name and a closing colon follow
+                let name: String = chars.clone().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+                if !name.is_empty() && chars.clone().nth(name.chars().count()) == Some(':') {
+                    for _ in 0..=name.chars().count() {
+                        chars.next();
+                    }
+                }
+                count += 1;
+            }
+            c if c.is_alphabetic() || c.is_numeric() => count += 1,
+            _ => {}
+        }
+    }
+    count
+}
+
+/// The markers around `<am>` and `<ex>` while a word's levels are read for
+/// `{mark=expansion}` (noncharacters, which no text has): am open, am close,
+/// ex open, ex close.
+const MARKS: [char; 4] = ['\u{FDD0}', '\u{FDD1}', '\u{FDD2}', '\u{FDD3}'];
+
+/// What a text's characters are part of in the shorthand, which decides the
+/// ones written with `\` before them (DSL rules 3). Writing more of them than
+/// needed is harmless (an escaped character is the character), fewer would
+/// make the shorthand read differently from the XML.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TextContext {
+    /// A word, punctuation or block content: syntax, and the punctuation the
+    /// tokenizer splits words at
+    Token,
+    /// `#…#`: syntax
+    Numeral,
+    /// `<…>`, `-{…}-`, `+{…}+`, `?{…}?`, whose content is shorthand
+    /// (`-{…}-` and the like since DSL rules 5)
+    Inline,
+    /// `^{…}`: only braces nest in a note
+    Note,
+}
+
+/// `text` with a backslash before each character that would otherwise be
+/// read as something else in `context`.
+fn escape_dsl(text: &str, context: TextContext) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    for (i, &c) in chars.iter().enumerate() {
+        let next = chars.get(i + 1).copied();
+        let double_slash = c == '/' && next == Some('/');
+        let escape = match context {
+            TextContext::Token => {
+                double_slash
+                    || matches!(
+                        c,
+                        '\\' | '#' | '|' | '~' | '<' | '>' | '[' | ']' | '{' | '}' | '(' | ')' | '.' | ',' | ';' | ':' | '!' | '?'
+                    )
+            }
+            TextContext::Numeral | TextContext::Inline => {
+                // `.p` standalone is a paragraph; `.abbr[` and the like have
+                // their bracket escaped
+                let paragraph = c == '.' && next == Some('p') && chars.get(i + 2).is_none_or(|c| c.is_whitespace());
+                double_slash
+                    || paragraph
+                    || matches!(c, '\\' | '#' | '|' | '~' | '<' | '>' | '[' | ']' | '{' | '}' | ':')
+            }
+            TextContext::Note => matches!(c, '\\' | '#' | '{' | '}'),
+        };
+        if escape {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Punctuation's shorthand with its first character unescaped where that
+/// reads the same (`\,\,` → `,\,`: escaped characters after punctuation
+/// continue it).
+fn punctuation_dsl(dsl: String) -> String {
+    // Also inside a normalized-only form, `.norm{\,}`
+    let at = if dsl.starts_with(".norm{") { 6 } else { 0 };
+    let mut chars = dsl[at..].chars();
+    if chars.next() != Some('\\') || !chars.next().is_some_and(|c| ".,;:!?()[]".contains(c)) {
+        return dsl;
+    }
+    let plain = format!("{}{}", &dsl[..at], &dsl[at + 1..]);
+    let plain = plain.as_str();
+    match (dsl_tokens(plain).as_deref(), dsl_tokens(&dsl).as_deref()) {
+        (Some([crate::parser::Node::Punctuation(_)]), _) => plain.to_string(),
+        (Some([crate::parser::Node::Norm(_)]), Some([crate::parser::Node::Norm(_)])) => plain.to_string(),
+        _ => dsl,
+    }
+}
+
+/// The tokens a piece of shorthand reads as, if it parses.
+fn dsl_tokens(dsl: &str) -> Option<Vec<crate::parser::Node>> {
+    crate::parser::Lexer::new(dsl)
+        .parse()
+        .map(|doc| crate::parser::WordTokenizer::new().tokenize(doc.nodes))
+        .ok()
+}
+
+/// `dsl` with every character but the first escaped (escaped characters and
+/// entities stay as they are).
+fn escape_after_first(dsl: &str) -> String {
+    let chars: Vec<char> = dsl.chars().collect();
+    let mut out = String::with_capacity(dsl.len() * 2);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' && i + 1 < chars.len() {
+            out.push(c);
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        if c == ':' {
+            let name = chars[i + 1..].iter().take_while(|c| c.is_alphanumeric() || **c == '_').count();
+            if name > 0 && chars.get(i + 1 + name) == Some(&':') {
+                out.extend(&chars[i..i + name + 2]);
+                i += name + 2;
+                continue;
+            }
+        }
+        if !out.is_empty() {
+            out.push('\\');
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// The segments of a body, the tree node of each (`None` for a word that is
+/// part of a text node, and for whitespace), and where each editable segment
+/// is in the body's text (`None` if the tree has no spans).
+#[derive(Debug)]
+pub struct Projection {
+    pub segments: Vec<Segment>,
+    pub nodes: Vec<Option<NodeId>>,
+    pub spans: Option<SourceSpans>,
+}
+
+/// The shorthand of a single word, `xml` (a `<w>` or `<num>`, which may use
+/// the TEI and MENOTA namespaces' usual prefixes), as the projection writes
+/// it in a body showing `line_edition`'s line breaks. An error unless it is
+/// one well-formed word that reads as one token.
+pub fn word_dsl(xml: &str, line_edition: Option<&str>) -> Result<String, String> {
+    let wrapped = format!(
+        r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body><p>{}</p></body></text></TEI>"#,
+        xml.trim()
+    );
+    crate::xml::check_well_formed(&wrapped).map_err(|e| format!("The XML is not well-formed: {}", e.trim()))?;
+    let tree = Tree::parse(&wrapped).map_err(|_| "The XML is not well-formed".to_string())?;
+    let body = find_body(&tree).ok_or("The XML is not well-formed")?;
+    let projection = project_body_with(&tree, body, line_edition);
+    let words: Vec<&str> = projection
+        .segments
+        .iter()
+        .filter_map(|s| match s {
+            Segment::Word { dsl_content, .. } | Segment::Punctuation { dsl_content, .. } => Some(dsl_content.as_str()),
+            _ => None,
+        })
+        .collect();
+    match words.as_slice() {
+        [word] if !word.trim().is_empty() => Ok(word.trim().to_string()),
+        [] | [_] => Err("The word has no text the shorthand can show".into()),
+        _ => Err("The XML reads as more than one word".into()),
+    }
+}
+
+/// The `<body>` element (the first, in document order).
+pub fn find_body(tree: &Tree) -> Option<NodeId> {
+    tree.descendants(Tree::DOCUMENT).into_iter().find(|&id| {
+        tree.element(id)
+            .is_some_and(|e| e.name.split_once(':').map_or(e.name.as_str(), |(_, l)| l) == "body")
+    })
+}
+
+/// Projects the element `body` (the TEI `<body>`) to segments.
+pub fn project_body(tree: &Tree, body: NodeId) -> Projection {
+    project_body_with(tree, body, None)
+}
+
+/// [`project_body`], showing only the line breaks of `line_edition` (and
+/// those without an edition) when there is one: the others are kept as
+/// structure the shorthand doesn't show (DSL rules 6).
+pub fn project_body_with(tree: &Tree, body: NodeId, line_edition: Option<&str>) -> Projection {
+    let mut next = vec![None; tree.capacity()];
+    let mut prev = vec![None; tree.capacity()];
+    for id in tree.descendants(body) {
+        for pair in tree.children(id).windows(2) {
+            next[pair[0].index()] = Some(pair[1]);
+            prev[pair[1].index()] = Some(pair[0]);
+        }
+    }
+    let body_start = tree.has_spans().then(|| tree.span(body).map(|s| s.start)).flatten();
+    let has_words = tree.descendants(body).into_iter().any(|id| {
+        tree.element(id).is_some_and(|e| e.name.split_once(':').map_or(e.name.as_str(), |(_, l)| l) == "w")
+    });
+    let mut projector = Projector {
+        tree,
+        next,
+        prev,
+        body_start,
+        has_words,
+        line_edition: line_edition.map(str::to_string),
+        marking: std::cell::Cell::new(false),
+        inline_markup: std::cell::Cell::new(true),
+        wrote_inline: std::cell::Cell::new(false),
+        segments: Vec::new(),
+        nodes: Vec::new(),
+        spans: Vec::new(),
+    };
+    projector.process_node(body);
+    let spans = projector.body_start.map(|_| projector.spans);
+    Projection { segments: projector.segments, nodes: projector.nodes, spans }
+}
+
+struct Projector<'a> {
+    tree: &'a Tree,
+    next: Vec<Option<NodeId>>,
+    prev: Vec<Option<NodeId>>,
+    /// Where the body starts in the file, if spans are known
+    body_start: Option<usize>,
+    /// Whether the body's text is in `<w>` elements
+    has_words: bool,
+    /// In a file with several lineations, the one the shorthand shows
+    /// (`<lb ed="…">`); the others' line breaks are kept as structure
+    line_edition: Option<String>,
+    /// While reading a word's levels for `{mark=expansion}`: `<am>` and
+    /// `<ex>` are written between markers ([`MARKS`])
+    marking: std::cell::Cell<bool>,
+    /// Whether markup inside a word is shown (`*{A}*nnat`, rules 10): not
+    /// where it would read as markup around the word (`*{Annat}*`)
+    inline_markup: std::cell::Cell<bool>,
+    /// Markup inside a word was written since this was last cleared
+    wrote_inline: std::cell::Cell<bool>,
+    segments: Vec<Segment>,
+    nodes: Vec<Option<NodeId>>,
+    spans: Vec<Option<(usize, usize)>>,
+}
+
+/// Elements the shorthand shows by name around the tokens they hold
+/// (`.q{…}`), besides those with short forms (`markup_of`).
+const SHOWN_AROUND: &[&str] = &[
+    "s", "q", "quote", "name", "surname", "addName", "roleName", "country", "region", "settlement", "geogName",
+    "title", "gloss", "damage", "sic", "orig", "reg", "me:expunged",
+];
+
+/// Whether the shorthand shows an element named `name` (with its prefix)
+/// when it stands around tokens, as `markup_of` does (if it holds something
+/// and no paragraph).
+pub(crate) fn shown_around(name: &str) -> bool {
+    SHOWN_AROUND.contains(&name)
+        || matches!(name, "hi" | "seg" | "surplus" | "persName" | "forename" | "placeName" | "rdg" | "corr")
+}
+
+/// How the shorthand shows an element around tokens.
+enum Shown {
+    /// `.q{` … `}`
+    Around { open: String, close: String },
+    /// `.corr{` first `=` second `}`
+    Pair { open: String, first: NodeId, middle: String, second: NodeId, close: String },
+}
+
+/// Text in `[…]` with `]` and `\` escaped.
+fn escape_brackets(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if matches!(c, ']' | '[' | '{' | '<' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+impl Projector<'_> {
+    // ------------------------------------------------------------------
+    // The tree, as the extractor read libxml2's
+    // ------------------------------------------------------------------
+
+    /// An element's name without its prefix; "" for other nodes.
+    fn local(&self, id: NodeId) -> &str {
+        match self.tree.kind(id) {
+            NodeKind::Element(e) => e.name.split_once(':').map_or(e.name.as_str(), |(_, local)| local),
+            _ => "",
+        }
+    }
+
+    fn is_element(&self, id: NodeId) -> bool {
+        matches!(self.tree.kind(id), NodeKind::Element(_))
+    }
+
+    fn first_child(&self, id: NodeId) -> Option<NodeId> {
+        self.tree.children(id).first().copied()
+    }
+
+    fn next_sibling(&self, id: NodeId) -> Option<NodeId> {
+        self.next[id.index()]
+    }
+
+    fn prev_sibling(&self, id: NodeId) -> Option<NodeId> {
+        self.prev[id.index()]
+    }
+
+    /// An attribute by its name without prefix, in any namespace (as
+    /// libxml2's `xmlGetProp`).
+    fn property(&self, id: NodeId, name: &str) -> Option<String> {
+        self.tree.element(id)?.attributes.iter().find_map(|a| {
+            let local = a.name.split_once(':').map_or(a.name.as_str(), |(_, l)| l);
+            (local == name).then(|| a.value.clone())
+        })
+    }
+
+    fn attributes(&self, id: NodeId) -> HashMap<String, String> {
+        self.tree
+            .element(id)
+            .map(|e| e.attributes.iter().map(|a| (a.name.clone(), a.value.clone())).collect())
+            .unwrap_or_default()
+    }
+
+    /// The text of an element and everything in it (entities as their
+    /// characters), as libxml2's `get_content`.
+    fn text_content(&self, id: NodeId) -> String {
+        let mut out = String::new();
+        for node in self.tree.descendants(id) {
+            match self.tree.kind(node) {
+                NodeKind::Text(t) | NodeKind::Cdata(t) => out.push_str(t),
+                NodeKind::EntityRef(name) => {
+                    if let Some(entity) = crate::entities::bundled().get(name.as_str()) {
+                        out.push_str(&entity.text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        out
+    }
+
+    fn original_xml(&self, id: NodeId) -> String {
+        self.tree.node_xml(id).unwrap_or_default()
+    }
+
+    fn relative(&self, span: std::ops::Range<usize>) -> Option<(usize, usize)> {
+        let start = self.body_start?;
+        Some((span.start - start, span.end - start))
+    }
+
+    /// A line break of another lineation than the one the shorthand shows.
+    fn is_hidden_break(&self, id: NodeId) -> bool {
+        let Some(shown) = self.line_edition.as_deref() else { return false };
+        self.tree.element(id).and_then(|e| e.attribute("ed")).is_some_and(|ed| ed != shown)
+    }
+
+    fn element_span(&self, id: NodeId) -> Option<(usize, usize)> {
+        self.relative(self.tree.span(id)?)
+    }
+
+    fn push(&mut self, segment: Segment, node: Option<NodeId>, span: Option<(usize, usize)>) {
+        self.segments.push(segment);
+        self.nodes.push(node);
+        self.spans.push(span);
+    }
+
+    fn next_id(&self) -> usize {
+        self.segments.len()
+    }
+
+    // ------------------------------------------------------------------
+    // Segments (the extractor's process_node)
+    // ------------------------------------------------------------------
+
+    fn process_node(&mut self, id: NodeId) {
+        match self.tree.kind(id) {
+            NodeKind::Element(_) => {
+                let local = self.local(id).to_string();
+                match local.as_str() {
+                    "w" => {
+                        let segment = self.extract_word(id);
+                        self.push(segment, Some(id), self.element_span(id));
+                    }
+                    "pc" => {
+                        let segment = self.extract_punctuation(id);
+                        self.push(segment, Some(id), self.element_span(id));
+                    }
+                    "num" if self.is_numeral(id) => {
+                        let mut lb = false;
+                        let dsl_content = format!("#{}#", self.levels_dsl(id, &mut lb));
+                        let segment = Segment::Word {
+                            id: self.next_id(),
+                            original_xml: self.original_xml(id),
+                            attributes: self.attributes(id),
+                            dsl_content,
+                            has_inline_lb: lb,
+                        };
+                        self.push(segment, Some(id), self.element_span(id));
+                    }
+                    "lb" if self.is_hidden_break(id) => self.emit_structural(id),
+                    "lb" | "pb" | "cb" | "handShift" => {
+                        let id_ = self.next_id();
+                        let attributes = self.attributes(id);
+                        let segment = match local.as_str() {
+                            "lb" => Segment::LineBreak { id: id_, attributes },
+                            "pb" => Segment::PageBreak { id: id_, attributes },
+                            "cb" => Segment::ColumnBreak { id: id_, attributes },
+                            _ => Segment::HandShift { id: id_, attributes },
+                        };
+                        self.push(segment, Some(id), self.element_span(id));
+                    }
+                    "choice" if matches!(self.markup_of(id), Some(Shown::Pair { .. })) => {
+                        if let Some(Shown::Pair { open, first, middle, second, close }) = self.markup_of(id) {
+                            self.emit_pair(id, open, first, middle, second, close);
+                        }
+                    }
+                    "choice" => {
+                        let segment = self.extract_choice(id);
+                        self.push(segment, Some(id), self.element_span(id));
+                    }
+                    "head" => {
+                        let content = self.dsl_of(id, true);
+                        let trimmed = content.trim();
+                        if !trimmed.is_empty() {
+                            let dsl = format!(".head{{{}}}", trimmed);
+                            self.push_inline(id, &dsl);
+                        }
+                    }
+                    "gap" => {
+                        let dsl = self.gap_dsl(id, None);
+                        self.push_inline(id, &dsl);
+                    }
+                    "supplied" => {
+                        let mut content = String::new();
+                        let mut lb = false;
+                        if self.has_element_children(id) {
+                            self.node_to_dsl(id, &mut content, &mut lb, false);
+                            let trimmed = content.trim();
+                            if trimmed.is_empty() {
+                                self.emit_structural(id);
+                            } else {
+                                let dsl = format!(".supplied{{{}}}", trimmed);
+                                self.push_inline(id, &dsl);
+                            }
+                        } else {
+                            self.node_to_dsl(id, &mut content, &mut lb, true);
+                            let trimmed = content.trim();
+                            if trimmed.is_empty() {
+                                self.emit_structural(id);
+                            } else {
+                                let dsl = format!("<{}>", trimmed);
+                                self.push_inline(id, &dsl);
+                            }
+                        }
+                    }
+                    "del" | "add" | "unclear" => {
+                        let content = self.dsl_of(id, true);
+                        let trimmed = content.trim();
+                        if trimmed.is_empty() {
+                            self.emit_structural(id);
+                        } else {
+                            let dsl = match local.as_str() {
+                                "del" => format!("-{{{}}}-", trimmed),
+                                "add" => format!("+{{{}}}+", trimmed),
+                                _ => format!("?{{{}}}?", trimmed),
+                            };
+                            self.push_inline(id, &dsl);
+                        }
+                    }
+                    "note" => {
+                        let content = self.dsl_of(id, true);
+                        let trimmed = content.trim();
+                        if !trimmed.is_empty() {
+                            let dsl = format!("^{{{}}}", trimmed);
+                            self.push_inline(id, &dsl);
+                        }
+                    }
+                    "am" => {
+                        if self.has_element_children(id) {
+                            self.emit_structural(id);
+                        } else {
+                            let content = self.dsl_of(id, true);
+                            let trimmed = content.trim().to_string();
+                            if !trimmed.is_empty() {
+                                self.push_inline(id, &trimmed);
+                            }
+                        }
+                    }
+                    _ => match self.markup_of(id) {
+                        Some(Shown::Around { open, close }) => self.emit_tags(id, Some(open), Some(close)),
+                        Some(Shown::Pair { open, first, middle, second, close }) => {
+                            self.emit_pair(id, open, first, middle, second, close)
+                        }
+                        None => self.emit_structural(id),
+                    },
+                }
+            }
+            NodeKind::Text(content) => self.process_text(id, content),
+            NodeKind::Comment(text) => {
+                let segment = Segment::Structural { id: self.next_id(), xml: format!("<!--{}-->", text), shown: None };
+                self.push(segment, Some(id), None);
+            }
+            _ => {}
+        }
+    }
+
+    /// A text node outside words: each run of letters is a word.
+    fn process_text(&mut self, id: NodeId, content: &str) {
+        let offsets: Option<Vec<usize>> = self.tree.span(id).and_then(|span| {
+            self.body_start?;
+            let mut cursor = SourceCursor::new(&self.tree.source()[span.clone()]);
+            let relative = cursor.text(content)?;
+            Some(relative.into_iter().map(|o| o + span.start).collect())
+        });
+        if content.trim().is_empty() {
+            let segment = Segment::Whitespace { id: self.next_id(), content: content.to_string() };
+            self.push(segment, None, None);
+            return;
+        }
+        let mut word = String::new();
+        let mut space = String::new();
+        let mut word_start = 0;
+        let chars: Vec<char> = content.chars().collect();
+        for (i, &c) in chars.iter().enumerate() {
+            if c.is_whitespace() {
+                if !word.is_empty() {
+                    let span = self.between(&offsets, word_start, i);
+                    self.push_text_word(std::mem::take(&mut word), span);
+                }
+                space.push(c);
+            } else {
+                if !space.is_empty() {
+                    let segment = Segment::Whitespace { id: self.next_id(), content: std::mem::take(&mut space) };
+                    self.push(segment, None, None);
+                }
+                if word.is_empty() {
+                    word_start = i;
+                }
+                word.push(c);
+            }
+        }
+        if !word.is_empty() {
+            let span = self.between(&offsets, word_start, chars.len());
+            self.push_text_word(word, span);
+        }
+        if !space.is_empty() {
+            let segment = Segment::Whitespace { id: self.next_id(), content: space };
+            self.push(segment, None, None);
+        }
+    }
+
+    /// The span from the `from`-th to the `to`-th character of a text node.
+    fn between(&self, offsets: &Option<Vec<usize>>, from: usize, to: usize) -> Option<(usize, usize)> {
+        let offsets = offsets.as_ref()?;
+        self.relative(offsets[from]..offsets[to])
+    }
+
+    fn push_text_word(&mut self, word: String, span: Option<(usize, usize)>) {
+        let segment = Segment::Word {
+            id: self.next_id(),
+            original_xml: escape_xml_text(&word),
+            attributes: HashMap::new(),
+            // Text outside words is read as before, except for the
+            // characters that have had a meaning since DSL rules 3; in a
+            // document of words it is one token like a word
+            dsl_content: if self.has_words {
+                punctuation_dsl(escape_dsl(&word, TextContext::Token))
+            } else {
+                word.replace('\\', "\\\\").replace('#', "\\#")
+            },
+            has_inline_lb: false,
+        };
+        self.push(segment, None, span);
+    }
+
+    /// An inline element (gap, supplied, del, …) as a word with this shorthand.
+    fn push_inline(&mut self, id: NodeId, dsl: &str) {
+        let segment = Segment::Word {
+            id: self.next_id(),
+            original_xml: self.original_xml(id),
+            attributes: HashMap::new(),
+            dsl_content: dsl.to_string(),
+            has_inline_lb: false,
+        };
+        self.push(segment, Some(id), self.element_span(id));
+    }
+
+    fn open_tag(&self, id: NodeId) -> String {
+        let element = self.tree.element(id).expect("an element");
+        let mut tag = format!("<{}", element.name);
+        for attribute in &element.attributes {
+            tag.push_str(&format!(" {}=\"{}\"", attribute.name, escape_xml_attr(&attribute.value)));
+        }
+        tag.push('>');
+        tag
+    }
+
+    fn emit_structural(&mut self, id: NodeId) {
+        self.emit_tags(id, None, None);
+    }
+
+    /// An element's start tag, its content and its end tag, the tags shown
+    /// as `open` and `close` if the shorthand shows them.
+    fn emit_tags(&mut self, id: NodeId, open: Option<String>, close: Option<String>) {
+        let tags = self.tree.tags(id);
+        let open_span = tags.as_ref().and_then(|(open, _)| self.relative(open.clone()));
+        let xml = self.open_tag(id);
+        let start = if self.local(id) == "p" {
+            Segment::Paragraph { id: self.next_id(), xml }
+        } else {
+            Segment::Structural { id: self.next_id(), xml, shown: open }
+        };
+        self.push(start, Some(id), open_span);
+        for child in self.tree.children(id).to_vec() {
+            self.process_node(child);
+        }
+        let close_span = tags.and_then(|(_, close)| self.relative(close));
+        let name = &self.tree.element(id).expect("an element").name;
+        let end = Segment::Structural { id: self.next_id(), xml: format!("</{}>", name), shown: close };
+        self.push(end, Some(id), close_span);
+    }
+
+    /// A pair in a `<choice>` (`<sic>`, `<corr>`): `.corr{` on the choice's
+    /// start tag, `=` on the first half's end tag, `}` on the choice's end.
+    fn emit_pair(&mut self, id: NodeId, open: String, first: NodeId, middle: String, second: NodeId, close: String) {
+        let tags = self.tree.tags(id);
+        let open_span = tags.as_ref().and_then(|(open, _)| self.relative(open.clone()));
+        let xml = self.open_tag(id);
+        self.push(Segment::Structural { id: self.next_id(), xml, shown: Some(open) }, Some(id), open_span);
+        for child in self.tree.children(id).to_vec() {
+            if child == first {
+                self.emit_tags(child, None, Some(middle.clone()));
+            } else if child == second {
+                self.emit_tags(child, None, None);
+            } else {
+                self.process_node(child);
+            }
+        }
+        let close_span = tags.and_then(|(_, close)| self.relative(close));
+        let name = &self.tree.element(id).expect("an element").name;
+        let end = Segment::Structural { id: self.next_id(), xml: format!("</{}>", name), shown: Some(close) };
+        self.push(end, Some(id), close_span);
+    }
+
+    /// How the shorthand shows element `id` around the tokens in it, if it
+    /// does: markup it has a sign for (`.q{…}`, `*{…}*`, a pair), holding
+    /// something and no paragraph (`.p` can't be inside markup).
+    fn markup_of(&self, id: NodeId) -> Option<Shown> {
+        let element = self.tree.element(id)?;
+        let holds_something = self.tree.children(id).iter().any(|&c| match self.tree.kind(c) {
+            NodeKind::Element(_) => true,
+            NodeKind::Text(t) => !t.trim().is_empty(),
+            _ => false,
+        });
+        if !holds_something || self.tree.descendants(id).iter().any(|&d| self.local(d) == "p") {
+            return None;
+        }
+        let local = self.local(id);
+        if local == "choice" {
+            let halves: Vec<NodeId> = self.tree.children(id).iter().copied().filter(|&c| self.is_element(c)).collect();
+            let [first, second] = halves.as_slice() else { return None };
+            let opener = match (self.local(*first), self.local(*second)) {
+                ("sic", "corr") => ".corr{",
+                ("orig", "reg") => ".trans{",
+                _ => return None,
+            };
+            return Some(Shown::Pair {
+                open: opener.to_string(),
+                first: *first,
+                middle: "=".to_string(),
+                second: *second,
+                close: "}".to_string(),
+            });
+        }
+        let (open, close) = match local {
+            "hi" => ("*{".to_string(), "}*"),
+            "seg" => ("&{".to_string(), "}"),
+            "surplus" => ("${".to_string(), "}"),
+            "persName" => (".psname{".to_string(), "}"),
+            "forename" => (".fname{".to_string(), "}"),
+            "placeName" => (".plname{".to_string(), "}"),
+            "rdg" => match self.property(id, "wit") {
+                Some(wit) => (format!(".rdg[{}]{{", escape_brackets(&wit)), "}"),
+                None => (".rdg{".to_string(), "}"),
+            },
+            _ if SHOWN_AROUND.contains(&element.name.as_str()) => (format!(".{}{{", element.name), "}"),
+            _ => return None,
+        };
+        Some(Shown::Around { open, close: close.to_string() })
+    }
+
+    fn has_element_children(&self, id: NodeId) -> bool {
+        self.tree.children(id).iter().any(|&c| self.is_element(c))
+    }
+
+    fn find_descendant(&self, id: NodeId, target: &str) -> Option<NodeId> {
+        for &child in self.tree.children(id) {
+            if self.is_element(child) {
+                if self.local(child) == target {
+                    return Some(child);
+                }
+                if let Some(found) = self.find_descendant(child, target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    fn gap_dsl(&self, id: NodeId, supplied: Option<&str>) -> String {
+        let digits = self
+            .property(id, "quantity")
+            .map(|value| value.chars().filter(|c| c.is_ascii_digit()).collect::<String>())
+            .filter(|value| !value.is_empty());
+        let mut dsl = "[...]".to_string();
+        if let Some(q) = digits {
+            dsl.insert_str(dsl.len() - 1, &q);
+        }
+        if let Some(text) = supplied {
+            if !text.trim().is_empty() {
+                dsl.insert_str(dsl.len() - 1, &format!("<{}>", text.trim()));
+            }
+        }
+        dsl
+    }
+
+    // ------------------------------------------------------------------
+    // Words
+    // ------------------------------------------------------------------
+
+    /// The shorthand of a word-like element from its levels: an abbreviation,
+    /// a normalized-only form, the first level with text, or its content.
+    fn levels_dsl(&self, id: NodeId, lb: &mut bool) -> String {
+        let facs_text = self.level_text(id, "facs", lb);
+        let dipl_text = self.level_text(id, "dipl", lb);
+        let norm_text = self.level_text(id, "norm", lb);
+        if facs_text.is_none() && dipl_text.is_none() {
+            if let Some(text) = &norm_text {
+                return format!(".norm{{{}}}", text);
+            }
+        }
+        if let Some(text) = facs_text.or(dipl_text).or(norm_text) {
+            return text;
+        }
+        let mut dsl = String::new();
+        match self.find_descendant(id, "facs") {
+            Some(facs) => self.node_to_dsl(facs, &mut dsl, lb, true),
+            None => self.node_to_dsl(id, &mut dsl, lb, true),
+        }
+        dsl
+    }
+
+    fn extract_word(&mut self, id: NodeId) -> Segment {
+        let mut lb = false;
+        let word = |lb: &mut bool| match self.inline_abbreviations(id, lb) {
+            Some(dsl) => dsl,
+            None => match self.abbr_expansion(id, lb) {
+                Some((abbr, expan)) => format!(".abbr[{}]{{{}}}", abbr, expan),
+                None => self.levels_dsl(id, lb),
+            },
+        };
+        self.wrote_inline.set(false);
+        let mut dsl_content = word(&mut lb);
+        // Markup inside it must leave it one word
+        if self.wrote_inline.get() && !dsl_tokens(&join_written_words(&dsl_content)).is_some_and(|t| matches!(t.as_slice(), [crate::parser::Node::Word(_)])) {
+            self.inline_markup.set(false);
+            lb = false;
+            dsl_content = word(&mut lb);
+            self.inline_markup.set(true);
+        }
+        Segment::Word {
+            id: self.next_id(),
+            original_xml: self.original_xml(id),
+            attributes: self.attributes(id),
+            dsl_content: join_written_words(&dsl_content),
+            has_inline_lb: lb,
+        }
+    }
+
+    fn extract_punctuation(&mut self, id: NodeId) -> Segment {
+        let mut lb = false;
+        let dsl_content = punctuation_dsl(self.levels_dsl(id, &mut lb));
+        // Punctuation with a space or a letter in it (`<pc>: –</pc>`): every
+        // character after the first escaped, so it continues the punctuation
+        let dsl_content = if dsl_tokens(&dsl_content).is_some_and(|tokens| tokens.len() > 1) {
+            punctuation_dsl(escape_after_first(&dsl_content))
+        } else {
+            dsl_content
+        };
+        Segment::Punctuation { id: self.next_id(), original_xml: self.original_xml(id), dsl_content }
+    }
+
+    fn extract_choice(&mut self, id: NodeId) -> Segment {
+        let mut lb = false;
+        let inline = self.inline_abbreviations(id, &mut lb);
+        let dsl_content = match self.choice_abbr(id) {
+            Some((abbr, expan)) => format!(".abbr[{}]{{{}}}", abbr, expan),
+            None if inline.is_some() => inline.unwrap_or_default(),
+            None => match self.abbr_expansion(id, &mut lb) {
+                Some((abbr, expan)) => format!(".abbr[{}]{{{}}}", abbr, expan),
+                None => {
+                    let facs_text = self.level_text(id, "facs", &mut lb);
+                    let dipl_text = self.level_text(id, "dipl", &mut lb);
+                    let norm_text = self.level_text(id, "norm", &mut lb);
+                    if facs_text.is_none() && dipl_text.is_none() && norm_text.is_some() {
+                        format!(".norm{{{}}}", norm_text.unwrap_or_default())
+                    } else if let Some(text) = facs_text.or(dipl_text).or(norm_text) {
+                        text
+                    } else {
+                        // Only direct `facs` children count here
+                        let facs = self
+                            .tree
+                            .children(id)
+                            .iter()
+                            .copied()
+                            .rfind(|&c| self.is_element(c) && self.local(c) == "facs");
+                        let mut dsl = String::new();
+                        self.node_to_dsl(facs.unwrap_or(id), &mut dsl, &mut lb, true);
+                        dsl
+                    }
+                }
+            },
+        };
+        Segment::Word {
+            id: self.next_id(),
+            original_xml: self.original_xml(id),
+            attributes: self.attributes(id),
+            dsl_content,
+            has_inline_lb: lb,
+        }
+    }
+
+    /// `<choice><abbr>…</abbr><expan>…</expan></choice>`: the shorthand of
+    /// both (each from all such children, in order).
+    fn choice_abbr(&self, id: NodeId) -> Option<(String, String)> {
+        let (mut abbr, mut expan) = (String::new(), String::new());
+        let (mut found_abbr, mut found_expan) = (false, false);
+        let mut lb = false;
+        for &child in self.tree.children(id) {
+            match self.local(child) {
+                "abbr" => {
+                    found_abbr = true;
+                    self.node_to_dsl(child, &mut abbr, &mut lb, true);
+                }
+                "expan" => {
+                    found_expan = true;
+                    self.node_to_dsl(child, &mut expan, &mut lb, true);
+                }
+                _ => {}
+            }
+        }
+        (found_abbr && found_expan).then_some((abbr, expan))
+    }
+
+    fn level_text(&self, id: NodeId, level: &str, lb: &mut bool) -> Option<String> {
+        let child = self.find_descendant(id, level)?;
+        let mut text = String::new();
+        self.node_to_dsl(child, &mut text, lb, true);
+        let trimmed = text.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    }
+
+    /// A word with MENOTA's `<am>` (facs) and `<ex>` (dipl) as shorthand
+    /// with `{mark=expansion}` where they stand (DSL rules 7): `k<am>&bar;</am>gs`
+    /// with `k<ex>onun</ex>gs` is `k{:bar:=onun}gs`, `<am>&kbar;</am>gs` with
+    /// `k<ex>onun</ex>gs` is `{:kbar:=konun}gs` (the fused letter's base letter
+    /// belongs to the expansion), `hæn<ex>n</ex>aR` alone is `hæn{=n}aR`.
+    /// The shorthand follows the facsimile text; where the diplomatic level
+    /// has other letterforms (`ꝼ` and `f`), they stay as the file has them
+    /// (DSL rules 9). `None` if the word has neither, or its marks and
+    /// expansions don't pair up (then the whole word is `.abbr[…]{…}`).
+    fn inline_abbreviations(&self, id: NodeId, lb: &mut bool) -> Option<String> {
+        let facs = self.find_descendant(id, "facs");
+        let dipl = self.find_descendant(id, "dipl");
+        let marked = |level: NodeId, lb: &mut bool| {
+            self.marking.set(true);
+            let mut dsl = String::new();
+            self.node_to_dsl(level, &mut dsl, lb, true);
+            self.marking.set(false);
+            dsl.trim().to_string()
+        };
+        // Pieces: text, and the content of each `<am>` (or `<ex>`)
+        let pieces = |dsl: &str, open: char, close: char| -> Option<(Vec<String>, Vec<String>)> {
+            let (mut texts, mut marks) = (vec![String::new()], Vec::new());
+            let mut inside: Option<String> = None;
+            for c in dsl.chars() {
+                match (c, inside.as_mut()) {
+                    (c, None) if c == open => inside = Some(String::new()),
+                    (c, Some(_)) if c == close => {
+                        marks.push(inside.take()?);
+                        texts.push(String::new());
+                    }
+                    (c, _) if MARKS.contains(&c) => return None,
+                    (c, Some(mark)) => mark.push(c),
+                    (c, None) => texts.last_mut()?.push(c),
+                }
+            }
+            inside.is_none().then_some((texts, marks))
+        };
+        // A `{` right after `-`, `+`, `^` or `?` would open a deletion, an
+        // addition, a note or an unclear reading: those are escaped; after a
+        // break without a number it would be the break's number (`//{`)
+        // (`}-`, `}+` and `}?` close a deletion, an addition or an unclear
+        // reading, unless the `}` is that of an expansion written just before)
+        let expansion_end = std::cell::Cell::new(usize::MAX);
+        let open = |out: &mut String| -> Option<()> {
+            if out.ends_with("//") && !out.ends_with("\\/") {
+                return None;
+            }
+            let escaped = out.ends_with("\\-") || out.ends_with("\\+") || out.ends_with("\\^") || out.ends_with("\\?");
+            let last = out.chars().next_back().map_or(0, char::len_utf8);
+            let before = &out[..out.len() - last];
+            let closes = before.ends_with('}') && before.len() != expansion_end.get();
+            if !escaped && !closes && out.ends_with(['-', '+', '^', '?']) {
+                let last = out.pop()?;
+                out.push('\\');
+                out.push(last);
+            }
+            out.push('{');
+            Some(())
+        };
+        // A mark can't hold `=` (the first one ends it); unescaped braces
+        // would end the construct
+        let unfit = |marks: &[String], exs: &[String]| {
+            marks.iter().any(|t| t.contains(['{', '}', '='])) || exs.iter().any(|t| t.contains(['{', '}']))
+        };
+        let (facs, dipl) = match (facs, dipl) {
+            (Some(f), Some(d)) => (marked(f, lb), marked(d, lb)),
+            // One level (or none): `<ex>` without `<am>`, or the reverse
+            (None, Some(level)) | (Some(level), None) => (marked(level, lb), String::new()),
+            (None, None) => (marked(id, lb), String::new()),
+        };
+        if !facs.contains(MARKS) && !dipl.contains(MARKS) {
+            return None;
+        }
+        if dipl.is_empty() {
+            // A single level: its `<am>` and `<ex>` in order, a mark and the
+            // expansion right after it together
+            let mut out = String::new();
+            let (mut marks, mut exs) = (Vec::new(), Vec::new());
+            let mut current: Option<String> = None;
+            for c in facs.chars() {
+                match c {
+                    c if c == MARKS[0] || c == MARKS[2] => current = Some(String::new()),
+                    c if c == MARKS[1] => {
+                        let mark = current.take()?;
+                        open(&mut out)?;
+                        out.push_str(&format!("{mark}=}}"));
+                        expansion_end.set(out.len());
+                        marks.push(mark);
+                    }
+                    c if c == MARKS[3] => {
+                        let ex = current.take()?;
+                        // Right after a mark: its expansion
+                        if out.ends_with("=}") {
+                            out.truncate(out.len() - 1);
+                            out.push_str(&ex);
+                            out.push('}');
+                        } else {
+                            open(&mut out)?;
+                            out.push_str(&format!("={ex}}}"));
+                        }
+                        expansion_end.set(out.len());
+                        exs.push(ex);
+                    }
+                    c => match current.as_mut() {
+                        Some(inner) => inner.push(c),
+                        None => out.push(c),
+                    },
+                }
+            }
+            return (current.is_none() && !unfit(&marks, &exs)).then_some(out);
+        }
+        let (texts, ams) = pieces(&facs, MARKS[0], MARKS[1])?;
+        let (dipl_texts, exs) = pieces(&dipl, MARKS[2], MARKS[3])?;
+        if ams.len() != exs.len() || ams.is_empty() || unfit(&ams, &exs) {
+            return None;
+        }
+        let mut out = String::new();
+        let mut carried = String::new();
+        for (i, text) in texts.iter().enumerate() {
+            let mut dipl_text = format!("{carried}{}", dipl_texts[i]);
+            carried.clear();
+            // A fused letter: its base letter, written before the `<ex>` on dipl
+            let base = ams.get(i).and_then(|am| {
+                let name = am.strip_prefix(':')?.strip_suffix(':')?;
+                (!name.contains(':')).then(|| crate::entities::base_letter(name)).flatten()
+            });
+            let mut expansion_prefix = String::new();
+            if let Some(base) = base {
+                if let Some(rest) = dipl_text.strip_suffix(base) {
+                    expansion_prefix = base.to_string();
+                    dipl_text = rest.to_string();
+                }
+            }
+            // The shorthand follows the facsimile; where the diplomatic level
+            // has other letterforms (`ꝼ`, `f`), the file keeps them. Letter
+            // for letter, though: otherwise the expansion isn't where the
+            // mark is (facs `kn¯gr`, dipl `k<ex>ono</ex>ngr`)
+            if letters(text) != letters(&dipl_text) {
+                return None;
+            }
+            out.push_str(text);
+            if let (Some(am), Some(ex)) = (ams.get(i), exs.get(i)) {
+                open(&mut out)?;
+                out.push_str(&format!("{am}={expansion_prefix}{ex}}}"));
+                expansion_end.set(out.len());
+            }
+        }
+        Some(out)
+    }
+
+    /// MENOTA's `<am>` in facs or `<ex>` in dipl (or Saga-Scribe's
+    /// `<abbr>`/`<expan>`): the facs and dipl shorthand.
+    fn abbr_expansion(&self, id: NodeId, lb: &mut bool) -> Option<(String, String)> {
+        let facs = self.find_descendant(id, "facs")?;
+        let dipl = self.find_descendant(id, "dipl")?;
+        let has_am = self.find_descendant(facs, "am").is_some() || self.find_descendant(facs, "abbr").is_some();
+        let has_ex = self.find_descendant(dipl, "ex").is_some() || self.find_descendant(dipl, "expan").is_some();
+        if !has_am && !has_ex {
+            return None;
+        }
+        let mut abbr = String::new();
+        self.node_to_dsl(facs, &mut abbr, lb, true);
+        let mut expan = String::new();
+        self.node_to_dsl(dipl, &mut expan, lb, true);
+        let (abbr, expan) = (abbr.trim(), expan.trim());
+        (!abbr.is_empty() && !expan.is_empty()).then(|| (abbr.to_string(), expan.to_string()))
+    }
+
+    fn dsl_of(&self, id: NodeId, allow_norm: bool) -> String {
+        let mut out = String::new();
+        let mut lb = false;
+        self.node_to_dsl(id, &mut out, &mut lb, allow_norm);
+        out
+    }
+
+    /// A text node's contribution: its words with single spaces, and a space
+    /// before or after where it had whitespace there.
+    fn push_text(&self, id: NodeId, content: &str, out: &mut String) {
+        let normalized = content.split_whitespace().collect::<Vec<_>>().join(" ");
+        let normalized = escape_dsl(&normalized, self.text_context(id));
+        if content.starts_with(char::is_whitespace) && !out.is_empty() && !out.ends_with(' ') {
+            out.push(' ');
+        }
+        out.push_str(&normalized);
+        if content.ends_with(char::is_whitespace) && self.next_sibling(id).is_some() && !out.ends_with(' ') {
+            out.push(' ');
+        }
+    }
+
+    /// A `<num>` that is a token itself (`#…#`), not a wrapper around words,
+    /// punctuation or numerals (`<num><pc>.</pc><w>xv</w><pc>.</pc></num>`).
+    /// Punctuation inside its levels (`<me:facs><pc>.</pc>cc…`) is part of it.
+    fn is_numeral(&self, id: NodeId) -> bool {
+        fn has_token(projector: &Projector, id: NodeId) -> bool {
+            projector.tree.children(id).iter().any(|&child| match projector.local(child) {
+                "w" | "pc" | "num" => true,
+                "facs" | "dipl" | "norm" => false,
+                _ => has_token(projector, child),
+            })
+        }
+        self.local(id) == "num" && !has_token(self, id)
+    }
+
+    /// What the text node `id` is part of in the shorthand: the innermost
+    /// construct around it.
+    fn text_context(&self, id: NodeId) -> TextContext {
+        let mut current = self.tree.parent(id);
+        while let Some(node) = current {
+            match self.local(node) {
+                "note" => return TextContext::Note,
+                "add" | "del" | "unclear" => return TextContext::Inline,
+                "supplied" if !self.has_element_children(node) || self.in_token_or_construct(node) => {
+                    return TextContext::Inline
+                }
+                "num" if self.is_numeral(node) && !self.in_token_or_construct(node) => return TextContext::Numeral,
+                "w" | "pc" | "num" | "supplied" | "head" | "body" => return TextContext::Token,
+                _ => {}
+            }
+            current = self.tree.parent(node);
+        }
+        TextContext::Token
+    }
+
+    /// Whether `id` is part of a word or punctuation, or inside the content
+    /// of an inline construct or note: not a token of its own.
+    fn in_token_or_construct(&self, id: NodeId) -> bool {
+        let mut current = self.tree.parent(id);
+        while let Some(node) = current {
+            match self.local(node) {
+                "w" | "pc" | "facs" | "dipl" | "norm" | "note" | "add" | "del" | "unclear" => return true,
+                "supplied" if !self.has_element_children(node) => return true,
+                "body" => return false,
+                _ => {}
+            }
+            current = self.tree.parent(node);
+        }
+        false
+    }
+
+    /// The children of `id`, each with [`node_to_dsl`](Self::node_to_dsl)
+    /// (which converts a child's own children), text directly.
+    fn children_to_dsl(&self, id: NodeId, out: &mut String, lb: &mut bool, allow_norm: bool) {
+        for &child in self.tree.children(id) {
+            match self.tree.kind(child) {
+                NodeKind::Text(content) => {
+                    if content.split_whitespace().next().is_some() {
+                        self.push_text(child, content, out);
+                    }
+                }
+                _ => self.node_to_dsl(child, out, lb, allow_norm),
+            }
+        }
+    }
+
+    /// The shorthand of the children of `id`.
+    fn node_to_dsl(&self, id: NodeId, out: &mut String, lb: &mut bool, allow_norm: bool) {
+        let mut child = self.first_child(id);
+        while let Some(c) = child {
+            let mut next_child = self.next_sibling(c);
+            match self.tree.kind(c) {
+                NodeKind::Text(content) => {
+                    if content.split_whitespace().next().is_none() {
+                        // Pure whitespace is indentation, except between an
+                        // entity and more text (`&et; &thorn;a`): a word space
+                        let after_entity =
+                            self.prev_sibling(c).is_some_and(|p| matches!(self.tree.kind(p), NodeKind::EntityRef(_)));
+                        let before_text = next_child.is_some_and(|n| {
+                            matches!(self.tree.kind(n), NodeKind::EntityRef(_) | NodeKind::Text(_))
+                        });
+                        if after_entity && before_text && !out.ends_with(' ') {
+                            out.push(' ');
+                        }
+                    } else {
+                        self.push_text(c, content, out);
+                    }
+                }
+                NodeKind::EntityRef(name) => {
+                    out.push(':');
+                    out.push_str(name);
+                    out.push(':');
+                }
+                NodeKind::Element(_) => match self.local(c) {
+                    "choice" => self.choice_to_dsl(c, out, lb, allow_norm),
+                    name @ ("am" | "ex") if self.marking.get() => {
+                        let (open, close) = if name == "am" { (MARKS[0], MARKS[1]) } else { (MARKS[2], MARKS[3]) };
+                        out.push(open);
+                        self.node_to_dsl(c, out, lb, allow_norm);
+                        out.push(close);
+                    }
+                    "am" => self.node_to_dsl(c, out, lb, allow_norm),
+                    "w" => {
+                        if !out.is_empty() && !out.ends_with(' ') {
+                            out.push(' ');
+                        }
+                        if let Some(dsl) = self.inline_abbreviations(c, lb) {
+                            out.push_str(&dsl);
+                        } else {
+                            match self.abbr_expansion(c, lb) {
+                                Some((abbr, expan)) => out.push_str(&format!(".abbr[{}]{{{}}}", abbr, expan)),
+                                None => self.word_levels_to_dsl(c, out, lb, allow_norm),
+                            }
+                        }
+                    }
+                    "pc" => {
+                        let mut inner = String::new();
+                        self.word_levels_to_dsl(c, &mut inner, lb, allow_norm);
+                        // Inside a word it is part of the word
+                        if self.in_token_or_construct(c) {
+                            out.push_str(&inner);
+                        } else {
+                            out.push_str(&punctuation_dsl(inner));
+                        }
+                    }
+                    "num" if self.is_numeral(c) && !self.in_token_or_construct(c) => {
+                        out.push('#');
+                        out.push_str(&self.levels_dsl(c, lb));
+                        out.push('#');
+                    }
+                    "c" => {
+                        let mut inner = String::new();
+                        self.node_to_dsl(c, &mut inner, lb, allow_norm);
+                        if inner.is_empty() {
+                            inner = escape_dsl(&self.text_content(c), self.text_context(c));
+                        }
+                        if self.shows_inline(c) && !inner.is_empty() {
+                            self.wrote_inline.set(true);
+                            out.push_str(&format!(".c{{{inner}}}"));
+                        } else {
+                            out.push_str(&inner);
+                        }
+                    }
+                    name @ ("hi" | "seg" | "surplus" | "damage") if self.shows_inline(c) => {
+                        let mut inner = String::new();
+                        self.node_to_dsl(c, &mut inner, lb, allow_norm);
+                        if inner.trim().is_empty() || inner != inner.trim() {
+                            out.push_str(&inner);
+                        } else {
+                            let (open, close) = match name {
+                                "hi" => ("*{", "}*"),
+                                "seg" => ("&{", "}"),
+                                "surplus" => ("${", "}"),
+                                _ => (".damage{", "}"),
+                            };
+                            self.wrote_inline.set(true);
+                            out.push_str(open);
+                            out.push_str(&inner);
+                            out.push_str(close);
+                        }
+                    }
+                    name @ ("add" | "del" | "unclear" | "note") => {
+                        let mut inner = String::new();
+                        self.node_to_dsl(c, &mut inner, lb, allow_norm);
+                        let trimmed = inner.trim();
+                        if !trimmed.is_empty() {
+                            let (open, close) = match name {
+                                "add" => ("+{", "}+"),
+                                "del" => ("-{", "}-"),
+                                "unclear" => ("?{", "}?"),
+                                _ => ("^{", "}"),
+                            };
+                            out.push_str(open);
+                            out.push_str(trimmed);
+                            out.push_str(close);
+                        }
+                    }
+                    "supplied" => {
+                        let has_children = self.has_element_children(c);
+                        let mut inner = String::new();
+                        if has_children {
+                            self.node_to_dsl(c, &mut inner, lb, false);
+                        } else {
+                            self.children_to_dsl(c, &mut inner, lb, allow_norm);
+                        }
+                        let trimmed = inner.trim();
+                        if !trimmed.is_empty() {
+                            // In a word, supplied text with markup is `<…>`
+                            // too (`.supplied{…}` would end the word)
+                            if has_children && !self.in_token_or_construct(c) {
+                                out.push_str(&format!(".supplied{{{}}}", trimmed));
+                            } else {
+                                out.push('<');
+                                out.push_str(trimmed);
+                                out.push('>');
+                            }
+                        }
+                    }
+                    "gap" => {
+                        let mut supplied = None;
+                        if let Some(next) = self.next_sibling(c) {
+                            if self.local(next) == "supplied" {
+                                let mut inner = String::new();
+                                self.node_to_dsl(next, &mut inner, lb, allow_norm);
+                                let trimmed = inner.trim();
+                                if !trimmed.is_empty() {
+                                    supplied = Some(trimmed.to_string());
+                                    next_child = self.next_sibling(next);
+                                }
+                            }
+                        }
+                        out.push_str(&self.gap_dsl(c, supplied.as_deref()));
+                    }
+                    "lb" if self.is_hidden_break(c) => {}
+                    "lb" => {
+                        *lb = true;
+                        out.push_str("~//");
+                        if let Some(n) = self.property(c, "n") {
+                            out.push_str(&crate::parser::syntax::break_number_dsl(&n, false));
+                        }
+                    }
+                    // In a word (rules 11): a column break, as a page break
+                    "cb" if self.in_token_or_construct(c) => {
+                        *lb = true;
+                        // In braces: the word goes on right after it
+                        let n = self.property(c, "n").unwrap_or_default();
+                        out.push_str(&format!("~///c={{{}}}", n.replace('\\', "\\\\").replace('}', "\\}")));
+                    }
+                    "space" if self.shows_inline(c) => {
+                        self.wrote_inline.set(true);
+                        out.push_str(&format!(".space[{}]", escape_brackets(&self.property(c, "quantity").unwrap_or_default())));
+                    }
+                    "dipl" | "norm" => {}
+                    _ => self.node_to_dsl(c, out, lb, allow_norm),
+                },
+                _ => {}
+            }
+            child = next_child;
+        }
+    }
+
+    /// A `<w>` or `<pc>` inside other content, from its levels.
+    fn word_levels_to_dsl(&self, id: NodeId, out: &mut String, lb: &mut bool, allow_norm: bool) {
+        let facs_text = self.level_text(id, "facs", lb);
+        let dipl_text = self.level_text(id, "dipl", lb);
+        let norm_text = self.level_text(id, "norm", lb);
+        if facs_text.is_none() && dipl_text.is_none() {
+            if let Some(text) = &norm_text {
+                if allow_norm {
+                    out.push_str(&format!(".norm{{{}}}", text));
+                } else {
+                    out.push_str(text);
+                }
+                return;
+            }
+        }
+        match facs_text.or(dipl_text).or(norm_text) {
+            Some(text) => out.push_str(&text),
+            None => self.children_to_dsl(id, out, lb, allow_norm),
+        }
+    }
+
+    /// A `<choice>` inside other content.
+    /// Whether markup `id` inside a word is shown (`*{A}*nnat`).
+    fn shows_inline(&self, id: NodeId) -> bool {
+        self.inline_markup.get() && !self.marking.get() && self.in_token_or_construct(id)
+    }
+
+    fn choice_to_dsl(&self, id: NodeId, out: &mut String, lb: &mut bool, allow_norm: bool) {
+        // A pair inside a word: `.corr{sic=corr}`, `.trans{orig=reg}`
+        if self.shows_inline(id) {
+            let halves: Vec<NodeId> = self.tree.children(id).iter().copied().filter(|&c| self.is_element(c)).collect();
+            if let [first, second] = halves.as_slice() {
+                let opener = match (self.local(*first), self.local(*second)) {
+                    ("sic", "corr") => Some(".corr{"),
+                    ("orig", "reg") => Some(".trans{"),
+                    _ => None,
+                };
+                if let Some(opener) = opener {
+                    let (mut a, mut b) = (String::new(), String::new());
+                    self.node_to_dsl(*first, &mut a, lb, allow_norm);
+                    self.node_to_dsl(*second, &mut b, lb, allow_norm);
+                    let (a, b) = (a.trim().to_string(), b.trim().to_string());
+                    if !a.contains('=') && !a.is_empty() {
+                        self.wrote_inline.set(true);
+                        out.push_str(&format!("{opener}{a}={b}}}"));
+                        return;
+                    }
+                }
+            }
+        }
+        let (mut abbr, mut expan) = (String::new(), String::new());
+        let (mut found_abbr, mut found_expan) = (false, false);
+        let mut facs = None;
+        for &child in self.tree.children(id) {
+            match self.local(child) {
+                "abbr" => {
+                    found_abbr = true;
+                    self.node_to_dsl(child, &mut abbr, lb, allow_norm);
+                }
+                "expan" => {
+                    found_expan = true;
+                    self.node_to_dsl(child, &mut expan, lb, allow_norm);
+                }
+                "facs" => facs = Some(child),
+                _ => {}
+            }
+        }
+        if found_abbr && found_expan {
+            out.push_str(&format!(".abbr[{}]{{{}}}", abbr, expan));
+            return;
+        }
+        if let Some((abbr, expan)) = self.abbr_expansion(id, lb) {
+            out.push_str(&format!(".abbr[{}]{{{}}}", abbr, expan));
+            return;
+        }
+        let facs_text = self.level_text(id, "facs", lb);
+        let dipl_text = self.level_text(id, "dipl", lb);
+        let norm_text = self.level_text(id, "norm", lb);
+        if facs_text.is_none() && dipl_text.is_none() {
+            if let Some(text) = &norm_text {
+                if allow_norm {
+                    out.push_str(&format!(".norm{{{}}}", text));
+                } else {
+                    out.push_str(text);
+                }
+                return;
+            }
+        }
+        if let Some(text) = facs_text.or(dipl_text).or(norm_text) {
+            out.push_str(&text);
+            return;
+        }
+        match facs {
+            Some(facs) => self.node_to_dsl(facs, out, lb, allow_norm),
+            None => {
+                for &child in self.tree.children(id) {
+                    if matches!(self.local(child), "dipl" | "norm") {
+                        continue;
+                    }
+                    self.node_to_dsl(child, out, lb, allow_norm);
+                }
+            }
+        }
+    }
+}

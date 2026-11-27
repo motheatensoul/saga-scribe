@@ -9,6 +9,7 @@ export interface Settings {
   previewDelay: number;
   activeTemplateId: string | null;
   activeStylesheetId: string;
+  showEntityGlyphs: boolean;
 }
 
 export async function loadSettings(): Promise<Settings> {
@@ -79,86 +80,209 @@ export async function loadTextFile(path: string): Promise<string> {
   return invoke("load_text_file", { path });
 }
 
-/** Result from importing a file */
-export type Segment =
-  | {
-      type: "structural";
-      id: number;
-      xml: string;
-    }
-  | {
-      /** A paragraph's start tag, shown as `.p` in the DSL */
-      type: "paragraph";
-      id: number;
-      xml: string;
-    }
-  | {
-      type: "word";
-      id: number;
-      original_xml: string;
-      attributes: Record<string, string>;
-      dsl_content: string;
-      has_inline_lb: boolean;
-    }
-  | {
-      type: "punctuation";
-      id: number;
-      original_xml: string;
-      dsl_content: string;
-    }
-  | {
-      type: "line_break";
-      id: number;
-      attributes: Record<string, string>;
-    }
-  | {
-      type: "page_break";
-      id: number;
-      attributes: Record<string, string>;
-    }
-  | {
-      type: "hand_shift";
-      id: number;
-      attributes: Record<string, string>;
-    }
-  | {
-      type: "whitespace";
-      id: number;
-      content: string;
-    };
-
-export interface ImportedDocument {
-  segments: Segment[];
-  is_menota: boolean;
-  /** Byte ranges of segments in the original body, indexed by segment id */
-  spans?: ([number, number] | null)[];
-  /** DSL rules version the document was imported with (absent: 0) */
-  dsl_rules?: number;
+/**
+ * An imported document the backend has read and keeps until the editor loads
+ * it with {@link setImportedDocument}: the manifest stays in the backend.
+ */
+export interface StagedDocument {
+  handle: number;
+  /** Whether the document has MENOTA levels (me:facs/dipl/norm) */
+  isMenota: boolean;
+  /** DSL rules version the document was imported with */
+  dslRules: number;
+  /** The editor's answers for replaced words, by the original word's segment id */
+  decisions: Record<number, Decision>;
+  /** The abbreviation store its shorthand is written with */
+  abbreviations?: Record<string, string[]>;
+  /** How the file encodes its transcription (inferred when it was imported) */
+  profile?: Profile | null;
 }
 
+/** A transcription level of a word */
+export type Level = "facs" | "dipl" | "norm";
+
+/** How an imported file encodes its transcription (`src-tauri/src/document/profile.rs`) */
+export interface Profile {
+  /** The levels new words are written with, in order */
+  levels: Level[];
+  /** Whether a word's levels are in a `<choice>` */
+  choice: boolean;
+  abbreviations: "am_ex" | "choice_abbr_expan";
+  punctuation: "pc" | "me_punct";
+  /** The edition `//n` stands for, when the file has several lineations */
+  lineEdition?: string | null;
+  counts: {
+    words: number;
+    /** Words, numerals and punctuation */
+    tokens: number;
+    /** Tokens with each level */
+    levels: Partial<Record<Level, number>>;
+    wordsWithChoice: number;
+    am: number;
+    ex: number;
+    choiceAbbr: number;
+    pc: number;
+    mePunct: number;
+    /** Line breaks by edition ("" for none) */
+    lineEditions: Record<string, number>;
+    /** Elements the shorthand has no syntax for, by name */
+    hidden: Record<string, number>;
+  };
+}
+
+/** A word whose XML was set in the word panel: its shorthand now, for `from..to` of the editor (UTF-16) */
+export interface WordXmlChange {
+  from: number;
+  to: number;
+  dsl: string;
+  lemma?: string | null;
+  msa?: string | null;
+}
+
+/** The XML of word `word` of the current imported document, as the last compile wrote it. */
+export async function importedWordXml(word: number): Promise<string> {
+  return invoke("imported_word_xml", { word });
+}
+
+/** Sets the XML of word `word` of the current imported document (the word panel's XML tab). */
+export async function setImportedWordXml(word: number, xml: string): Promise<WordXmlChange> {
+  return invoke("set_imported_word_xml", { word, xml });
+}
+
+/** An element of the file as the word panel's Markup tab shows it. */
+export interface ElementInfo {
+  name: string;
+  /** How many elements of the same name come before it in the body */
+  ordinal: number;
+  /** "around": the word is in it; "inside": in the word; "before": between the word and the token before it */
+  place: "around" | "inside" | "before";
+  attributes: [string, string][];
+  /** Attributes the shorthand writes (a break's `n`) */
+  fixed: string[];
+}
+
+/**
+ * Makes a new document's file: `xml`, compiled once from the template and the
+ * shorthand so far, is staged like an imported file and edited as its tree
+ * from then on. `dsl` is kept where it reads as the file.
+ */
+export async function createDocument(
+  xml: string,
+  dsl: string,
+  template: { multiLevel: boolean; wordWrap: boolean; autoLineNumbers: boolean; wrapPages: boolean },
+): Promise<ImportResult> {
+  const { multiLevel, wordWrap, autoLineNumbers, wrapPages } = template;
+  return invoke("create_document", { xml, dsl, multiLevel, wordWrap, autoLineNumbers, wrapPages });
+}
+
+/** Writes the metadata editor's metadata into the current imported document's `<teiHeader>` (the editor then compiles). */
+export async function setImportedMetadata(metadataJson: string): Promise<void> {
+  return invoke("set_imported_metadata", { metadataJson });
+}
+
+/** The elements word `word` of the current imported document is in, has in it and has before it. */
+export async function importedWordElements(word: number): Promise<ElementInfo[]> {
+  return invoke("imported_word_elements", { word });
+}
+
+/** Sets the attributes of an element of the current imported document (the editor then compiles). */
+export async function setImportedElementAttributes(
+  name: string,
+  ordinal: number,
+  attributes: [string, string][],
+): Promise<void> {
+  return invoke("set_imported_element_attributes", { name, ordinal, attributes });
+}
+
+/** The XML of word `word` of the new document, as the last compile wrote it. */
+export async function nativeWordXml(word: number): Promise<string> {
+  return invoke("native_word_xml", { word });
+}
+
+/** Sets the XML of word `word` of the new document: compiles put it in place of the compiled word. */
+export async function setNativeWordXml(word: number, xml: string): Promise<WordXmlChange> {
+  return invoke("set_native_word_xml", { word, xml });
+}
+
+/** The normalized form the shorthand gives word `word` of the current imported document (null without a normalized level). */
+export async function importedDerivedNormalized(word: number, options: CompileImportedOptions): Promise<string | null> {
+  return invoke("imported_derived_normalized", {
+    word,
+    entitiesJson: options.entitiesJson ?? null,
+    normalizerJson: options.normalizerJson ?? null,
+    entityMappingsJson: options.entityMappingsJson ?? null,
+    customMappings: options.customMappings ?? null,
+    abbreviationsJson: options.abbreviationsJson ?? null,
+  });
+}
+
+/** Sets the levels new words of the current imported document get (after the editor confirmed them). */
+export async function setImportedLevels(levels: Level[], choice: boolean): Promise<Profile> {
+  return invoke("set_imported_levels", { levels, choice });
+}
+
+/** What an imported file says about one of its words */
+export interface ImportedWord {
+  lemma?: string;
+  msa?: string;
+  normalized?: string;
+  diplomatic?: string;
+  facsimile?: string;
+}
+
+/**
+ * The answer for a word of the original replaced by another word in the DSL:
+ * the same word corrected (keeps lemma, analysis, normalized form), or
+ * another word in its place (loses them).
+ */
+export type Decision = "same" | "different";
+
+/** A word of the original that the edited DSL replaces, with the lemma and analysis it would lose. */
+export interface WordRecord {
+  /** The original word's segment id; decisions are kept by it */
+  key: number;
+  /** The answer the XML follows until the editor decides */
+  suggestion: Decision;
+  decision: Decision | null;
+  /** The new word's number in the compiled text (as the previews count), if it is a <w> */
+  word: number | null;
+  /** Where the new word is in the DSL that was compiled (UTF-16) */
+  from: number;
+  to: number;
+  /** The old word's shorthand */
+  was: string;
+  /** The old word's XML as the file has it */
+  xml: string;
+  lemma: string | null;
+  msa: string | null;
+  /** The word has annotations other than its lemma; they stay with it whatever the answer */
+  annotated: boolean;
+  /** Levels kept as the file has them that may be out of date after the edit ("norm", "dipl") */
+  staleLevels?: string[];
+}
+
+/** Result from importing a file */
 export interface ImportResult {
   /** The DSL content extracted from the body */
   dsl: string;
   /** Metadata extracted from teiHeader (if present) */
   metadata?: import("$lib/types/metadata").Metadata;
-  /** Segment manifest for imported documents */
-  importedDocument?: ImportedDocument;
-  /** Original body XML for imported documents */
-  originalBodyXml?: string;
-  /** Original XML preamble (before <body>) */
-  originalPreamble?: string;
-  /** Original XML postamble (after </body>) */
-  originalPostamble?: string;
+  /** The imported document, staged in the backend (imported mode) */
+  imported?: StagedDocument;
+  /** The file's words, numbered as the rendered text counts them (imported mode) */
+  words?: ImportedWord[];
   /** Indicates imported mode for round-trip fidelity */
   isImportedMode?: boolean;
+  /** Why the file isn't well-formed XML, if it isn't (it was imported as libxml2 repaired it) */
+  notWellFormed?: string;
 }
 
 /**
  * Import a file and convert it to DSL format, also extracting metadata.
  * The backend runs this on a separate async task to avoid blocking the UI.
  */
-export async function importFile(path: string): Promise<ImportResult> {
-  return invoke("import_file", { path });
+export async function importFile(path: string, lineEdition?: string): Promise<ImportResult> {
+  return invoke("import_file", { path, lineEdition });
 }
 
 export async function listTemplates(): Promise<Template[]> {
@@ -188,6 +312,8 @@ export interface CompileOptions {
   customMappings?: Record<string, string>;
   lemmaMappingsJson?: string;
   annotationsJson?: string;
+  /** The abbreviation store's defaults (mark → expansion), which `{mark}` takes */
+  abbreviationsJson?: string;
 }
 
 export async function compileDsl(
@@ -212,6 +338,7 @@ export async function compileDsl(
     customMappings: options?.customMappings ?? null,
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     annotationsJson: options?.annotationsJson ?? null,
+    abbreviationsJson: options?.abbreviationsJson ?? null,
     guidance: guidance ?? null,
     xmlBase: xmlBase ?? null,
   });
@@ -224,26 +351,20 @@ export interface CompileImportedOptions {
   customMappings?: Record<string, string>;
   /** Confirmed lemmas by word number (written into the file's words) */
   lemmaMappingsJson?: string;
+  /** Words (by number) with annotations other than lemmas, which replaced words report */
+  annotatedWords?: number[];
+  /** All annotations, whose notes and attributes are written into the file's words */
+  annotationsJson?: string;
+  /** The abbreviation store's defaults (mark → expansion), which `{mark}` takes */
+  abbreviationsJson?: string;
 }
 
 /**
- * Loads the imported document into the backend (or clears it with `null`).
- * Sent once per document, so compiles only need to send the edited DSL.
+ * Makes the staged document with `handle` (from importing or opening it) the
+ * one compiles go to, or clears it with `null`.
  */
-export async function setImportedDocument(
-  document: {
-    segmentsJson: string;
-    originalBodyXml: string;
-    preamble: string;
-    postamble: string;
-  } | null,
-): Promise<void> {
-  return invoke("set_imported_document", {
-    segmentsJson: document?.segmentsJson ?? null,
-    originalBodyXml: document?.originalBodyXml ?? null,
-    preamble: document?.preamble ?? null,
-    postamble: document?.postamble ?? null,
-  });
+export async function setImportedDocument(handle: number | null): Promise<void> {
+  return invoke("set_imported_document", { handle });
 }
 
 /** An editor change: `from_a..to_a` of the previous DSL became `from_b..to_b` (UTF-16 offsets). */
@@ -283,11 +404,17 @@ export interface CompileResult {
    * are numbered by the previous compile (and sent so) until renumbered.
    */
   renumbering?: (number | null)[] | null;
+  /** Words of the previous compile that are gone: their annotations are kept aside under the ticket */
+  parked?: { word: number; ticket: string }[];
+  /** Words gone in an earlier compile that are back (moved), with their numbers now */
+  returned?: { ticket: string; word: number }[];
   /**
    * Words (by number) edited in the DSL whose lemma, analysis and normalized
    * form were kept from the original and should be reviewed
    */
   editedWords: number[];
+  /** Words of the original replaced by others in the DSL (imported documents) */
+  records: WordRecord[];
 }
 
 /** Compiles edited DSL against the document loaded with {@link setImportedDocument}. */
@@ -296,6 +423,7 @@ export async function compileImported(
   options?: CompileImportedOptions,
   guidance?: CompileGuidance,
   xmlBase?: number,
+  decisions?: Record<number, Decision>,
 ): Promise<CompileResult> {
   return invoke("compile_imported", {
     editedDsl,
@@ -305,6 +433,10 @@ export async function compileImported(
     customMappings: options?.customMappings ?? null,
     lemmaMappingsJson: options?.lemmaMappingsJson ?? null,
     guidance: guidance ?? null,
+    decisions: decisions ?? null,
+    annotatedWords: options?.annotatedWords?.length ? options.annotatedWords : null,
+    annotationsJson: options?.annotationsJson ?? null,
+    abbreviationsJson: options?.abbreviationsJson ?? null,
     xmlBase: xmlBase ?? null,
   });
 }
@@ -393,8 +525,6 @@ export interface OnpEntry {
 
 export interface OnpSense {
   definition: string;
-  key: string;
-  def: string;
 }
 
 export interface OnpFullEntry {
@@ -544,17 +674,20 @@ export interface ProjectData {
   metadata?: import("$lib/types/metadata").Metadata;
   /** Full annotation set (new in v1.2) */
   annotations?: import("$lib/types/annotations").AnnotationSet;
-  /** Imported document manifest (new in v1.3) */
-  imported_document?: ImportedDocument;
-  /** Original body XML for imported files (new in v1.3) */
-  original_body_xml?: string;
-  /** Original XML preamble (new in v1.4) */
-  original_preamble?: string;
-  /** Original XML postamble (new in v1.4) */
-  original_postamble?: string;
+  /** The imported document, staged in the backend (imported projects) */
+  imported?: StagedDocument;
+  /** Annotations dropped because their words weren't found in the saved file any more */
+  unplacedAnnotations?: number;
+  /** The abbreviation store (2.0) */
+  abbreviations?: Record<string, string[]>;
+  /** Places of the shorthand rewritten to read as the file is imported now (a project saved with older rules) */
+  rewritten?: number;
 }
 
-// Save project archive (.teis)
+/**
+ * Save project archive (.teis). Resolves to why the compiled TEI-XML isn't
+ * well-formed, if it isn't (the project is saved all the same).
+ */
 export async function saveProject(
   path: string,
   source: string,
@@ -563,11 +696,11 @@ export async function saveProject(
   templateId: string,
   metadataJson?: string,
   annotationsJson?: string,
-  segmentsJson?: string,
-  originalBodyXml?: string,
-  originalPreamble?: string,
-  originalPostamble?: string,
-): Promise<void> {
+  /** The answers for replaced words, for an imported document (the backend has the rest of it) */
+  decisionsJson?: string,
+  /** The abbreviation store */
+  abbreviationsJson?: string,
+): Promise<string | null> {
   return invoke("save_project", {
     path,
     source,
@@ -576,10 +709,8 @@ export async function saveProject(
     templateId,
     metadataJson,
     annotationsJson,
-    segmentsJson,
-    originalBodyXml,
-    originalPreamble,
-    originalPostamble,
+    decisionsJson,
+    abbreviationsJson,
   });
 }
 
@@ -686,6 +817,15 @@ export async function exportPdf(html: string, path: string): Promise<void> {
 
 export async function cancelPdfExport(): Promise<void> {
   return invoke("cancel_pdf_export");
+}
+
+/**
+ * Shows a system notification if the window doesn't have focus, e.g. when an export
+ * finishes in the background. Never fails: a notification that can't be shown is
+ * only logged.
+ */
+export async function notifyInBackground(title: string, body: string): Promise<void> {
+  await invoke("notify", { title, body }).catch(() => {});
 }
 
 /** Used by the hidden print window only. */

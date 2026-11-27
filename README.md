@@ -21,7 +21,7 @@ the encoding recommendations of the [Medieval Nordic Text Archive (MENOTA)](http
 and was developed with Old Norse material in mind, though the shorthand itself is not
 specific to any language.
 
-**Status:** beta, version 0.7.0. Saga-Scribe is usable for full-length manuscripts, but
+**Status:** beta, version 0.8.0. Saga-Scribe is usable for full-length manuscripts, but
 features and the interface may still change between versions. Projects saved with older
 versions remain loadable. Please [report problems to the issue tracker](https://github.com/motheatensoul/saga-scribe/issues).
 
@@ -151,16 +151,21 @@ Press **F1** in the app for the shorthand reference and keyboard shortcuts. The
 | ------------------------ | ------------------------------------------ | -------------------------------------------------------- |
 | `//` or `//3`            | Line break (optionally numbered)           | `<lb/>`, `<lb n="3"/>`                                   |
 | `///1v`                  | Page break                                 | `<pb n="1v"/>`                                           |
+| `//{56r}`, `///{fol. 1r}` | Break number with letters or spaces       | `<lb n="56r"/>`, `<pb n="fol. 1r"/>`                     |
 | `.p`                     | New paragraph (on its own)                 | `</p><p>`                                                |
-| `.abbr[kgs]{konungs}`    | Abbreviation with its expansion            | `<choice><abbr>…</abbr><expan>…</expan></choice>`        |
+| `k{:bar:=onun}gs`        | Abbreviation mark and its expansion        | `k<am>&bar;</am>gs` (facs), `k<ex>onun</ex>gs` (dipl)   |
+| `hæn{=n}aR`              | Expansion without a mark                   | `hæn<ex>n</ex>aR`                                        |
+| `.abbr[kgs]{konungs}`    | Whole-word abbreviation (older form)       | `<choice><abbr>…</abbr><expan>…</expan></choice>`        |
 | `[...]` or `[...3]`      | Gap, optionally with its length in letters | `<gap reason="illegible" quantity="3" unit="chars"/>`    |
 | `[...3<ok>]`             | Gap with supplied text                     | `<gap …/><supplied>ok</supplied>`                        |
-| `<text>`                 | Supplied text                              | `<supplied>text</supplied>`                              |
-| `-{text}-`               | Deletion                                   | `<del>text</del>`                                        |
-| `+{text}+`               | Addition                                   | `<add>text</add>`                                        |
-| `?{text}?`               | Unclear reading                            | `<unclear>text</unclear>`                                |
+| `<text>`                 | Supplied text (may contain shorthand)      | `<supplied>text</supplied>`                              |
+| `-{text}-`               | Deletion (may contain shorthand)           | `<del>text</del>`                                        |
+| `+{text}+`               | Addition (may contain shorthand)           | `<add>text</add>`                                        |
+| `?{text}?`               | Unclear reading (may contain shorthand)    | `<unclear>text</unclear>`                                |
 | `^{text}`                | Note                                       | `<note>text</note>`                                      |
 | `:name:`                 | Special character (MENOTA/MUFI entity)     | `&name;`                                                 |
+| `#.x.#`                  | Numeral                                    | `<num>.x.</num>`                                         |
+| `ꝼæ\;ðꝛ`                 | Character as text, part of the word        | `<w>ꝼæ;ðꝛ</w>`                                           |
 | `hár~//2fagra`           | Word continues over a line (`~///` page)   | `<w>hár<lb n="2"/>fagra</w>`                             |
 | `upp~haf`                | One word written as two                    | `<w>upp haf</w>`                                         |
 | `\|`                     | Word boundary with no space                |                                                          |
@@ -198,7 +203,11 @@ bun run test        # frontend (Vitest) and Rust tests
 bun run check:all   # svelte-check and cargo clippy
 ```
 
-A Nix flake for the development environment is planned.
+The recommended development environment is [Nix](https://nixos.org/) (with flakes
+enabled): `nix develop` gives a shell with bun, the pinned Rust toolchain and the system
+libraries, on Linux and Apple Silicon macOS. Run `bun install` and the commands above in
+it, or one at a time with `nix develop -c bun run check:all`. Without Nix, install the
+prerequisites listed above yourself.
 
 Saga-Scribe is written in Svelte 5 and TypeScript (frontend, with CodeMirror 6 as the
 editor) and Rust (the shorthand compiler, TEI import and everything else on the backend),

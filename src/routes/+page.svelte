@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { onMount, tick } from "svelte";
+    import { onMount, tick, untrack } from "svelte";
     import { Splitpanes, Pane } from "svelte-splitpanes";
     import { open } from "@tauri-apps/plugin-dialog";
     import { saveAs } from "$lib/utils/saveDialog";
@@ -8,6 +8,11 @@
     import Toolbar from "$lib/components/Toolbar.svelte";
     import TemplateEditor from "$lib/components/TemplateEditor.svelte";
     import MetadataEditor from "$lib/components/MetadataEditor.svelte";
+    import ImportProfileDialog from "$lib/components/ImportProfileDialog.svelte";
+    import WordXmlPanel from "$lib/components/WordXmlPanel.svelte";
+    import WordMarkupPanel from "$lib/components/WordMarkupPanel.svelte";
+    import AbbreviationsDialog from "$lib/components/AbbreviationsDialog.svelte";
+    import { abbreviationStore } from "$lib/stores/abbreviations";
     import EntityBrowser from "$lib/components/EntityBrowser.svelte";
     import Lemmatizer from "$lib/components/Lemmatizer.svelte";
     import AnnotationPanel from "$lib/components/AnnotationPanel.svelte";
@@ -19,37 +24,46 @@
     import { editor } from "$lib/stores/editor";
     import { templateStore } from "$lib/stores/template";
     import { entityStore } from "$lib/stores/entities";
-    import { wordNormalizedForm, wordsWithDiplomaticForm } from "$lib/utils/wordNorm";
+    import { wordNormalizedForm, wordsWithDiplomaticForm, wordForms } from "$lib/utils/wordNorm";
     import { settings } from "$lib/stores/settings";
     import { stylesheetStore } from "$lib/stores/stylesheets";
-    import { errorStore, errorCounts } from "$lib/stores/errors";
+    import { errorStore } from "$lib/stores/errors";
     import { validationStore } from "$lib/stores/validation";
     import * as metadataStore from "$lib/stores/metadata.svelte";
-    import { importedStore } from "$lib/stores/imported.svelte";
+    import { importedStore, openRecordsNotice } from "$lib/stores/imported.svelte";
+    import { nextMarkedWord, wordReveal } from "$lib/stores/wordReveal.svelte";
     import { compileSession } from "$lib/stores/compileSession";
     import { renumberWord } from "$lib/stores/renumber";
-    import { preservationStore } from "$lib/stores/preservation.svelte";
+    import { annotatedWords } from "$lib/types/annotations";
     import type { Metadata } from "$lib/types/metadata";
     import { isMetadataEmpty } from "$lib/types/metadata";
     import {
         compileDsl,
+        createDocument,
+        type CompileOptions,
         saveProject,
         openProject,
         exportTei,
         exportHtml,
         exportPdf,
         cancelPdfExport,
+        notifyInBackground,
         pdfExportSupported,
         openFile,
         importFile,
         exportInflections,
         generateTeiHeader,
+        setImportedMetadata,
         validateXml,
+        setImportedLevels,
+        importedDerivedNormalized,
     } from "$lib/tauri";
-    import type { ImportedDocument } from "$lib/tauri";
+    import type { Profile, StagedDocument, WordXmlChange } from "$lib/tauri";
     import { loadAppResources } from "$lib/startup";
     import { perfEnabled, perfRecord, perfTime, perfTimeSync } from "$lib/perf";
     import { importedLemmas } from "$lib/utils/importedLemmas";
+    import { dialogFocus } from "$lib/utils/dialogFocus";
+    import { tablist } from "$lib/utils/tabs";
     import { generateStandaloneHtml } from "$lib/utils/htmlExport";
     import { printToPdf, withPrintStyles } from "$lib/utils/pdfExport";
     import {
@@ -68,11 +82,6 @@
 
     //Icon imports
     import {
-        BookDashed,
-        ScrollText,
-        MessageCircleWarning,
-        FileCheck,
-        FileText,
         Undo,
         Redo,
         Search,
@@ -85,7 +94,7 @@
     let showErrorPanel = $state(false);
     let showValidationPanel = $state(false);
     let showLemmatizer = $state(false);
-    let wordPanelTab = $state<"lemmatize" | "annotate">("lemmatize");
+    let wordPanelTab = $state<"lemmatize" | "annotate" | "xml" | "markup">("lemmatize");
     let showSettings = $state(false);
     let showHelp = $state(false);
     let selectedWordFacsimile = $state<string | null>(null);
@@ -121,10 +130,92 @@
     let entityMappingsJson = $state<string | null>(null);
     let isImporting = $state(false);
     let showMetadataEditor = $state(false);
+    /** An imported file's profile, shown for confirmation after importing */
+    let importProfile = $state<Profile | null>(null);
+    let showAbbreviations = $state(false);
+
+    // An abbreviation added to the store (or a default changed): compile
+    // again, so `{mark}` takes it (not when a document's store is loaded,
+    // which a compile follows anyway)
+    let storeChanges = 0;
+    abbreviationStore.subscribe(() => {
+        if (storeChanges++ > 0 && abbreviationStore.changedByEditor()) untrack(() => void compileNow());
+    });
     let currentMetadata = $state<Metadata | undefined>(undefined);
 
     onMount(async () => {
+        // An answer for a replaced or deleted word is applied by compiling
+        importedStore.onDecided = () => void compileNow();
         ({ normalizerJson, entityMappingsJson } = await loadAppResources());
+    });
+
+    /**
+     * Makes a new document's file from `template` and the shorthand so far
+     * (compiled once, with the metadata, lemmas and annotations), and stages
+     * it: the document is edited as its tree from then on. Returns the
+     * shorthand as the file reads (the editor has it), or null.
+     */
+    async function createFromTemplate(
+        content: string,
+        template: NonNullable<typeof $templateStore.active>,
+        entityOptions: CompileOptions,
+    ): Promise<string | null> {
+        const currentMetadata = metadataStore.getMetadata();
+        let header = template.header;
+        if (currentMetadata && !isMetadataEmpty(currentMetadata)) {
+            try {
+                header = await generateTeiHeader(JSON.stringify(currentMetadata), template.multiLevel);
+            } catch (e) {
+                console.warn("Failed to generate TEI header from metadata, using template header:", e);
+            }
+        }
+        try {
+            return await createFrom(content, template, entityOptions, header);
+        } catch (e) {
+            console.warn("A new document's file couldn't be made:", e);
+            return null;
+        }
+    }
+
+    async function createFrom(
+        content: string,
+        template: NonNullable<typeof $templateStore.active>,
+        entityOptions: CompileOptions,
+        header: string,
+    ): Promise<string | null> {
+        const annotationSet = annotationStore.getSet();
+        const writes = annotationStore.getLemmaWrites();
+        const compiled = await compileDsl(content, header, template.footer, {
+            wordWrap: template.wordWrap,
+            autoLineNumbers: template.autoLineNumbers,
+            multiLevel: template.multiLevel,
+            wrapPages: template.wrapPages,
+            ...entityOptions,
+            lemmaMappingsJson: Object.keys(writes).length > 0 ? JSON.stringify(writes) : undefined,
+            abbreviationsJson: abbreviationStore.defaultsJson(),
+            annotationsJson: annotationSet.annotations.length > 0 ? JSON.stringify(annotationSet) : undefined,
+        });
+        if (!compiled.xml) return null;
+        const created = await createDocument(compiled.xml, content, template);
+        if (!created.imported) return null;
+        importedStore.load(created.imported, "new");
+        createdTemplateId = template.id;
+        // The shorthand as the file reads, where it doesn't already
+        if (created.dsl !== content) editorComponent?.setContent(created.dsl);
+        return created.dsl;
+    }
+
+    /** The template a new document's file was made from: another one makes it anew */
+    let createdTemplateId: string | null = null;
+    $effect(() => {
+        const id = $templateStore.active?.id ?? null;
+        untrack(() => {
+            if (importedStore.isImportedMode && importedStore.origin === "new" && createdTemplateId !== null && id !== createdTemplateId) {
+                createdTemplateId = null;
+                importedStore.reset();
+                void compileNow();
+            }
+        });
     });
 
     // Compile without updating UI - returns the result
@@ -152,14 +243,31 @@
                 return json;
             });
 
+        // A new document: its file is made from the template once, and from
+        // then on it is edited as its XML, as every document is
+        if (!importedStore.isImportedMode) {
+            // (If the shorthand doesn't compile, the compile below says why)
+            const created = await createFromTemplate(content, template, entityOptions);
+            if (created !== null) content = created;
+        }
         if (importedStore.isImportedMode) {
             return perfTime(
                 "compile.roundtrip",
                 () =>
-                    importedStore.compile(content, () => ({
-                        ...entityOptions,
-                        lemmaMappingsJson: lemmaMappingsJson(),
-                    })),
+                    importedStore.compile(content, () => {
+                        const annotationSet = annotationStore.getSet();
+                        const words = annotatedWords(annotationSet);
+                        // Notes and other annotations go into the file, as in a new
+                        // document (lemmas go separately, as mappings)
+                        const others = annotationSet.annotations.filter((a) => a.type !== "lemma");
+                        return {
+                            ...entityOptions,
+                            lemmaMappingsJson: lemmaMappingsJson(),
+                            abbreviationsJson: abbreviationStore.defaultsJson(),
+                            annotatedWords: words,
+                            annotationsJson: others.length > 0 ? JSON.stringify({ ...annotationSet, annotations: others }) : undefined,
+                        };
+                    }),
                 { mode: "imported", dsl_chars: content.length },
             );
         }
@@ -191,6 +299,7 @@
                     wrapPages: template.wrapPages,
                     ...entityOptions,
                     lemmaMappingsJson: lemmaMappingsJson(),
+                    abbreviationsJson: abbreviationStore.defaultsJson(),
                     annotationsJson:
                         annotationSet.annotations.length > 0 ? JSON.stringify(annotationSet) : undefined,
                 },
@@ -202,10 +311,11 @@
     }
 
     // Words inserted or deleted: everything stored by word number moves along
-    compileSession.onRenumbering = (map) => {
-        perfTimeSync("compile.renumber_annotations", () => annotationStore.renumber(map), { words: map.length });
+    compileSession.onRenumbering = (map, parked, returned) => {
+        perfTimeSync("compile.renumber_annotations", () => annotationStore.renumber(map, parked, returned), { words: map.length });
         const move = (index: number) => renumberWord(map, index) ?? -1;
         if (selectedWordIndex >= 0) selectedWordIndex = move(selectedWordIndex);
+        if (lastReviewedWord >= 0) lastReviewedWord = move(lastReviewedWord);
         if (spanEndWordIndex !== null) {
             const end = move(spanEndWordIndex);
             spanEndWordIndex = end >= 0 ? end : null;
@@ -300,6 +410,12 @@
         showEntityBrowser = false;
     }
 
+    /** A break in the rendered text: the word after it, on the Markup tab */
+    function handleBreakClick(facsimile: string, diplomatic: string, wordIndex: number, element: HTMLElement) {
+        handleWordClick(facsimile, diplomatic, wordIndex, element);
+        wordPanelTab = "markup";
+    }
+
     function handleWordClick(
         facsimile: string,
         diplomatic: string,
@@ -320,29 +436,69 @@
         }
     }
 
+    /** The word F8 last opened, which the next F8 goes on from */
+    let lastReviewedWord = -1;
+
+    /**
+     * F8 / Shift+F8: opens the word panel on the next (previous) word marked
+     * for review in the previews (edited, or replaced and not yet answered),
+     * and shows the word in them.
+     */
+    function reviewNextWord(direction: 1 | -1) {
+        const from = selectedWordIndex >= 0 ? selectedWordIndex : lastReviewedWord;
+        const word = nextMarkedWord(importedStore.editedWords, from, direction);
+        if (word === null) {
+            errorStore.info("Review", "No words are marked for review.");
+            return;
+        }
+        openWordForReview(word);
+    }
+
+    /** Opens the word panel's Lemmatize tab on `word` and shows the word in the previews. */
+    function openWordForReview(word: number) {
+        const forms = wordForms(previewContent, word, $entityStore.entities);
+        if (!forms) return;
+        selectedWordFacsimile = forms.facsimile;
+        selectedWordDiplomatic = forms.diplomatic;
+        selectedWordIndex = word;
+        spanEndWordIndex = null;
+        wordPanelTab = "lemmatize";
+        showLemmatizer = true;
+        lastReviewedWord = word;
+        wordReveal.show(word);
+    }
+
+    /** The normalized form the shorthand gives the selected word (imported files) */
+    function deriveNormalized(): Promise<string | null> {
+        return importedDerivedNormalized(selectedWordIndex, {
+            entitiesJson: entitiesJson ?? undefined,
+            normalizerJson: normalizerJson ?? undefined,
+            entityMappingsJson: entityMappingsJson ?? undefined,
+            customMappings: $entityStore.customMappings,
+            abbreviationsJson: abbreviationStore.defaultsJson(),
+        });
+    }
+
+    /** A word's XML was set in the word panel: its shorthand and lemma follow */
+    function handleWordXmlApplied(change: WordXmlChange) {
+        const word = selectedWordIndex;
+        if (change.lemma && change.msa) {
+            sessionLemmaStore.confirmWithHistory(word, { lemma: change.lemma, msa: change.msa });
+        } else if ($lemmaMappings.mappings[word]) {
+            sessionLemmaStore.unconfirmWithHistory(word, true, true);
+        }
+        editorComponent?.replaceRange(change.from, change.to, change.dsl);
+        // Compile even if the shorthand reads as before (only hidden markup changed)
+        void compileNow();
+        errorStore.info("Word", `Set the XML of word #${word}`);
+    }
+
     function handleLemmatizerClose() {
         showLemmatizer = false;
         selectedWordFacsimile = null;
         selectedWordDiplomatic = null;
         selectedWordIndex = -1;
         spanEndWordIndex = null;
-    }
-
-    let warnedAnnotationsNotExported = false;
-
-    /**
-     * Imported-mode output is spliced from the original XML: confirmed lemmas
-     * are written into it, other annotations (notes, semantic, paleographic)
-     * would add markup the file doesn't have, so they stay in the project.
-     * Say so once per session.
-     */
-    function warnIfAnnotationsNotExported() {
-        if (!importedStore.isImportedMode || warnedAnnotationsNotExported) return;
-        warnedAnnotationsNotExported = true;
-        errorStore.warning(
-            "Annotations",
-            "On an imported TEI file, lemmas are written into the file; notes and other annotations are kept in the project only.",
-        );
     }
 
     /** A lemma or annotation changed: shows it in the output right away */
@@ -353,7 +509,6 @@
     }
 
     async function handleAnnotationSave() {
-        warnIfAnnotationsNotExported();
         await handleLemmatizerSave();
     }
 
@@ -390,30 +545,18 @@
     const handleLemmaRedo = () => stepAnnotationHistory("Redo");
 
     /**
-     * Enters imported mode on `document` and the original file's parts, or
-     * leaves it if there's no document; returns whether it's imported mode.
+     * Enters imported mode on `document` (staged in the backend when it was
+     * imported or opened), or leaves it if there's none; returns whether it's
+     * imported mode.
      */
-    function setImportedDocument(
-        document: ImportedDocument | undefined,
-        originalBodyXml: string | undefined,
-        preamble = "",
-        postamble = "",
-    ): boolean {
-        if (!document || !originalBodyXml) {
+    function setImportedDocument(document: StagedDocument | undefined): boolean {
+        if (!document) {
             importedStore.reset();
-            preservationStore.clear();
+            abbreviationStore.clear();
             return false;
         }
-        importedStore.load({
-            segments: document.segments,
-            spans: document.spans,
-            originalBodyXml,
-            originalPreamble: preamble,
-            originalPostamble: postamble,
-            isMenota: document.is_menota ?? false,
-            dslRules: document.dsl_rules ?? 0,
-        });
-        preservationStore.setSections({ preamble, postamble });
+        importedStore.load(document);
+        abbreviationStore.load(document.abbreviations);
         return true;
     }
 
@@ -466,16 +609,24 @@
                     metadataStore.resetMetadata();
                 }
 
-                setImportedDocument(
-                    project.imported_document,
-                    project.original_body_xml,
-                    project.original_preamble,
-                    project.original_postamble,
-                );
+                // A new document's store comes with the project
+                if (!setImportedDocument(project.imported)) abbreviationStore.load(project.abbreviations);
 
                 await compileNow(project.source);
 
                 errorStore.info("Project", `Opened project from ${pathStr}`);
+                if (project.unplacedAnnotations) {
+                    errorStore.warning(
+                        "Project",
+                        `${project.unplacedAnnotations} annotation(s) were left out: their words aren't in the saved file any more (it was changed outside Saga-Scribe).`,
+                    );
+                }
+                if (project.rewritten) {
+                    errorStore.info(
+                        "Project",
+                        `${project.rewritten} unedited place(s) of the shorthand were rewritten to read as this version imports the file. Save the project to keep them so.`,
+                    );
+                }
             } else {
                 // Open plain DSL file (backwards compatibility)
                 const file = await openFile(pathStr);
@@ -486,7 +637,7 @@
                 annotationHistory.clear();
                 sessionLemmaStore.clear();
                 importedStore.reset();
-                preservationStore.clear();
+                abbreviationStore.clear();
 
                 await compileNow(file.content);
 
@@ -530,19 +681,11 @@
             const metadataJson = currentMetadata
                 ? JSON.stringify(currentMetadata)
                 : undefined;
-            const segmentsJson = importedStore.isImportedMode
-                ? importedStore.buildManifestJson()
+            // An imported document's file and manifest are in the backend
+            const decisionsJson = importedStore.isImportedMode
+                ? JSON.stringify(importedStore.decisions)
                 : undefined;
-            const originalBodyXml = importedStore.isImportedMode
-                ? importedStore.originalBodyXml
-                : undefined;
-            const originalPreamble = importedStore.isImportedMode
-                ? importedStore.originalPreamble
-                : undefined;
-            const originalPostamble = importedStore.isImportedMode
-                ? importedStore.originalPostamble
-                : undefined;
-            await saveProject(
+            const notWellFormed = await saveProject(
                 path,
                 $editor.content,
                 previewContent,
@@ -550,17 +693,30 @@
                 template.id,
                 metadataJson,
                 annotationsJson,
-                segmentsJson,
-                originalBodyXml,
-                originalPreamble,
-                originalPostamble,
+                decisionsJson,
+                JSON.stringify($abbreviationStore),
             );
 
             editor.setFile(path, $editor.content);
             errorStore.info("Project", `Saved project to ${path}`);
+            if (notWellFormed) {
+                errorStore.warning(
+                    "Project",
+                    "The project was saved, but its compiled TEI-XML is not well-formed, so exporting it will fail. Please report this as a bug.",
+                    notWellFormed,
+                );
+            }
+            warnOpenRecords("Project");
         } catch (e) {
             errorStore.error("Save", `Failed to save project: ${e}`);
         }
+    }
+
+    /** Says how many replaced words are still to be decided, after saving or exporting */
+    function warnOpenRecords(category: string) {
+        if (!importedStore.isImportedMode) return;
+        const notice = openRecordsNotice(importedStore.openRecords.length);
+        if (notice) errorStore.warning(category, notice);
     }
 
     /** The active template; logs why `action` can't go ahead without one */
@@ -602,6 +758,7 @@
 
             await exportTei(path, previewContent);
             errorStore.info("Export", `Exported TEI-XML to ${path}`);
+            warnOpenRecords("Export");
         } catch (e) {
             errorStore.error("Export", `Failed to export: ${e}`);
         }
@@ -647,24 +804,28 @@
 
     /**
      * Runs an export behind the progress overlay. The work yields between steps,
-     * so the UI stays painted and the user can cancel.
+     * so the UI stays painted and the user can cancel. A task that finishes the export
+     * itself returns where it went, for a system notification if the window is in the
+     * background meanwhile.
      */
     async function withExportProgress(
         what: string,
-        task: (signal: AbortSignal) => Promise<void>,
+        task: (signal: AbortSignal) => Promise<string | void>,
     ) {
         const controller = new AbortController();
         exportController = controller;
         exportProgress = "Starting…";
         const started = performance.now();
         try {
-            await task(controller.signal);
+            const done = await task(controller.signal);
             perfRecord("export", performance.now() - started, { format: what });
+            if (done) void notifyInBackground(`${what} export finished`, done);
         } catch (e) {
             if (controller.signal.aborted) {
                 errorStore.info("Export", `${what} export cancelled`);
             } else {
                 errorStore.error("Export", `Failed to export ${what}: ${e}`);
+                void notifyInBackground(`${what} export failed`, String(e));
             }
         } finally {
             exportProgress = null;
@@ -716,6 +877,7 @@
             exportProgress = "Writing file…";
             await exportHtml(path, fullHtml);
             errorStore.info("Export", `Exported HTML to ${path}`);
+            return `Exported HTML to ${path}`;
         });
     }
 
@@ -761,6 +923,7 @@
                 }
                 signal.throwIfAborted();
                 errorStore.info("Export", `Exported PDF to ${path}`);
+                return `Exported PDF to ${path}`;
             } else {
                 exportProgress = "Laying out pages…";
                 await printToPdf(fullHtml, { pageSize: "A4" });
@@ -784,8 +947,15 @@
             ],
         });
         if (!path) return;
+        await importPath(path as string);
+    }
 
-        const pathStr = path as string;
+    /** The file imported last, for importing it again with another lineation */
+    let lastImportPath: string | null = null;
+
+    /** Imports the file at `pathStr`; `lineEdition` chooses the lineation `//n` shows ("" for all) */
+    async function importPath(pathStr: string, lineEdition?: string) {
+        lastImportPath = pathStr;
         isImporting = true;
 
         // Yield to let browser paint spinner before starting work
@@ -793,23 +963,25 @@
         await new Promise((resolve) => setTimeout(resolve, 16));
 
         try {
-            const result = await importFile(pathStr);
+            const result = await importFile(pathStr, lineEdition);
 
             // Clear history and annotations
             annotationHistory.clear();
             sessionLemmaStore.clear();
             clearTimeout(compileTimeout);
 
-            const imported = result.isImportedMode ? result.importedDocument : undefined;
-            if (
-                setImportedDocument(
-                    imported,
-                    result.originalBodyXml,
-                    result.originalPreamble,
-                    result.originalPostamble,
-                )
-            ) {
-                const lemmas = importedLemmas(imported!.segments, imported!.is_menota ?? false);
+            if (result.notWellFormed) {
+                errorStore.warning(
+                    "Import",
+                    "The file is not well-formed XML. It was imported as the XML parser repaired it, so check the text where the error is.",
+                    result.notWellFormed,
+                );
+            }
+
+            const imported = result.isImportedMode ? result.imported : undefined;
+            if (setImportedDocument(imported)) {
+                importProfile = imported?.profile ?? null;
+                const lemmas = importedLemmas(result.words ?? [], imported!.isMenota);
                 if (lemmas.missingLemmas > 0) {
                     errorStore.warning("Import", `Missing lemma for ${lemmas.missingLemmas} word(s); left empty.`);
                 }
@@ -850,12 +1022,14 @@
             } else {
                 errorStore.info("Import", `Imported content from ${pathStr}`);
             }
+            void notifyInBackground("Import finished", `Imported ${pathStr}`);
 
             if (compiled !== null) {
                 previewContent = compiled;
             }
         } catch (e) {
             errorStore.error("Import", `Failed to import: ${e}`);
+            void notifyInBackground("Import failed", String(e));
         } finally {
             isImporting = false;
         }
@@ -863,10 +1037,14 @@
 
     // Keyboard shortcuts
     function handleKeydown(event: KeyboardEvent) {
+        // A key the editor (or a dialog) already handled is theirs: in the editor,
+        // Ctrl+Shift+Z redoes a text change rather than undoing a lemma.
+        if (event.defaultPrevented) return;
+
         // Escape: Close any open modal (a11y requirement)
         if (event.key === "Escape") {
             if (showLemmatizer) {
-                showLemmatizer = false;
+                handleLemmatizerClose();
                 return;
             }
             if (showEntityBrowser) {
@@ -890,6 +1068,13 @@
                 return;
             }
             // Note: showSettings and showHelp are handled by their own components
+            return;
+        }
+
+        // F8 / Shift+F8: next / previous word marked for review, in the word panel
+        if (event.key === "F8" && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            event.preventDefault();
+            reviewNextWord(event.shiftKey ? -1 : 1);
             return;
         }
 
@@ -942,8 +1127,13 @@
         onexportdict={handleExportDictionary}
         onexporthtml={handleExportHtml}
         onexportpdf={handleExportPdf}
+        ontemplates={() => (showTemplateManager = true)}
+        onmetadata={() => (showMetadataEditor = true)}
+        onabbreviations={() => (showAbbreviations = true)}
+        onvalidate={() => (showValidationPanel = true)}
         onundo={handleLemmaUndo}
         onredo={handleLemmaRedo}
+        onlogs={() => (showErrorPanel = true)}
         onsettings={() => (showSettings = true)}
         onhelp={() => (showHelp = true)}
     />
@@ -959,90 +1149,64 @@
                             <span class="text-md xl:text-lg font-bold">
                                 DSL Editor
                             </span>
-                            {#if importedStore.isImportedMode}
-                                <span class="badge badge-outline badge-sm text-xs">
-                                    Imported
-                                </span>
-                            {/if}
                         </div>
-                        <div class="flex gap-1">
+                        <!-- Only actions on the editor's text; document and
+                             application actions are in the toolbar -->
+                        <div class="flex items-center gap-1" role="group" aria-label="Editor">
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Undo (Ctrl+Z)"
+                                aria-label="Undo"
                                 onclick={() =>
                                     editorComponent?.triggerUndo()}
                             >
-                                <Undo class="size-3/4" />
+                                <Undo class="size-3/4" aria-hidden="true" />
                             </button>
                             <button
                                 class="btn btn-ghost btn-xs xl:btn-sm"
                                 title="Redo (Ctrl+Y)"
+                                aria-label="Redo"
                                 onclick={() =>
                                     editorComponent?.triggerRedo()}
                             >
-                                <Redo class="size-3/4" />
+                                <Redo class="size-3/4" aria-hidden="true" />
                             </button>
                             <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Search and Replace (Ctrl+F)"
+                                class="btn btn-ghost btn-xs xl:btn-sm text-xs xl:text-sm"
+                                class:btn-active={$settings.showEntityGlyphs}
+                                title="Show entities as characters"
+                                aria-label="Show entities as characters"
+                                aria-pressed={$settings.showEntityGlyphs}
                                 onclick={() =>
-                                    editorComponent?.triggerSearch()}
+                                    settings.update({ showEntityGlyphs: !$settings.showEntityGlyphs })}
                             >
-                                <Search class="size-3/4" />
+                                <span class="font-['Junicode']" aria-hidden="true">þ</span>
                             </button>
                             <div
                                 class="divider divider-horizontal mx-0 h-4 self-center"
                             ></div>
                             <button
+                                class="btn btn-ghost btn-xs xl:btn-sm"
+                                title="Search and Replace (Ctrl+F)"
+                                aria-label="Search and replace"
+                                onclick={() =>
+                                    editorComponent?.triggerSearch()}
+                            >
+                                <Search class="size-3/4" aria-hidden="true" />
+                            </button>
+                            <button
                                 class="btn btn-ghost btn-xs xl:btn-sm text-xs xl:text-sm"
                                 title="Insert entity"
+                                aria-label="Insert entity"
                                 onclick={() => (showEntityBrowser = true)}
                             >
-                                ꝥ
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Manage templates"
-                                onclick={() => (showTemplateManager = true)}
-                            >
-                                <BookDashed class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Edit manuscript metadata"
-                                onclick={() => (showMetadataEditor = true)}
-                            >
-                                <FileText class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                title="Validate XML"
-                                onclick={() => (showValidationPanel = true)}
-                            >
-                                <FileCheck class="size-3/4" />
-                            </button>
-                            <button
-                                class="btn btn-ghost btn-xs xl:btn-sm"
-                                class:text-error={$errorCounts.error > 0}
-                                title="View logs"
-                                onclick={() => (showErrorPanel = true)}
-                            >
-                                {#if $errorCounts.error > 0}
-                                    <MessageCircleWarning
-                                        size="14"
-                                        color="var(--color-error)"
-                                    />
-                                {:else}
-                                    <ScrollText
-                                        class="size-3/4"
-                                        color="var(--color-success)"
-                                    />
-                                {/if}
+                                <span aria-hidden="true">ꝥ</span>
                             </button>
                         </div>
                     </div>
                     <Editor
                         bind:this={editorComponent}
+                        showGlyphs={$settings.showEntityGlyphs}
                         onchanges={(changes) => compileSession.record(changes)}
                         onchange={handleEditorChange}
                     />
@@ -1053,6 +1217,7 @@
                     content={previewContent}
                     xslPath={activeStylesheetPath}
                     onwordclick={handleWordClick}
+                    onbreakclick={importedStore.isImportedMode ? handleBreakClick : undefined}
                 />
             </Pane>
         </Splitpanes>
@@ -1060,11 +1225,40 @@
 
     <TemplateEditor bind:isopen={showTemplateManager} />
 
+    <AbbreviationsDialog bind:isopen={showAbbreviations} />
+
+    <ImportProfileDialog
+        bind:profile={importProfile}
+        onconfirm={async (levels, choice, lineEdition) => {
+            try {
+                if (lineEdition !== undefined && lastImportPath) {
+                    // Another lineation: the shorthand changes, so the file is imported again
+                    await importPath(lastImportPath, lineEdition);
+                    importProfile = null;
+                }
+                await setImportedLevels(levels, choice);
+                errorStore.info("Import", `New words get the levels: ${levels.join(", ") || "none"}`);
+                await compileNow();
+            } catch (e) {
+                errorStore.error("Import", `Failed to set the levels: ${e}`);
+            }
+        }}
+    />
+
     <MetadataEditor
         bind:isopen={showMetadataEditor}
         bind:metadata={currentMetadata}
-        onSave={(meta) => {
+        onSave={async (meta) => {
             metadataStore.updateMetadata(meta);
+            // The header is the file's: the metadata goes into it
+            if (importedStore.isImportedMode) {
+                try {
+                    await setImportedMetadata(JSON.stringify(meta));
+                    await compileNow();
+                } catch (e) {
+                    errorStore.error("Metadata", `The metadata couldn't be written into the file's header: ${e}`);
+                }
+            }
         }}
     />
 
@@ -1076,7 +1270,14 @@
                 role="none"
                 onclick={() => (showEntityBrowser = false)}
             ></div>
-            <div class="modal-box max-w-4xl">
+            <div
+                class="modal-box max-w-4xl"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-labelledby="entity-browser-title"
+            >
                 <EntityBrowser
                     oninsert={handleEntityInsert}
                     onclose={() => (showEntityBrowser = false)}
@@ -1093,7 +1294,14 @@
                 role="none"
                 onclick={() => (showErrorPanel = false)}
             ></div>
-            <div class="modal-box max-w-3xl">
+            <div
+                class="modal-box max-w-3xl"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-labelledby="log-title"
+            >
                 <ErrorPanel onclose={() => (showErrorPanel = false)} />
             </div>
         </div>
@@ -1107,9 +1315,22 @@
                 role="none"
                 onclick={() => (showValidationPanel = false)}
             ></div>
-            <div class="modal-box max-w-3xl">
+            <div
+                class="modal-box max-w-3xl"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-labelledby="validation-title"
+            >
                 <ValidationPanel
                     xmlContent={previewContent}
+                    records={importedStore.isImportedMode ? importedStore.openRecords : []}
+                    recordsDsl={importedStore.recordsDsl}
+                    onopenword={(word) => {
+                        showValidationPanel = false;
+                        openWordForReview(word);
+                    }}
                     onclose={() => (showValidationPanel = false)}
                 />
             </div>
@@ -1124,29 +1345,82 @@
                 role="none"
                 onclick={handleLemmatizerClose}
             ></div>
-            <div class="modal-box max-w-2xl p-0">
+            <div
+                class="modal-box max-w-2xl p-0"
+                role="dialog"
+                aria-modal="true"
+                tabindex="-1"
+                {@attach dialogFocus}
+                aria-label="Word: {selectedWordFacsimile || selectedWordDiplomatic}"
+            >
                 <!-- Tabs -->
-                <div class="tabs tabs-boxed bg-base-200 rounded-none">
+                <div
+                    class="tabs tabs-boxed bg-base-200 rounded-none"
+                    role="tablist"
+                    aria-label="Word panel"
+                    {@attach tablist}
+                >
                     <button
                         type="button"
+                        id="word-tab-lemmatize"
                         class="tab"
                         class:tab-active={wordPanelTab === "lemmatize"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "lemmatize"}
+                        aria-controls="word-panel-lemmatize"
+                        tabindex={wordPanelTab === "lemmatize" ? 0 : -1}
                         onclick={() => wordPanelTab = "lemmatize"}
                     >
                         Lemmatize
                     </button>
                     <button
                         type="button"
+                        id="word-tab-annotate"
                         class="tab"
                         class:tab-active={wordPanelTab === "annotate"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "annotate"}
+                        aria-controls="word-panel-annotate"
+                        tabindex={wordPanelTab === "annotate" ? 0 : -1}
                         onclick={() => wordPanelTab = "annotate"}
                     >
                         Annotate
                     </button>
+                    <button
+                        type="button"
+                        id="word-tab-xml"
+                        class="tab"
+                        class:tab-active={wordPanelTab === "xml"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "xml"}
+                        aria-controls="word-panel-xml"
+                        tabindex={wordPanelTab === "xml" ? 0 : -1}
+                        onclick={() => wordPanelTab = "xml"}
+                    >
+                        XML
+                    </button>
+                    <button
+                        type="button"
+                        id="word-tab-markup"
+                        class="tab"
+                        class:tab-active={wordPanelTab === "markup"}
+                        role="tab"
+                        aria-selected={wordPanelTab === "markup"}
+                        aria-controls="word-panel-markup"
+                        tabindex={wordPanelTab === "markup" ? 0 : -1}
+                        onclick={() => wordPanelTab = "markup"}
+                    >
+                        Markup
+                    </button>
                 </div>
                 <!-- Tab content -->
                 <div class="p-4">
-                    <div class:hidden={wordPanelTab !== "lemmatize"}>
+                    <div
+                        id="word-panel-lemmatize"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-lemmatize"
+                        class:hidden={wordPanelTab !== "lemmatize"}
+                    >
                         {#key selectedWordIndex}
                             <Lemmatizer
                                 facsimile={selectedWordFacsimile || ""}
@@ -1155,10 +1429,16 @@
                                 wordIndex={selectedWordIndex}
                                 onclose={handleLemmatizerClose}
                                 onsave={handleLemmatizerSave}
+                                derive={importedStore.isImportedMode ? deriveNormalized : undefined}
                             />
                         {/key}
                     </div>
-                    <div class:hidden={wordPanelTab !== "annotate"}>
+                    <div
+                        id="word-panel-annotate"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-annotate"
+                        class:hidden={wordPanelTab !== "annotate"}
+                    >
                         <AnnotationPanel
                             facsimile={selectedWordFacsimile || ""}
                             diplomatic={selectedWordDiplomatic}
@@ -1168,6 +1448,34 @@
                             onsave={handleAnnotationSave}
                             onFindMatchingWords={findMatchingWords}
                         />
+                    </div>
+                    <div
+                        id="word-panel-xml"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-xml"
+                        class:hidden={wordPanelTab !== "xml"}
+                    >
+                        {#if wordPanelTab === "xml"}
+                            <WordXmlPanel
+                                wordIndex={selectedWordIndex}
+                                imported={importedStore.isImportedMode}
+                                onapplied={handleWordXmlApplied}
+                            />
+                        {/if}
+                    </div>
+                    <div
+                        id="word-panel-markup"
+                        role="tabpanel"
+                        aria-labelledby="word-tab-markup"
+                        class:hidden={wordPanelTab !== "markup"}
+                    >
+                        {#if wordPanelTab === "markup"}
+                            <WordMarkupPanel
+                                wordIndex={selectedWordIndex}
+                                imported={importedStore.isImportedMode}
+                                onapplied={() => void compileNow()}
+                            />
+                        {/if}
                     </div>
                 </div>
             </div>
@@ -1203,17 +1511,42 @@
         flex-shrink: 0;
     }
 
+    /* A grip in the middle: base-300 alone is too close to the panes' background to be
+       seen (needs 3:1); base-content at 60% keeps 3:1 in both themes */
+    :global(.splitpanes.themed .splitpanes__splitter::after) {
+        content: "";
+        position: absolute;
+        inset: 0;
+        margin: auto;
+        border-radius: 1px;
+        background-color: color-mix(in oklch, var(--color-base-content) 60%, transparent);
+    }
+
+    :global(.splitpanes.themed .splitpanes__splitter:hover::after) {
+        background-color: var(--color-primary-content);
+    }
+
+    :global(.splitpanes.themed.splitpanes--vertical > .splitpanes__splitter::after) {
+        width: 2px;
+        height: 2rem;
+    }
+
+    :global(.splitpanes.themed.splitpanes--horizontal > .splitpanes__splitter::after) {
+        width: 2rem;
+        height: 2px;
+    }
+
     :global(.splitpanes.themed .splitpanes__splitter:hover) {
         background-color: var(--color-primary);
     }
 
     :global(.splitpanes.themed.splitpanes--vertical > .splitpanes__splitter) {
-        width: 6px;
+        width: 8px;
         cursor: col-resize;
     }
 
     :global(.splitpanes.themed.splitpanes--horizontal > .splitpanes__splitter) {
-        height: 6px;
+        height: 8px;
         cursor: row-resize;
     }
 </style>

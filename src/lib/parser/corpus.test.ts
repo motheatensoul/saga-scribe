@@ -27,8 +27,15 @@ const NAMES: Record<string, string> = {
     Note: "Note",
     Unclear: "Unclear",
     Entity: "Entity",
+    Expansion: "Expansion",
+    Literal: "Literal",
+    Numeral: "Numeral",
     WordBoundary: "WordBoundary",
     CompoundJoin: "CompoundJoin",
+    ColumnBreak: "ColumnBreak",
+    HandShift: "HandShift",
+    Space: "Space",
+    Markup: "Markup",
 };
 
 /** Top-level constructs the grammar finds, in the corpus's terms */
@@ -47,9 +54,9 @@ function constructs(dsl: string): Construct[] {
     do {
         const { name, from, to } = cursor;
         // One token in the grammar, two constructs in the parser
-        if (name === "WordContinuationLineBreak" || name === "WordContinuationPageBreak") {
+        if (name.startsWith("WordContinuation")) {
             push("WordContinuation", from, from + 1);
-            push(name === "WordContinuationLineBreak" ? "LineBreak" : "PageBreak", from + 1, to);
+            push(name.slice("WordContinuation".length), from + 1, to);
         } else {
             push(NAMES[name] ?? `unexpected ${name}`, from, to);
         }
@@ -100,5 +107,38 @@ describe("the editor's grammar after edits", () => {
             fragments = TreeFragment.addTree(tree, fragments);
             expect(shape(tree)).toBe(shape(parser.parse(doc)));
         }
+    });
+});
+
+describe("markup in the editor's grammar", () => {
+    it("reads the content as shorthand, up to the markup's end", () => {
+        const dsl = ".q{a :et: .corr{b=c} *{d}*} :et:";
+        const names: string[] = [];
+        parser.parse(dsl).iterate({
+            enter: (node) => {
+                if (node.name !== "Document") names.push(`${node.name} ${dsl.slice(node.from, node.to)}`);
+            },
+        });
+        expect(names).toEqual([
+            "Markup .q{a :et: .corr{b=c} *{d}*}",
+            "MarkupOpen .q{",
+            "Text a ",
+            "Entity :et:",
+            "Text  ",
+            "Markup .corr{b=c}",
+            "MarkupOpen .corr{",
+            "Text b",
+            "MarkupMiddle =",
+            "Text c",
+            "MarkupClose }",
+            "Text  ",
+            "Markup *{d}*",
+            "MarkupOpen *{",
+            "Text d",
+            "MarkupClose }*",
+            "MarkupClose }",
+            "Text  ",
+            "Entity :et:",
+        ]);
     });
 });

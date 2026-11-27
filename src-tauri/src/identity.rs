@@ -129,6 +129,61 @@ pub fn renumbering(previous: &[WordKey], current: &[WordKey]) -> Option<Renumber
     Some(previous.iter().map(|key| numbers.get(key).copied()).collect())
 }
 
+/// A word gone in a compile, whose data the editor keeps aside under
+/// `ticket` in case it comes back.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ParkedWord {
+    /// Its number in the previous compile
+    pub word: u32,
+    pub ticket: String,
+}
+
+/// A word parked in an earlier compile that is back (moved: cut and pasted).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ReturnedWord {
+    pub ticket: String,
+    /// Its number now
+    pub word: u32,
+}
+
+/// The words gone in some compile, by key. A word that is moved elsewhere
+/// in two compiles (cut, then pasted) keeps its key but is missing from the
+/// compile between, so what the editor stores by word number for it (its
+/// annotations) would be dropped by the renumbering; parked, it comes back.
+#[derive(Debug, Default)]
+pub struct Parking(std::collections::HashSet<WordKey>);
+
+impl Parking {
+    /// The words of `previous` that `renumbered` drops, now parked, and
+    /// the parked words that are among `current` again.
+    pub fn update(
+        &mut self,
+        previous: &[WordKey],
+        current: &[WordKey],
+        renumbered: Option<&Renumbering>,
+    ) -> (Vec<ParkedWord>, Vec<ReturnedWord>) {
+        let ticket = |key: &WordKey| format!("{}:{}", key.0, key.1);
+        let mut returned = Vec::new();
+        if !self.0.is_empty() {
+            for (n, key) in current.iter().enumerate() {
+                if self.0.remove(key) {
+                    returned.push(ReturnedWord { ticket: ticket(key), word: n as u32 });
+                }
+            }
+        }
+        let mut parked = Vec::new();
+        if let Some(map) = renumbered {
+            for (n, (key, now)) in previous.iter().zip(map).enumerate() {
+                // Words not from a token (u64::MAX) can't come back
+                if now.is_none() && key.0 != u64::MAX && self.0.insert(*key) {
+                    parked.push(ParkedWord { word: n as u32, ticket: ticket(key) });
+                }
+            }
+        }
+        (parked, returned)
+    }
+}
+
 /// Each word's number, by key (to look up what was stored under a number).
 pub fn numbers_by_key(words: &[WordKey]) -> HashMap<WordKey, u32> {
     words.iter().enumerate().map(|(n, key)| (*key, n as u32)).collect()
@@ -337,7 +392,13 @@ pub fn is_token(node: &Node) -> bool {
             | Node::Head(_)
             | Node::SuppliedBlock(_)
             | Node::Norm(_)
+            | Node::Numeral(_)
             | Node::ParagraphBreak
+            | Node::ColumnBreak(_)
+            | Node::HandShift(_)
+            | Node::Open(_)
+            | Node::Middle(_)
+            | Node::Close(_)
     )
 }
 
@@ -347,15 +408,15 @@ pub fn is_token(node: &Node) -> bool {
 pub fn node_to_dsl(node: &Node) -> String {
     match node {
         Node::Text(t) => t.clone(),
-        Node::LineBreak(n) => {
-            if let Some(num) = n {
-                format!("//{}", num)
-            } else {
-                "//".to_string()
-            }
-        }
-        Node::PageBreak(n) => format!("///{}", n),
+        Node::LineBreak(n) => match n {
+            Some(num) => format!("//{}", crate::parser::syntax::break_number_dsl(num, false)),
+            None => "//".to_string(),
+        },
+        Node::PageBreak(n) if n.is_empty() => "///".to_string(),
+        Node::PageBreak(n) => format!("///{}", crate::parser::syntax::break_number_dsl(n, true)),
         Node::Abbreviation { abbr, expansion } => format!(".abbr[{}]{{{}}}", abbr, expansion),
+        Node::Expansion { mark, expansion } => format!("{{{}={}}}", mark, expansion),
+        Node::StoredExpansion { mark } => format!("{{{}}}", mark),
         Node::Gap { quantity, supplied } => {
             let mut s = "[...".to_string();
             if let Some(q) = quantity {
@@ -378,11 +439,34 @@ pub fn node_to_dsl(node: &Node) -> String {
         Node::Head(t) => format!(".head{{{}}}", t),
         Node::Unclear(t) => format!("?{{{}}}?", t),
         Node::Entity(name) => format!(":{}:", name),
+        Node::Literal(c) => format!("\\{}", c),
+        Node::Numeral(content) => format!("#{}#", content),
+        Node::ColumnBreak(n) => format!("///c={}", crate::parser::syntax::break_number_dsl(n, true)),
+        Node::HandShift(hand) => format!(".hs{{{}}}", hand),
+        Node::Space(quantity) => format!(".space[{}]", quantity.as_deref().unwrap_or("")),
+        Node::Inline { markup, content, second } => match second {
+            Some(second) => format!("{}{content}={second}{}", markup.opener, markup.closer),
+            None => format!("{}{content}{}", markup.opener, markup.closer),
+        },
+        Node::Open(markup) => markup.opener.clone(),
+        Node::Middle(_) => "=".to_string(),
+        Node::Close(markup) => markup.closer.clone(),
         Node::WordContinuation => "~".to_string(),
         Node::CompoundJoin => "~".to_string(),
         Node::WordBoundary => "|".to_string(),
         Node::ParagraphBreak => PARAGRAPH.to_string(),
-        Node::Word(nodes) | Node::Punctuation(nodes) => nodes.iter().map(node_to_dsl).collect(),
+        // A break inside a word is one the word continues across: `~//`, so
+        // the token reads the same on its own (`uppta-~//~//ka`, not the
+        // page break in `uppta-////ka`)
+        // A column break's number is in braces there: the word goes on
+        Node::Word(nodes) | Node::Punctuation(nodes) => nodes
+            .iter()
+            .map(|node| match node {
+                Node::LineBreak(_) | Node::PageBreak(_) => format!("~{}", node_to_dsl(node)),
+                Node::ColumnBreak(n) => format!("~///c={{{}}}", n.replace('\\', "\\\\").replace('}', "\\}")),
+                other => node_to_dsl(other),
+            })
+            .collect(),
     }
 }
 

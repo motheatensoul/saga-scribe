@@ -32,6 +32,17 @@ pub fn parse(xml: &str) -> Result<Document, String> {
         .map_err(|e| format!("Failed to parse XML: {}", e))
 }
 
+/// An error unless `xml` is a well-formed document. [`parse`] recovers from
+/// errors, as libxml2's default does; this doesn't.
+pub fn check_well_formed(xml: &str) -> Result<(), String> {
+    let xml = declare_entities_for_parsing(xml);
+    let options = ParserOptions { no_net: true, recover: false, huge: true, ..Default::default() };
+    Parser::default()
+        .parse_string_with_options(xml.as_ref(), options)
+        .map(|_| ())
+        .map_err(|e| format!("{e}"))
+}
+
 /// `xml` with every named entity it uses declared in its internal DTD
 /// subset (added, or created with a DOCTYPE before the root element).
 pub fn declare_entities_for_parsing(xml: &str) -> Cow<'_, str> {
@@ -86,6 +97,13 @@ fn used_entities(xml: &str) -> BTreeSet<&str> {
             (starts_name && rest[len..].starts_with(';') && !PREDEFINED.contains(&name)).then_some(name)
         })
         .collect()
+}
+
+/// The byte range of the document type declaration (`<!DOCTYPE …>`), if any.
+pub fn doctype_span(xml: &str) -> Option<std::ops::Range<usize>> {
+    let start = xml.find("<!DOCTYPE")?;
+    let doctype = find_doctype(xml)?;
+    Some(start..doctype.end + 1)
 }
 
 struct Doctype {

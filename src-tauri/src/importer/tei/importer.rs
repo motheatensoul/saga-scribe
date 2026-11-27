@@ -20,7 +20,7 @@ use crate::metadata::{
     Availability, DateRange, History, Language, Metadata, MsContents, MsIdentifier, Person,
     PhysDesc, PublicationStmt, RespStmt, TitleStmt,
 };
-use crate::importer::tei::extraction::Extractor;
+use crate::document::{find_body as find_tree_body, project_body, project_body_with, Tree};
 use crate::importer::tei::helpers;
 use crate::importer::tei::segments::{ImportedDocument, Segment, SourceSpans, DSL_RULES};
 use libxml::tree::{Document, Node, NodeType};
@@ -70,6 +70,25 @@ pub struct ImportResult {
 /// - No root element found
 /// - No `<body>` element found
 pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
+    parse_with(xml_content, None)
+}
+
+/// [`parse`], with the lineation the shorthand shows chosen (`Some`; a
+/// file with several has one inferred otherwise, see [`Profile`]).
+///
+/// [`Profile`]: crate::document::profile::Profile
+pub fn parse_with(xml_content: &str, line_edition: Option<Option<String>>) -> Result<ImportResult, String> {
+    parse_with_store(xml_content, line_edition, None)
+}
+
+/// [`parse_with`], with the abbreviation store the shorthand is written
+/// with (`Some`: a saved project's); without, one is inferred from the
+/// file ([`abbreviations::infer`](super::abbreviations::infer)).
+pub fn parse_with_store(
+    xml_content: &str,
+    line_edition: Option<Option<String>>,
+    store: Option<&super::abbreviations::Store>,
+) -> Result<ImportResult, String> {
     let doc = parse_document(xml_content)?;
 
     let root = doc
@@ -85,22 +104,36 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
     // Check if this is a MENOTA file (has me:facs/me:dipl/me:norm structure)
     let is_menota = has_menota_structure(&body);
 
-    // Split original XML into preamble/body/postamble for exact preservation
-    let (original_preamble, original_body_xml, original_postamble) =
-        match split_xml_sections(xml_content) {
-            Some((preamble, body_xml, postamble)) => (preamble, body_xml, postamble),
-            None => (
-                String::new(),
-                helpers::serialize_node(&body),
-                String::new(),
-            ),
-        };
+    // The document as a tree, and its body as segments: what each is in
+    // the shorthand, and where each editable one sits in the original body
+    // text so unedited content can be emitted byte-for-byte
+    let tree = Tree::from_document(&doc, xml_content);
+    let tree_body = find_tree_body(&tree).ok_or("No <body> element found in XML")?;
+    let mut profile = crate::document::profile::infer(&tree, tree_body);
+    if let Some(chosen) = line_edition {
+        profile.line_edition = chosen.filter(|ed| profile.counts.line_editions.contains_key(ed));
+    }
+    let projection = project_body_with(&tree, tree_body, profile.line_edition.as_deref());
+    let mut segments = projection.segments;
+    let spans = projection.spans;
+    // `{mark}` where the expansion is the mark's commonest
+    let abbreviations = store.cloned().unwrap_or_else(|| super::abbreviations::infer(&segments));
+    super::abbreviations::shorten(&mut segments, &abbreviations);
 
-    // Extract segments, recording where each editable segment sits in the
-    // original body text so unedited content can be emitted byte-for-byte.
-    let mut extractor = Extractor::with_source(&original_body_xml);
-    let segments = extractor.extract_segments(&body);
-    let spans = extractor.take_spans();
+    // Split original XML into preamble/body/postamble for exact preservation;
+    // the spans are relative to the body's start
+    let (original_preamble, original_body_xml, original_postamble) =
+        match tree.span(tree_body).filter(|_| tree.has_spans()) {
+            Some(span) => (
+                xml_content[..span.start].to_string(),
+                xml_content[span.clone()].to_string(),
+                xml_content[span.end..].to_string(),
+            ),
+            None => match split_xml_sections(xml_content) {
+                Some((preamble, body_xml, postamble)) => (preamble, body_xml, postamble),
+                None => (String::new(), helpers::serialize_node(&body), String::new()),
+            },
+        };
 
     // Generate DSL from segments (this is the new, segment-aware path)
     let dsl = crate::importer::tei::extraction::segments_to_dsl(&segments, DSL_RULES);
@@ -110,7 +143,10 @@ pub fn parse(xml_content: &str) -> Result<ImportResult, String> {
         segments,
         is_menota,
         spans,
+        profile: Some(profile),
+        abbreviations,
         dsl_rules: DSL_RULES,
+        decisions: Default::default(),
     };
 
     // Trim output to avoid massive trailing/leading whitespace
@@ -144,11 +180,16 @@ pub fn recompute_spans(
     segments: &[Segment],
 ) -> Option<SourceSpans> {
     let xml = format!("{}{}{}", preamble, original_body_xml, postamble);
-    let doc = parse_document(&xml).ok()?;
-    let body = find_body(&doc.get_root_element()?)?;
-    let mut extractor = Extractor::with_source(original_body_xml);
-    let fresh = extractor.extract_segments(&body);
-    let spans = extractor.take_spans()?;
+    let tree = Tree::parse(&xml).ok()?;
+    let body = find_tree_body(&tree)?;
+    // The spans are relative to the body's start, which must be where the
+    // stored preamble ends
+    if tree.span(body)?.start != preamble.len() {
+        return None;
+    }
+    let projection = project_body(&tree, body);
+    let fresh = projection.segments;
+    let spans = projection.spans?;
 
     let same = fresh.len() == segments.len()
         && fresh
@@ -156,6 +197,123 @@ pub fn recompute_spans(
             .zip(segments)
             .all(|(a, b)| a.id() == b.id() && segment_dsl(a) == segment_dsl(b));
     same.then_some(spans)
+}
+
+/// In [`onto_tree`]'s map of old segments to fresh ones: a segment that the
+/// shorthand doesn't show any more.
+const NOT_SHOWN: usize = usize::MAX;
+
+/// A saved imported document on its file's tree (step 3b of
+/// `docs/DOCUMENT_MODEL.md`): the segments projected afresh from the file,
+/// and the stored shorthand with its unedited words as the projection
+/// writes them.
+pub struct OnTree {
+    pub document: ImportedDocument,
+    pub dsl: String,
+    /// How many places of the shorthand were rewritten
+    pub rewritten: usize,
+    /// The file, parsed
+    pub tree: Tree,
+}
+
+/// Brings `stored` (a saved imported document, whose segments were made
+/// with the import rules of its time) and its shorthand `dsl` onto the
+/// file's tree: the session then works with the segments the current
+/// projection makes, the answers for replaced words move to them, and
+/// `dsl` is rewritten where its unedited words read differently now
+/// ([`rewrite_unedited`]). `None` if the file can't be projected with spans
+/// or doesn't line up with the stored segments; the stored ones are used
+/// then.
+pub fn onto_tree(stored: &ImportedDocument, dsl: &str, preamble: &str, body: &str, postamble: &str) -> Option<OnTree> {
+    use crate::importer::tei::extraction::segments_to_dsl;
+    use crate::importer::tei::patching::rewrite_unedited;
+    let xml = format!("{preamble}{body}{postamble}");
+    let tree = Tree::parse(&xml).ok()?;
+    let tree_body = find_tree_body(&tree)?;
+    if tree.span(tree_body)?.start != preamble.len() {
+        return None;
+    }
+    let profile = stored.profile.clone().unwrap_or_else(|| crate::document::profile::infer(&tree, tree_body));
+    let projection = project_body_with(&tree, tree_body, profile.line_edition.as_deref());
+    let fresh_spans = projection.spans?;
+    let stored_spans = stored.spans.as_ref()?;
+
+    // Old segment → fresh segment, by kind and place in the file; a line
+    // break the shorthand no longer shows (another lineation) is structure
+    // now, at the same place
+    let kind = |s: &Segment| std::mem::discriminant(s);
+    let by_place: std::collections::HashMap<_, usize> = projection
+        .segments
+        .iter()
+        .filter_map(|s| Some(((kind(s), (*fresh_spans.get(s.id())?)?), s.id())))
+        .collect();
+    let structural = std::mem::discriminant(&Segment::Structural { id: 0, xml: String::new(), shown: None });
+    // Where the fresh segments the shorthand shows are, in order
+    let mut shown: Vec<(usize, usize)> = projection
+        .segments
+        .iter()
+        .filter(|s| !matches!(s, Segment::Structural { .. } | Segment::Whitespace { .. } | Segment::HandShift { .. }))
+        .filter_map(|s| *fresh_spans.get(s.id())?)
+        .collect();
+    shown.sort_unstable();
+    let overlaps_shown = |(start, end): (usize, usize)| {
+        let i = shown.partition_point(|&(_, e)| e <= start);
+        shown.get(i).is_some_and(|&(s, _)| s < end)
+    };
+    let fresh_id: std::collections::HashMap<usize, usize> = stored
+        .segments
+        .iter()
+        .filter_map(|s| {
+            let place = (*stored_spans.get(s.id())?)?;
+            let hidden = || matches!(s, Segment::LineBreak { .. }).then(|| by_place.get(&(structural, place))).flatten();
+            // A column break was structure before rules 11
+            let column = std::mem::discriminant(&Segment::ColumnBreak { id: 0, attributes: Default::default() });
+            let shown_since = || {
+                (matches!(s, Segment::Structural { xml, .. } if xml.starts_with("<cb") || xml.contains(":cb")))
+                    .then(|| by_place.get(&(column, place)))
+                    .flatten()
+            };
+            match by_place.get(&(kind(s), place)).or_else(hidden).or_else(shown_since) {
+                Some(&id) => Some((s.id(), id)),
+                // Shown before, but nothing of it is now (supplied text that
+                // held only another lineation's line break): it goes
+                None if !matches!(s, Segment::Structural { .. } | Segment::Whitespace { .. }) && !overlaps_shown(place) => {
+                    Some((s.id(), NOT_SHOWN))
+                }
+                None => None,
+            }
+        })
+        .collect();
+
+    // The store the project has, or (from before there was one) the file's
+    let abbreviations = match stored.abbreviations.is_empty() {
+        true => super::abbreviations::infer(&projection.segments),
+        false => stored.abbreviations.clone(),
+    };
+    let mut segments = projection.segments;
+    super::abbreviations::shorten(&mut segments, &abbreviations);
+    let document = ImportedDocument {
+        segments,
+        is_menota: stored.is_menota,
+        spans: Some(fresh_spans),
+        profile: Some(profile),
+        abbreviations,
+        dsl_rules: DSL_RULES,
+        decisions: stored
+            .decisions
+            .iter()
+            .filter_map(|(id, d)| Some((*fresh_id.get(id).filter(|&&f| f != NOT_SHOWN)?, *d)))
+            .collect(),
+    };
+    let fresh_dsl = segments_to_dsl(&document.segments, DSL_RULES);
+    let unchanged = segments_to_dsl(&stored.segments, stored.dsl_rules) == fresh_dsl
+        && stored.segments.len() == document.segments.len()
+        && fresh_id.iter().all(|(a, b)| a == b);
+    if unchanged {
+        return Some(OnTree { document, dsl: dsl.to_string(), rewritten: 0, tree });
+    }
+    let (dsl, rewritten) = rewrite_unedited(&stored.segments, stored.dsl_rules, &document.segments, dsl, &fresh_id)?;
+    Some(OnTree { document, dsl, rewritten, tree })
 }
 
 fn segment_dsl(segment: &Segment) -> Option<&str> {
@@ -237,6 +395,17 @@ pub fn parse_dsl_only(xml_content: &str) -> Result<String, String> {
 // ============================================================================
 // Metadata Extraction
 // ============================================================================
+
+/// The metadata a TEI document's header holds (none without a header).
+///
+/// # Errors
+///
+/// If the document doesn't parse.
+pub fn metadata_of(xml: &str) -> Result<Option<Metadata>, String> {
+    let doc = parse_document(xml)?;
+    let root = doc.get_root_element().ok_or("No root element found")?;
+    Ok(extract_metadata(&doc, &root))
+}
 
 fn extract_metadata(_doc: &Document, root: &Node) -> Option<Metadata> {
     let header = find_element(root, "teiHeader")?;

@@ -26,6 +26,7 @@
 
 use super::ast::Node;
 use super::lexer::Lexer;
+use super::syntax::unescape;
 use super::wordtokenizer::WordTokenizer;
 use crate::annotations::AnnotationSet;
 use crate::entities::EntityRegistry;
@@ -54,6 +55,31 @@ pub struct CompilerConfig {
     /// Wrap page content in `<p>` tags for TEI structural compliance.
     /// TEI requires text to be inside structural elements like `<p>` or `<ab>`.
     pub wrap_pages: bool,
+    /// In multi-level mode, the levels written and whether they are in a
+    /// `<choice>` (an imported file's profile); `None`: MENOTA's three, in one
+    pub levels: Option<Levels>,
+}
+
+/// The transcription levels a multi-level word is written with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Levels {
+    pub facs: bool,
+    pub dipl: bool,
+    pub norm: bool,
+    pub choice: bool,
+}
+
+impl Levels {
+    /// The levels of `profile`, if it has any.
+    pub fn of(profile: &crate::document::profile::Profile) -> Option<Self> {
+        use crate::document::profile::Level;
+        (!profile.levels.is_empty()).then(|| Self {
+            facs: profile.has(Level::Facs),
+            dipl: profile.has(Level::Dipl),
+            norm: profile.has(Level::Norm),
+            choice: profile.choice,
+        })
+    }
 }
 
 /// A lemmatization mapping for a word token.
@@ -97,6 +123,15 @@ pub struct Compiler<'a> {
     lemma_mappings: HashMap<u32, LemmaMapping>,
     /// Full annotation set for semantic, paleographic, and note annotations
     annotations: Option<&'a AnnotationSet>,
+    /// The abbreviation store: the default expansion of each mark (as
+    /// shorthand), which `{mark}` takes
+    abbreviations: Option<&'a HashMap<String, String>>,
+    /// Abbreviations as TEI's `<choice><abbr><expan>` (a file's profile says
+    /// so) instead of MENOTA's `<am>`/`<ex>`, where words have no levels
+    choice_abbreviations: bool,
+    /// The element punctuation is written in: `pc`, or `me:punct` (a file's
+    /// profile says so)
+    punctuation: &'static str,
     /// Compiler configuration options
     config: CompilerConfig,
     /// Running line number counter (for auto_line_numbers)
@@ -124,6 +159,9 @@ impl<'a> Compiler<'a> {
             dictionary: None,
             lemma_mappings: HashMap::new(),
             annotations: None,
+            abbreviations: None,
+            choice_abbreviations: false,
+            punctuation: "pc",
             config: CompilerConfig::default(),
             line_number: 0,
             word_index: 0,
@@ -201,6 +239,32 @@ impl<'a> Compiler<'a> {
         self
     }
 
+    /// Writes `{mark=expansion}` in words without levels as
+    /// `<choice><abbr>mark</abbr><expan>expansion</expan></choice>`.
+    pub fn with_choice_abbreviations(mut self, choice: bool) -> Self {
+        self.choice_abbreviations = choice;
+        self
+    }
+
+    /// Writes punctuation in `<me:punct>` instead of `<pc>`.
+    pub fn with_menota_punctuation(mut self, menota: bool) -> Self {
+        self.punctuation = if menota { "me:punct" } else { "pc" };
+        self
+    }
+
+    /// The abbreviation store `{mark}` takes its expansion from.
+    pub fn with_abbreviations(mut self, abbreviations: &'a HashMap<String, String>) -> Self {
+        self.abbreviations = Some(abbreviations);
+        self
+    }
+
+    /// `{mark}` as `{mark=expansion}`, with the store's expansion (none if
+    /// the mark isn't in it: the mark alone).
+    fn stored(&self, mark: &str) -> Node {
+        let expansion = self.abbreviations.and_then(|store| store.get(mark.trim())).cloned().unwrap_or_default();
+        Node::Expansion { mark: mark.to_string(), expansion }
+    }
+
     pub fn with_config(mut self, config: CompilerConfig) -> Self {
         self.config = config;
         self
@@ -242,6 +306,8 @@ impl<'a> Compiler<'a> {
         let mut output = String::new();
         // Where the open paragraph's content starts, to spot an empty one
         let mut paragraph_start = 0;
+        // Markup around tokens still open
+        let mut open_markup = 0usize;
         for node in &nodes {
             // Words are keyed by the token they come from (as tracked for
             // this DSL); only word-wrapped compiles tokenize the same way
@@ -265,8 +331,19 @@ impl<'a> Compiler<'a> {
                     paragraph_start = output.len();
                 }
                 Node::PageBreak(_) => {
+                    if self.config.wrap_pages && open_markup > 0 {
+                        return Err("A page break can't be inside markup around words when pages are paragraphs".to_string());
+                    }
                     output.push_str(&self.node_to_xml(node));
                     paragraph_start = output.len();
+                }
+                Node::Open(_) => {
+                    open_markup += 1;
+                    output.push_str(&self.node_to_xml(node));
+                }
+                Node::Close(_) => {
+                    open_markup = open_markup.saturating_sub(1);
+                    output.push_str(&self.node_to_xml(node));
                 }
                 _ => output.push_str(&self.node_to_xml(node)),
             }
@@ -282,7 +359,7 @@ impl<'a> Compiler<'a> {
 
     fn node_to_xml(&mut self, node: &Node) -> String {
         match node {
-            Node::Text(text) => self.escape_xml(text),
+            Node::Text(text) => self.escape_xml(&unescape(text)),
             // Paragraphs are opened and closed by `compile`; inside fragments
             // (block content, inserted words) a break has no meaning
             Node::ParagraphBreak => String::new(),
@@ -318,6 +395,21 @@ impl<'a> Compiler<'a> {
                 let expansion = self.nodes_to_xml(&inline_nodes(expansion));
                 format!("<choice><abbr>{}</abbr><expan>{}</expan></choice>", abbr, expansion)
             }
+            Node::StoredExpansion { mark } => {
+                let node = self.stored(mark);
+                self.node_to_xml(&node)
+            }
+            // One level: the mark and its expansion side by side (MENOTA)
+            Node::Expansion { mark, expansion } => {
+                let mark = self.nodes_to_xml(&inline_nodes(mark));
+                let expansion = self.nodes_to_xml(&inline_nodes(expansion));
+                if self.choice_abbreviations {
+                    return format!("<choice><abbr>{mark}</abbr><expan>{expansion}</expan></choice>");
+                }
+                let mark = if mark.is_empty() { String::new() } else { format!("<am>{mark}</am>") };
+                let expansion = if expansion.is_empty() { String::new() } else { format!("<ex>{expansion}</ex>") };
+                format!("{mark}{expansion}")
+            }
             Node::Gap { quantity, supplied } => {
                 let gap_xml = match quantity {
                     Some(n) => {
@@ -327,31 +419,68 @@ impl<'a> Compiler<'a> {
                 };
                 // If there's supplied text, output both gap and supplied
                 match supplied {
-                    Some(text) => format!("{}<supplied>{}</supplied>", gap_xml, self.escape_xml(text)),
+                    Some(text) => format!("{}<supplied>{}</supplied>", gap_xml, self.inline_xml(text)),
                     None => gap_xml,
                 }
             }
-            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.escape_xml(text)),
+            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.inline_xml(text)),
             Node::SuppliedBlock(text) => {
                 let content = self.compile_fragment_from_dsl(text);
                 format!("<supplied>{}</supplied>", content)
             }
-            Node::Deletion(text) => format!("<del>{}</del>", self.escape_xml(text)),
-            Node::Addition(text) => format!("<add>{}</add>", self.escape_xml(text)),
-            Node::Note(text) => format!("<note>{}</note>", self.escape_xml(text)),
+            Node::Deletion(text) => format!("<del>{}</del>", self.inline_xml(text)),
+            Node::Addition(text) => format!("<add>{}</add>", self.inline_xml(text)),
+            Node::Note(text) => format!("<note>{}</note>", self.escape_xml(&unescape(text))),
             Node::Head(text) => {
                 let content = self.compile_fragment_from_dsl(text);
                 format!("<head>{}</head>", content)
             }
             Node::Norm(text) => self.compile_normalized_fragment(text),
-            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(text)),
+            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.inline_xml(text)),
             Node::Entity(name) => self.compile_entity(name),
+            Node::Literal(c) => self.escape_xml(c),
+            Node::Numeral(content) => self.compile_numeral(content),
+            Node::ColumnBreak(n) => format!("<cb n=\"{}\"/>\n", self.escape_xml(n)),
+            Node::HandShift(hand) if hand.is_empty() => "<handShift/>\n".to_string(),
+            Node::HandShift(hand) => format!("<handShift new=\"{}\"/>\n", self.escape_xml(hand)),
+            Node::Space(_) => self.space_xml(node),
+            Node::Inline { markup, content, second } => {
+                let mut xml = markup.open_xml() + &self.inline_xml(content);
+                if let Some(second) = second {
+                    xml.push_str(&markup.middle_xml());
+                    xml.push_str(&self.inline_xml(second));
+                }
+                xml + &markup.close_xml()
+            }
+            Node::Open(markup) => markup.open_xml() + "\n",
+            Node::Middle(markup) => markup.middle_xml() + "\n",
+            Node::Close(markup) => markup.close_xml() + "\n",
             Node::WordContinuation => String::new(), // Consumed by word tokenizer
             Node::WordBoundary => String::new(),     // Consumed by word tokenizer
             Node::CompoundJoin => " ".to_string(),   // Space in single-level mode
             Node::Word(children) => self.compile_word(children),
             Node::Punctuation(children) => self.compile_punctuation(children),
         }
+    }
+
+    /// `<space/>`, with its quantity if it has one.
+    fn space_xml(&self, node: &Node) -> String {
+        match node {
+            Node::Space(Some(quantity)) => format!("<space quantity=\"{}\"/>", self.escape_xml(quantity)),
+            _ => "<space/>".to_string(),
+        }
+    }
+
+    /// Markup inside a word on one level: its content (and a pair's second
+    /// half) compiled for that level by `level`.
+    fn inline_level(&self, node: &Node, level: impl Fn(&Self, &[Node]) -> String) -> String {
+        let Node::Inline { markup, content, second } = node else { return String::new() };
+        let mut xml = markup.open_xml() + &level(self, &inline_nodes(content));
+        if let Some(second) = second {
+            xml.push_str(&markup.middle_xml());
+            xml.push_str(&level(self, &inline_nodes(second)));
+        }
+        xml + &markup.close_xml()
     }
 
     fn compile_entity(&self, name: &str) -> String {
@@ -433,9 +562,27 @@ impl<'a> Compiler<'a> {
             let facs_with_chars = self.inject_character_tags(&facs, current_index);
 
             format!(
-                "<w{}{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>{}\n</w>\n",
-                lemma_attrs, ann_attrs, facs_with_chars, dipl, norm, notes
+                "<w{}{}>{}{}\n</w>\n",
+                lemma_attrs, ann_attrs, self.levels_xml(&facs_with_chars, &dipl, &norm), notes
             )
+        }
+    }
+
+    /// A word's levels as the configuration has them (the part after its
+    /// start tag): MENOTA's three in a `<choice>` unless set otherwise.
+    fn levels_xml(&self, facs: &str, dipl: &str, norm: &str) -> String {
+        let levels = self.config.levels.unwrap_or(Levels { facs: true, dipl: true, norm: true, choice: true });
+        let indent = if levels.choice { "    " } else { "  " };
+        let mut inner = String::new();
+        for (on, name, content) in [(levels.facs, "facs", facs), (levels.dipl, "dipl", dipl), (levels.norm, "norm", norm)] {
+            if on {
+                inner.push_str(&format!("\n{indent}<me:{name}>{content}</me:{name}>"));
+            }
+        }
+        if levels.choice {
+            format!("\n  <choice>{inner}\n  </choice>")
+        } else {
+            inner
         }
     }
 
@@ -714,6 +861,20 @@ impl<'a> Compiler<'a> {
         attrs
     }
 
+    /// What the annotations of word `word_index` add to it (other than its
+    /// lemma): attributes (`ana`, `cert`, …) as written in a start tag, and
+    /// `<note>` elements. Character annotations go into its text with
+    /// [`with_character_tags`](Self::with_character_tags).
+    pub fn annotation_markup(&self, word_index: u32) -> (String, String) {
+        (self.get_annotation_attributes(word_index), self.get_note_elements(word_index))
+    }
+
+    /// `xml` (a word's facsimile text, as XML) with `<c>` elements for the
+    /// character annotations of word `word_index`.
+    pub fn with_character_tags(&self, xml: &str, word_index: u32) -> String {
+        self.inject_character_tags(xml, word_index)
+    }
+
     /// Get note annotations as TEI <note> elements
     fn get_note_elements(&self, word_index: u32) -> String {
         use crate::annotations::{AnnotationType, AnnotationValue};
@@ -744,6 +905,19 @@ impl<'a> Compiler<'a> {
         notes
     }
 
+    /// `#content#` as `<num>`, with MENOTA levels in multi-level mode. A
+    /// numeral is not a word: it isn't numbered or annotated.
+    fn compile_numeral(&mut self, content: &str) -> String {
+        if !self.config.multi_level {
+            return format!("<num>{}</num>\n", self.inline_xml(content));
+        }
+        let nodes = self.number_word_breaks(&inline_nodes(content));
+        format!(
+            "<num>{}\n</num>\n",
+            self.levels_xml(&self.nodes_to_facs(&nodes), &self.nodes_to_diplomatic(&nodes), &self.nodes_to_normalized(&nodes))
+        )
+    }
+
     fn compile_punctuation(&mut self, children: &[Node]) -> String {
         if self.config.multi_level {
             self.compile_punctuation_multi_level(children)
@@ -753,6 +927,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_punctuation_single(&mut self, children: &[Node]) -> String {
+        let pc = self.punctuation;
         let mut content = String::new();
         for child in children {
             content.push_str(&self.node_to_xml(child));
@@ -760,11 +935,12 @@ impl<'a> Compiler<'a> {
         if content.is_empty() {
             String::new()
         } else {
-            format!("<pc>{}</pc>\n", content)
+            format!("<{pc}>{}</{pc}>\n", content)
         }
     }
 
     fn compile_punctuation_multi_level(&mut self, children: &[Node]) -> String {
+        let pc = self.punctuation;
         let facs = self.nodes_to_facs(children);
         let dipl = self.nodes_to_diplomatic(children);
         let norm = self.nodes_to_normalized(children);
@@ -773,8 +949,8 @@ impl<'a> Compiler<'a> {
             String::new()
         } else {
             format!(
-                "<pc>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</pc>\n",
-                facs, dipl, norm
+                "<{pc}>{}\n</{pc}>\n",
+                self.levels_xml(&facs, &dipl, &norm)
             )
         }
     }
@@ -796,26 +972,39 @@ impl<'a> Compiler<'a> {
 
     fn node_to_facs(&self, node: &Node) -> String {
         match node {
-            Node::Text(text) => self.escape_xml(text),
+            Node::Text(text) => self.escape_xml(&unescape(text)),
+            Node::Literal(c) => self.escape_xml(c),
             Node::Entity(name) => format!("&{};", name),
             Node::Abbreviation { abbr, .. } => {
                 format!("<abbr>{}</abbr>", self.nodes_to_facs(&inline_nodes(abbr)))
             }
-            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(text)),
-            Node::Gap { quantity, .. } => {
-                // Facsimile shows gap only, not supplied
-                match quantity {
+            Node::StoredExpansion { mark } => self.node_to_facs(&self.stored(mark)),
+            // The mark as written; nothing where there is none
+            Node::Expansion { mark, .. } => {
+                let mark = self.nodes_to_facs(&inline_nodes(mark));
+                if mark.is_empty() { String::new() } else { format!("<am>{mark}</am>") }
+            }
+            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.nodes_to_facs(&inline_nodes(text))),
+            Node::Gap { quantity, supplied } => {
+                // Facsimile shows gap only, not supplied (but its breaks)
+                let gap = match quantity {
                     Some(n) => format!("<gap reason=\"illegible\" quantity=\"{}\" unit=\"chars\"/>", n),
                     None => "<gap reason=\"illegible\"/>".to_string(),
-                }
+                };
+                let breaks = supplied.as_deref().map(|s| self.word_breaks_xml(&inline_nodes(s))).unwrap_or_default();
+                gap + &breaks
             }
-            Node::Supplied(_) | Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
-            Node::Deletion(text) => format!("<del>{}</del>", self.escape_xml(text)),
-            Node::Addition(text) => format!("<add>{}</add>", self.escape_xml(text)),
-            Node::Note(text) => format!("<note>{}</note>", self.escape_xml(text)),
+            // Supplied text isn't in the manuscript; the breaks in it are
+            Node::Supplied(text) => self.word_breaks_xml(&inline_nodes(text)),
+            Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
+            Node::Deletion(text) => format!("<del>{}</del>", self.nodes_to_facs(&inline_nodes(text))),
+            Node::Addition(text) => format!("<add>{}</add>", self.nodes_to_facs(&inline_nodes(text))),
+            Node::Note(text) => format!("<note>{}</note>", self.escape_xml(&unescape(text))),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in facsimile
-            Node::LineBreak(_) | Node::PageBreak(_) => self.word_break_tag(node).unwrap_or_default(),
+            Node::Space(_) => self.space_xml(node),
+            Node::Inline { .. } => self.inline_level(node, Self::nodes_to_facs),
+            Node::LineBreak(_) | Node::PageBreak(_) | Node::ColumnBreak(_) => self.word_break_tag(node).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -839,7 +1028,8 @@ impl<'a> Compiler<'a> {
     #[allow(clippy::collapsible_match)]
     fn node_to_diplomatic(&self, node: &Node) -> String {
         match node {
-            Node::Text(text) => self.escape_xml(text),
+            Node::Text(text) => self.escape_xml(&unescape(text)),
+            Node::Literal(c) => self.escape_xml(c),
             Node::Entity(name) => {
                 // Check if it's a combining mark (skip it)
                 if let Some(dict) = self.dictionary {
@@ -863,23 +1053,47 @@ impl<'a> Compiler<'a> {
             Node::Abbreviation { expansion, .. } => {
                 format!("<expan>{}</expan>", self.nodes_to_diplomatic(&inline_nodes(expansion)))
             }
-            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.escape_xml(text)),
+            Node::StoredExpansion { mark } => self.node_to_diplomatic(&self.stored(mark)),
+            // The expansion; a letter with the mark fused into it was written,
+            // so its base letter stays outside (`{:kbar:=konun}` is
+            // `k<ex>onun</ex>`)
+            Node::Expansion { mark, expansion } => {
+                let base = match inline_nodes(mark).as_slice() {
+                    [Node::Entity(name)] => crate::entities::base_letter(name),
+                    _ => None,
+                };
+                let expansion = expansion.trim();
+                if expansion.is_empty() {
+                    return String::new();
+                }
+                match base.and_then(|b| expansion.strip_prefix(b).map(|rest| (b, rest))) {
+                    Some((base, rest)) => format!(
+                        "{}<ex>{}</ex>",
+                        self.escape_xml(base),
+                        self.nodes_to_diplomatic(&inline_nodes(rest))
+                    ),
+                    None => format!("<ex>{}</ex>", self.nodes_to_diplomatic(&inline_nodes(expansion))),
+                }
+            }
+            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.nodes_to_diplomatic(&inline_nodes(text))),
             // Clippy is cranky about this being two nested matches, its suggested fix does not work though.
             Node::Gap { supplied, .. } => {
                 // Diplomatic shows supplied text if available
                 match supplied {
-                    Some(text) => format!("<supplied>{}</supplied>", self.escape_xml(text)),
+                    Some(text) => format!("<supplied>{}</supplied>", self.nodes_to_diplomatic(&inline_nodes(text))),
                     None => String::new(),
                 }
             }
-            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.escape_xml(text)),
+            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.nodes_to_diplomatic(&inline_nodes(text))),
             Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
-            Node::Deletion(text) => format!("<del>{}</del>", self.escape_xml(text)),
-            Node::Addition(text) => format!("<add>{}</add>", self.escape_xml(text)),
-            Node::Note(text) => format!("<note>{}</note>", self.escape_xml(text)),
+            Node::Deletion(text) => format!("<del>{}</del>", self.nodes_to_diplomatic(&inline_nodes(text))),
+            Node::Addition(text) => format!("<add>{}</add>", self.nodes_to_diplomatic(&inline_nodes(text))),
+            Node::Note(text) => format!("<note>{}</note>", self.escape_xml(&unescape(text))),
             Node::Head(_) => String::new(),
             Node::CompoundJoin => " ".to_string(), // Space in diplomatic
-            Node::LineBreak(_) | Node::PageBreak(_) => self.word_break_tag(node).unwrap_or_default(),
+            Node::Space(_) => self.space_xml(node),
+            Node::Inline { .. } => self.inline_level(node, Self::nodes_to_diplomatic),
+            Node::LineBreak(_) | Node::PageBreak(_) | Node::ColumnBreak(_) => self.word_break_tag(node).unwrap_or_default(),
             _ => String::new(),
         }
     }
@@ -928,6 +1142,7 @@ impl<'a> Compiler<'a> {
             Node::LineBreak(Some(n)) => Some(format!("<lb n=\"{}\"/>", self.escape_xml(n))),
             Node::LineBreak(None) => Some("<lb/>".to_string()),
             Node::PageBreak(n) => Some(format!("<pb n=\"{}\"/>", self.escape_xml(n))),
+            Node::ColumnBreak(n) => Some(format!("<cb n=\"{}\"/>", self.escape_xml(n))),
             _ => None,
         }
     }
@@ -942,9 +1157,10 @@ impl<'a> Compiler<'a> {
     fn node_to_normalized(&self, node: &Node) -> String {
         match node {
             Node::Text(text) => {
-                let normalized = self.normalize_text(text);
+                let normalized = self.normalize_text(&unescape(text));
                 self.escape_xml(&normalized)
             }
+            Node::Literal(c) => self.escape_xml(&self.normalize_text(c)),
             Node::Entity(name) => {
                 // Skip combining marks
                 if let Some(dict) = self.dictionary {
@@ -970,40 +1186,29 @@ impl<'a> Compiler<'a> {
             Node::Abbreviation { expansion, .. } => {
                 format!("<expan>{}</expan>", self.nodes_to_normalized(&inline_nodes(expansion)))
             }
-            Node::Unclear(text) => {
-                let normalized = self.normalize_text(text);
-                format!("<unclear>{}</unclear>", self.escape_xml(&normalized))
-            }
-            Node::Gap { supplied, .. } => {
-                let text = supplied.clone().unwrap_or_default();
-                if text.is_empty() {
-                    String::new()
-                } else {
-                    let normalized = self.normalize_text(&text);
-                    format!("<supplied>{}</supplied>", self.escape_xml(&normalized))
+            // The word as read: the expansion is part of its text
+            Node::Expansion { expansion, .. } => self.nodes_to_normalized(&inline_nodes(expansion)),
+            Node::StoredExpansion { mark } => self.node_to_normalized(&self.stored(mark)),
+            Node::Unclear(text) => format!("<unclear>{}</unclear>", self.nodes_to_normalized(&inline_nodes(text))),
+            Node::Gap { supplied, .. } => match supplied.as_deref() {
+                Some(text) if !text.is_empty() => {
+                    format!("<supplied>{}</supplied>", self.nodes_to_normalized(&inline_nodes(text)))
                 }
-            }
-            Node::Supplied(text) => {
-                let normalized = self.normalize_text(text);
-                format!("<supplied>{}</supplied>", self.escape_xml(&normalized))
-            }
+                _ => String::new(),
+            },
+            Node::Supplied(text) => format!("<supplied>{}</supplied>", self.nodes_to_normalized(&inline_nodes(text))),
             Node::SuppliedBlock(_) | Node::Norm(_) => String::new(),
-            Node::Deletion(text) => {
-                let normalized = self.normalize_text(text);
-                format!("<del>{}</del>", self.escape_xml(&normalized))
-            }
-            Node::Addition(text) => {
-                let normalized = self.normalize_text(text);
-                format!("<add>{}</add>", self.escape_xml(&normalized))
-            }
+            Node::Deletion(text) => format!("<del>{}</del>", self.nodes_to_normalized(&inline_nodes(text))),
+            Node::Addition(text) => format!("<add>{}</add>", self.nodes_to_normalized(&inline_nodes(text))),
             Node::Note(text) => {
-                let normalized = self.normalize_text(text);
+                let normalized = self.normalize_text(&unescape(text));
                 format!("<note>{}</note>", self.escape_xml(&normalized))
             }
             Node::Head(_) => String::new(),
             Node::CompoundJoin => String::new(),
+            Node::Inline { .. } => self.inline_level(node, Self::nodes_to_normalized),
             // Appended after the word by `nodes_to_normalized`
-            Node::LineBreak(_) | Node::PageBreak(_) => String::new(),
+            Node::LineBreak(_) | Node::PageBreak(_) | Node::ColumnBreak(_) => String::new(),
             _ => String::new(),
         }
     }
@@ -1050,13 +1255,24 @@ impl<'a> Compiler<'a> {
 
         // A single <w> may span several DSL words (e.g. "þo at"); each level
         // joins them with a space, mirroring how the importer reads them.
-        let words: Vec<&Vec<Node>> = nodes
+        let mut words: Vec<&Vec<Node>> = nodes
             .iter()
             .filter_map(|node| match node {
                 Node::Word(children) => Some(children),
                 _ => None,
             })
             .collect();
+        // A word of escaped symbols only (`<w>~</w>` is `\~`) reads as
+        // punctuation; it is still this word's content
+        if words.is_empty() {
+            words = nodes
+                .iter()
+                .filter_map(|node| match node {
+                    Node::Punctuation(children) => Some(children),
+                    _ => None,
+                })
+                .collect();
+        }
 
         if !words.is_empty() {
             // Format attributes from provided map
@@ -1088,8 +1304,8 @@ impl<'a> Compiler<'a> {
             };
 
             return format!(
-                "<w{}>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</w>\n",
-                attr_str, facs, dipl, norm
+                "<w{}>{}\n</w>\n",
+                attr_str, self.levels_xml(&facs, &dipl, &norm)
             );
         }
 
@@ -1100,11 +1316,12 @@ impl<'a> Compiler<'a> {
     /// Compile a DSL fragment for a punctuation element.
     /// Used by patching module to recompile modified punctuation.
     pub fn compile_punctuation_from_dsl(&mut self, dsl: &str) -> String {
+        let pc = self.punctuation;
         // Parse the DSL fragment
         let mut lexer = Lexer::new(dsl);
         let doc = match lexer.parse() {
             Ok(d) => d,
-            Err(_) => return format!("<pc><!-- parse error: {} --></pc>\n", self.escape_xml(dsl)),
+            Err(_) => return format!("<{pc}><!-- parse error: {} --></{pc}>\n", self.escape_xml(dsl)),
         };
 
         // Tokenize to get Word/Punctuation nodes
@@ -1115,7 +1332,7 @@ impl<'a> Compiler<'a> {
         for node in &nodes {
             if let Node::Punctuation(children) = node {
                 if !self.config.multi_level {
-                    return format!("<pc>{}</pc>\n", self.nodes_to_xml(children));
+                    return format!("<{pc}>{}</{pc}>\n", self.nodes_to_xml(children));
                 }
 
                 // Generate the three levels for punctuation
@@ -1124,17 +1341,18 @@ impl<'a> Compiler<'a> {
                 let norm = self.nodes_to_normalized(children);
 
                 return format!(
-                    "<pc>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</pc>\n",
-                    facs, dipl, norm
+                    "<{pc}>{}\n</{pc}>\n",
+                    self.levels_xml(&facs, &dipl, &norm)
                 );
             }
         }
 
         // Fallback: compile as plain punctuation
-        format!("<pc>{}</pc>\n", self.escape_xml(dsl))
+        format!("<{pc}>{}</{pc}>\n", self.escape_xml(dsl))
     }
 
     fn compile_normalized_fragment(&mut self, dsl: &str) -> String {
+        let pc = self.punctuation;
         if !self.config.multi_level {
             return String::new();
         }
@@ -1167,7 +1385,7 @@ impl<'a> Compiler<'a> {
                     let norm = self.nodes_to_normalized(children);
                     if !norm.is_empty() {
                         output.push_str(&format!(
-                            "<pc>\n  <choice>\n    <me:facs></me:facs>\n    <me:dipl></me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</pc>\n",
+                            "<{pc}>\n  <choice>\n    <me:facs></me:facs>\n    <me:dipl></me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</{pc}>\n",
                             norm
                         ));
                     }
@@ -1186,6 +1404,9 @@ impl<'a> Compiler<'a> {
                 Node::Norm(text) => {
                     output.push_str(&self.compile_normalized_fragment(text));
                 }
+                Node::Open(_) | Node::Middle(_) | Node::Close(_) | Node::HandShift(_) | Node::ColumnBreak(_) => {
+                    output.push_str(&self.node_to_xml(node));
+                }
                 _ => {
                     output.push_str(&self.node_to_normalized(node));
                 }
@@ -1203,6 +1424,7 @@ impl<'a> Compiler<'a> {
     ///
     /// Its words are numbered and annotated like the main `compile()`'s.
     pub fn compile_fragment_from_dsl(&mut self, dsl: &str) -> String {
+        let pc = self.punctuation;
         // Parse the DSL fragment
         let mut lexer = Lexer::new(dsl);
         let doc = match lexer.parse() {
@@ -1223,7 +1445,7 @@ impl<'a> Compiler<'a> {
                     output.push_str(&self.compile_word(children));
                 }
                 Node::Punctuation(children) if !self.config.multi_level => {
-                    output.push_str(&format!("<pc>{}</pc>\n", self.nodes_to_xml(children)));
+                    output.push_str(&format!("<{pc}>{}</{pc}>\n", self.nodes_to_xml(children)));
                 }
                 Node::Word(children) => {
                     output.push_str(&self.compile_word(children));
@@ -1234,8 +1456,8 @@ impl<'a> Compiler<'a> {
                     let norm = self.nodes_to_normalized(children);
 
                     output.push_str(&format!(
-                        "<pc>\n  <choice>\n    <me:facs>{}</me:facs>\n    <me:dipl>{}</me:dipl>\n    <me:norm>{}</me:norm>\n  </choice>\n</pc>\n",
-                        facs, dipl, norm
+                        "<{pc}>{}\n</{pc}>\n",
+                        self.levels_xml(&facs, &dipl, &norm)
                     ));
                 }
                 Node::LineBreak(n) => {
@@ -1264,6 +1486,20 @@ impl<'a> Compiler<'a> {
             Ok(doc) => self.nodes_to_xml(&doc.nodes),
             Err(_) => format!("<!-- parse error: {} -->", self.escape_xml(dsl)),
         }
+    }
+
+    /// Construct content (DSL) in single-level form, inside a word: breaks
+    /// without the newline that follows them between words.
+    fn inline_xml(&mut self, dsl: &str) -> String {
+        let nodes = self.number_word_breaks(&inline_nodes(dsl));
+        let mut xml = String::new();
+        for node in &nodes {
+            match self.word_break_tag(node) {
+                Some(tag) => xml.push_str(&tag),
+                None => xml.push_str(&self.node_to_xml(node)),
+            }
+        }
+        xml
     }
 
     /// Compiles child nodes in single-level form, without tracking word indices.

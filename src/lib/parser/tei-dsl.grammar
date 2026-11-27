@@ -5,11 +5,15 @@
 // parser does (src-tauri/src/parser/syntax.rs); corpus.test.ts checks both
 // against the shared corpus in tests/fixtures/dsl-corpus.json.
 
+@context markupContext from "./tokens"
+
 @top Document { element* }
 
 element {
+  WordContinuationColumnBreak |
   WordContinuationPageBreak |
   WordContinuationLineBreak |
+  ColumnBreak |
   PageBreak |
   LineBreak |
   ParagraphBreak |
@@ -24,6 +28,12 @@ element {
   Note |
   Unclear |
   Entity |
+  Expansion |
+  Literal |
+  Numeral |
+  Markup |
+  HandShift |
+  Space |
   WordBoundary |
   CompoundJoin |
   Text
@@ -41,11 +51,16 @@ SuppliedBlock { suppliedKeyword BlockContent }
 // .norm{normalized-only content}
 NormBlock { normKeyword BlockContent }
 
+// .q{…}, *{…}*, &{…}, ${…}, .rdg[A]{…}; a pair: .corr{sic=corr}
+Markup { MarkupOpen element* (MarkupMiddle element*)? MarkupClose }
+
 @external tokens dslTokens from "./tokens" {
-  // ~///n and ~//n: a word continued across a page or line break
+  // ~///c=n, ~///n and ~//n: a word continued across a column, page or line break
+  WordContinuationColumnBreak,
   WordContinuationPageBreak,
   WordContinuationLineBreak,
-  // ///n, //n
+  // ///c=n, ///n, //n
+  ColumnBreak,
   PageBreak,
   LineBreak,
   // .p (standalone) starts a new paragraph
@@ -72,6 +87,20 @@ NormBlock { normKeyword BlockContent }
   Unclear,
   // :name:
   Entity,
+  // {mark=expansion}: an abbreviation mark and its expansion
+  Expansion,
+  // \c: the character c as text
+  Literal,
+  // #.x.#: a numeral
+  Numeral,
+  // The start of markup (`.q{`), the `=` of a pair, its end (`}`, `}*`)
+  MarkupOpen,
+  MarkupMiddle,
+  MarkupClose,
+  // .hs{hand}
+  HandShift,
+  // .space[n]
+  Space,
   // |
   WordBoundary,
   // ~ between word parts (upp~haf → upphaf in norm)

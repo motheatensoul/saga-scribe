@@ -60,7 +60,6 @@ impl<'a> Lexer<'a> {
         if let Some(error) = tree.diagnostics.first() {
             return Err(error.describe(self.input));
         }
-        let nodes = syntax::lower(&tree.nodes, self.input);
-        Ok(nodes.into_iter().zip(tree.nodes.iter().map(|n| n.span.clone())).collect())
+        Ok(syntax::lower_spanned(&tree.nodes, self.input))
     }
 }

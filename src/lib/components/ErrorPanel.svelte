@@ -1,6 +1,6 @@
 <script lang="ts">
     import { errorStore, errorCounts } from '$lib/stores/errors';
-    import { X as CloseButton } from "@lucide/svelte";
+    import { X as CloseButton, CircleX, TriangleAlert } from "@lucide/svelte";
 
     let { onclose }: { onclose?: () => void } = $props();
 
@@ -24,13 +24,13 @@
 
 <div class="bg-base-100 text-base-content font-mono text-sm h-full flex flex-col">
     <div class="flex justify-between items-center p-3 border-b border-base-300">
-        <h2 class="flex items-center gap-2 font-bold">
+        <h2 id="log-title" class="flex items-center gap-2 font-bold">
             Logs
             {#if $errorCounts.error > 0}
-                <span class="badge badge-error badge-sm">{$errorCounts.error}</span>
+                <span class="flex items-center gap-1 text-xs font-normal"><CircleX size={14} class="text-error" aria-hidden="true" />{$errorCounts.error}<span class="sr-only">&nbsp;errors</span></span>
             {/if}
             {#if $errorCounts.warning > 0}
-                <span class="badge badge-warning badge-sm">{$errorCounts.warning}</span>
+                <span class="flex items-center gap-1 text-xs font-normal"><TriangleAlert size={14} class="text-warning" aria-hidden="true" />{$errorCounts.warning}<span class="sr-only">&nbsp;warnings</span></span>
             {/if}
         </h2>
         <div class="flex gap-2 items-center">
@@ -45,17 +45,18 @@
         {#each $errorStore.slice().reverse() as error (error.id)}
             <div class="grid grid-cols-[1.5rem_4rem_8rem_1fr] gap-2 p-1.5 rounded hover:bg-base-200 items-start">
                 <span class="text-center" class:text-error={error.level === 'error'} class:text-warning={error.level === 'warning'} class:text-info={error.level === 'info'}>
-                    {getLevelIcon(error.level)}
+                    <span aria-hidden="true">{getLevelIcon(error.level)}</span>
+                    <span class="sr-only">{error.level}:</span>
                 </span>
-                <span class="opacity-50">{formatTime(error.timestamp)}</span>
+                <span class="opacity-80">{formatTime(error.timestamp)}</span>
                 <span class="text-primary">[{error.source}]</span>
                 <span>{error.message}</span>
                 {#if error.details}
-                    <pre class="col-span-4 ml-8 mt-1 p-2 bg-base-300 rounded text-xs opacity-70 whitespace-pre-wrap break-all">{error.details}</pre>
+                    <pre class="col-span-4 ml-8 mt-1 p-2 bg-base-300 rounded text-xs opacity-80 whitespace-pre-wrap break-all">{error.details}</pre>
                 {/if}
             </div>
         {:else}
-            <div class="text-center py-8 opacity-50">No log entries</div>
+            <div class="text-center py-8 opacity-80">No log entries</div>
         {/each}
     </div>
 </div>

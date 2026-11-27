@@ -16,12 +16,15 @@
 import type { ChangeSet } from "@codemirror/state";
 import { EditHistory } from "$lib/editor/editHistory";
 import type { CompileGuidance, XmlDelta } from "$lib/tauri";
-import type { Renumbering } from "$lib/stores/renumber";
+import type { ParkedWord, Renumbering, ReturnedWord } from "$lib/stores/renumber";
 import { perfRecord } from "$lib/perf";
 
 interface CompileOutcome {
     revision: number;
     renumbering?: Renumbering | null;
+    /** Words gone in this compile, and words gone before that are back (moved) */
+    parked?: ParkedWord[];
+    returned?: ReturnedWord[];
     /** The document whole, or only `delta`, its change to the output held */
     xml?: string | null;
     delta?: XmlDelta | null;
@@ -49,7 +52,7 @@ class CompileSession {
     private held: { revision: number; xml: string } | null = null;
 
     /** Moves annotations and selections along when words were inserted or deleted. */
-    onRenumbering: ((map: Renumbering) => void) | null = null;
+    onRenumbering: ((map: Renumbering, parked: ParkedWord[], returned: ReturnedWord[]) => void) | null = null;
 
     /** Records an editor transaction's changes (called for every edit). */
     record(changes: ChangeSet) {
@@ -116,7 +119,7 @@ class CompileSession {
         // A failed compile (it throws) leaves its changes for the next request
         this.history.confirm(job.request);
         this.confirmedRevision = result.revision;
-        if (result.renumbering) this.onRenumbering?.(result.renumbering);
+        if (result.renumbering) this.onRenumbering?.(result.renumbering, result.parked ?? [], result.returned ?? []);
         return { ...result, xml: xml ?? "", delta: null };
     }
 }

@@ -19,39 +19,40 @@ pub struct OnpEntry {
     pub citations: u32,
 }
 
-/// Full entry data from ONP (as returned by /json/onp/{id})
+/// Full entry data from ONP (as returned by /json/onp/{id}). The API changes
+/// without notice (by November 2026 senses had lost `onp-key` and
+/// `onp-def`), so everything but the definitions is optional: an entry must
+/// never fail to load over a field the app doesn't show.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OnpFullEntry {
     #[serde(rename = "@context")]
     pub context: Option<String>,
     #[serde(rename = "@type")]
     pub entry_type: Option<String>,
+    #[serde(default)]
     pub language: String,
-    #[serde(rename = "partOfSpeech")]
+    #[serde(rename = "partOfSpeech", default)]
     pub part_of_speech: String,
-    #[serde(rename = "canonicalForm")]
+    #[serde(rename = "canonicalForm", default)]
     pub canonical_form: CanonicalForm,
-    #[serde(rename = "onp-citations")]
+    #[serde(rename = "onp-citations", default)]
     pub citations: String,
-    #[serde(rename = "onp-canonicalurl")]
+    #[serde(rename = "onp-canonicalurl", default)]
     pub canonical_url: String,
     #[serde(default)]
     pub senses: Vec<Sense>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CanonicalForm {
-    #[serde(rename = "writtenRep")]
+    #[serde(rename = "writtenRep", default)]
     pub written_rep: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Sense {
+    #[serde(default)]
     pub definition: String,
-    #[serde(rename = "onp-key")]
-    pub key: String,
-    #[serde(rename = "onp-def")]
-    pub def: String,
 }
 
 /// Registry for ONP headwords with efficient lookup
@@ -134,6 +135,23 @@ impl OnpRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_full_entry_in_the_current_api_shape_loads() {
+        // As /json/onp/o5 answered in November 2026 (shortened): senses
+        // without onp-key and onp-def, and PHP warnings in "errors"
+        let json = r#"{"@context":"http:\/\/lexinfo.net\/jsonld\/3.0\/content.json","@type":"Word","language":"is",
+            "partOfSpeech":"commonNoun","canonicalForm":{"writtenRep":"\u00e1"},"onp-citations":"85",
+            "onp-canonicalurl":"https:\/\/onp.ku.dk\/o5","errors":["WARNING [2] Undefined array key 0"],
+            "senses":[{"definition":"1) flod, \u00e5, elv \/\/ river","@id":"onp:d1739",
+            "ontolex:example":[{"@id":"onp:c573","rdf:value":"x","source":"Eluc674(1989) 023.02"}]}]}"#;
+        let entry: OnpFullEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.canonical_form.written_rep, "á");
+        assert_eq!(entry.senses[0].definition, "1) flod, å, elv // river");
+        // An entry without senses or citations still loads
+        let bare: OnpFullEntry = serde_json::from_str(r#"{"canonicalForm":{"writtenRep":"a"}}"#).unwrap();
+        assert!(bare.senses.is_empty());
+    }
 
     #[test]
     fn test_load_and_lookup() {

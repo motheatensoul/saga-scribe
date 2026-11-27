@@ -13,7 +13,7 @@
         type OnpFullEntry,
         type InflectedForm,
     } from '$lib/tauri';
-    import { X as CloseButton } from "@lucide/svelte";
+    import { X as CloseButton, TriangleAlert } from "@lucide/svelte";
     import { importedStore } from '$lib/stores/imported.svelte';
     import { analysisKey, sameAnalysis } from '$lib/utils/msa';
     import { resolveEntityReferences } from '$lib/utils/wordNorm';
@@ -39,6 +39,7 @@
         wordIndex,
         onclose,
         onsave,
+        derive,
     }: {
         facsimile: string;   // Facsimile-level form (for display/storage)
         diplomatic: string;  // Diplomatic-level form (for lookup)
@@ -48,7 +49,21 @@
         onclose?: () => void;
         /** After a lemma was confirmed (lemma, msa), removed (none) or the normalized form changed */
         onsave?: (wordIndex: number, lemma?: string, msa?: string) => void;
+        /** The normalized form the shorthand gives the word (imported files), to reset a curated one to */
+        derive?: () => Promise<string | null>;
     } = $props();
+
+    let deriving = $state(false);
+    async function useDerived() {
+        if (!derive) return;
+        deriving = true;
+        try {
+            const derived = await derive();
+            if (derived !== null) normalizedForm = derived;
+        } finally {
+            deriving = false;
+        }
+    }
 
     // Search state - use diplomatic form for searching
     // svelte-ignore state_referenced_locally 
@@ -164,6 +179,52 @@
     // Check if this word instance already has a session confirmation
     let sessionConfirmation = $derived($lemmaMappings.mappings[wordIndex]);
 
+    /**
+     * The word of the file this one replaced in the shorthand (imported
+     * files), if it had a lemma or analysis: whether it keeps them is asked
+     * here. Until answered, the editor still holds the old lemma for this
+     * word, which isn't shown as confirmed.
+     */
+    let record = $derived(importedStore.recordByWord.get(wordIndex));
+    let recordOpen = $derived(record !== undefined && record.decision === null);
+    let shownConfirmation = $derived(recordOpen ? undefined : sessionConfirmation);
+
+    /** Keeps the old word's lemma and analysis: the same word, corrected. */
+    // A replaced word without a lemma (asked about for its annotations) is
+    // still the same word or another one
+    const hasLemma = $derived(!!record && (record.lemma !== null || record.msa !== null));
+    const keepLabel = $derived(hasLemma ? 'Keep the old lemma' : 'Keep it as the same word');
+    /** Levels kept as the file has them that may be out of date, named for the text */
+    const LEVEL_NAMES: Record<string, string> = { norm: 'normalized form', dipl: 'diplomatic form', facs: 'facsimile form' };
+    const staleCount = $derived(record?.staleLevels?.length ?? 0);
+    const staleNames = $derived((record?.staleLevels ?? []).map((l) => LEVEL_NAMES[l] ?? l).join(' and '));
+    const newLabel = $derived(hasLemma ? 'Set a new lemma' : 'Treat it as a different word');
+
+    function keepOldLemma() {
+        if (!record) return;
+        const { lemma, msa } = record;
+        const current = get(lemmaMappings).mappings[wordIndex];
+        if (lemma && msa && (current?.lemma !== lemma || current?.msa !== msa)) {
+            sessionLemmaStore.confirmWithHistory(wordIndex, { lemma, msa });
+        }
+        importedStore.decide(record.key, 'same');
+    }
+
+    /** Drops the old word's lemma and analysis, so a new one can be set. */
+    function setNewLemma() {
+        if (!record) return;
+        const current = get(lemmaMappings).mappings[wordIndex];
+        if (current && current.lemma === record.lemma && current.msa === record.msa) {
+            sessionLemmaStore.unconfirmWithHistory(wordIndex, true, true);
+        }
+        selectedEntry = null;
+        selectedMappingId = null;
+        wordClass = '';
+        resetMorphology();
+        importedStore.decide(record.key, 'different');
+        document.getElementById('lemma-search')?.focus();
+    }
+
     // Load existing mappings on mount
     $effect(() => {
         loadExistingMappings();
@@ -274,6 +335,8 @@
         if (!selectedEntry || !msaString) {
             if (normChanged) {
                 sessionLemmaStore.setNormalized(wordIndex, chosenNormalized(), importedStore.isImportedMode);
+                // A normalized form chosen here answers whether the old one is still right
+                if (record?.staleLevels?.length && record.decision === null) importedStore.decide(record.key, 'same');
                 onsave?.(wordIndex);
                 onclose?.();
             }
@@ -314,6 +377,12 @@
                 msa: msaString,
                 normalized: chosen,
             });
+            // A lemma chosen for a replaced word answers whether it's the same word
+            if (record) {
+                const same = selectedEntry.lemma === record.lemma && sameAnalysis(msaString, record.msa ?? '');
+                const answer = same ? 'same' : 'different';
+                if (record.decision !== answer) importedStore.decide(record.key, answer);
+            }
 
             onsave?.(wordIndex, selectedEntry.lemma, msaString);
             onclose?.();
@@ -520,11 +589,11 @@
     <div class="flex items-center justify-between sticky top-0 bg-base-100 pb-2">
         <div>
             <h3 class="font-bold text-lg">Lemmatize: <span class="text-primary">{facsimile}</span></h3>
-            <span class="text-xs opacity-60">Word #{wordIndex}</span>
+            <span class="text-xs opacity-80">Word #{wordIndex}</span>
             {#if facsimile !== diplomatic}
-                <span class="text-xs opacity-60 ml-2">(dipl: {diplomatic})</span>
+                <span class="text-xs opacity-80 ml-2">(dipl: {diplomatic})</span>
             {/if}
-            {#if sessionConfirmation}
+            {#if shownConfirmation}
                 <span class="badge badge-success badge-xs ml-2">confirmed</span>
             {/if}
             {#if importedStore.editedWords.has(wordIndex)}
@@ -536,21 +605,95 @@
         </button>
     </div>
 
-    {#if importedStore.editedWords.has(wordIndex)}
-        <div role="status" class="alert alert-warning alert-soft text-sm py-2">
+    {#if record}
+        <div
+            role="group"
+            aria-labelledby="replaced-word-text"
+            class="flex flex-col gap-2 rounded-lg border p-3 {recordOpen ? 'border-warning/60' : 'border-base-300'}"
+        >
+            <p id="replaced-word-text" class="text-sm">
+                In the shorthand, this word replaced “<span class="font-medium">{record.was}</span>”,
+                {#if record.lemma}
+                    whose lemma is <span class="font-medium">{record.lemma}</span>
+                    {#if record.msa}<code class="text-xs px-1 rounded bg-base-300">{record.msa}</code>{/if}.
+                {:else if record.msa}
+                    whose analysis is <code class="text-xs px-1 rounded bg-base-300">{record.msa}</code>.
+                {:else}
+                    which has no lemma.
+                {/if}
+                {#if !record.lemma && !record.msa}
+                    {#if record.decision === 'same'}
+                        It is the same word, corrected, and keeps its normalized form.
+                    {:else if record.decision === 'different'}
+                        It is a different word, without the old normalized form.
+                    {:else if record.suggestion === 'same'}
+                        The forms are alike, so the word keeps its normalized form until you choose.
+                    {:else}
+                        The forms differ, so the word is without its normalized form until you choose.
+                    {/if}
+                {:else if record.decision === 'same'}
+                    It is kept: the same word, corrected.
+                {:else if record.decision === 'different'}
+                    It was removed with the analysis and normalized form: a different word.
+                {:else if record.suggestion === 'same'}
+                    The forms are alike, so the word keeps it until you choose.
+                {:else}
+                    The forms differ, so the word is without it until you choose.
+                {/if}
+                {#if record.annotated}
+                    Its annotations (<span class="font-medium">Annotate</span> tab) stay with it
+                    either way: check that they still fit.
+                {/if}
+                {#if staleNames}
+                    The edit couldn’t be carried into its {staleNames}, which {staleCount > 1 ? 'were' : 'was'}
+                    kept as the file has {staleCount > 1 ? 'them' : 'it'} and may now be out of date: check
+                    {staleCount > 1 ? 'them' : 'it'} below.
+                {/if}
+            </p>
+            <details class="text-sm">
+                <summary class="cursor-pointer opacity-80">The replaced word’s XML</summary>
+                <pre class="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-base-200 p-2 text-xs">{record.xml}</pre>
+            </details>
+            <div class="flex flex-wrap gap-2">
+                {#if record.decision !== 'same'}
+                    <button
+                        type="button"
+                        class="btn btn-sm {recordOpen && record.suggestion === 'same' ? 'btn-primary' : 'btn-ghost border-base-300'}"
+                        onclick={keepOldLemma}
+                    >
+                        {record.decision === 'different'
+                            ? `${keepLabel} after all`
+                            : keepLabel}
+                    </button>
+                {/if}
+                {#if record.decision !== 'different'}
+                    <button
+                        type="button"
+                        class="btn btn-sm {recordOpen && record.suggestion === 'different' ? 'btn-primary' : 'btn-ghost border-base-300'}"
+                        onclick={setNewLemma}
+                    >
+                        {record.decision === 'same'
+                            ? `${newLabel} instead`
+                            : newLabel}
+                    </button>
+                {/if}
+            </div>
+        </div>
+    {:else if importedStore.editedWords.has(wordIndex)}
+        <div role="status" class="alert alert-warning alert-soft text-base-content text-sm py-2">
             This word was edited after import. Its lemma, analysis and normalized
             form are still the original word's: check that they fit.
         </div>
     {/if}
 
-    {#if sessionConfirmation}
+    {#if shownConfirmation}
         <div class="flex items-center justify-between gap-2 rounded-lg border border-success/40 p-3">
             <div class="text-sm">
-                <span class="opacity-70">Lemma:</span>
-                <span class="font-medium">{sessionConfirmation.lemma}</span>
-                <code class="ml-1 text-xs px-1 rounded bg-base-300">{sessionConfirmation.msa}</code>
+                <span class="opacity-80">Lemma:</span>
+                <span class="font-medium">{shownConfirmation.lemma}</span>
+                <code class="ml-1 text-xs px-1 rounded bg-base-300">{shownConfirmation.msa}</code>
             </div>
-            <button type="button" class="btn btn-sm btn-outline btn-error" onclick={handleRemoveLemma}>
+            <button type="button" class="btn btn-sm btn-ghost border-base-300 hover:bg-error/15 focus-visible:bg-error/15" onclick={handleRemoveLemma}>
                 Remove lemma
             </button>
         </div>
@@ -584,7 +727,7 @@
                                 class:bg-base-300={!isSelected}
                             >{mapping.analysis}</code>
                             {#if mapping.normalized}
-                                <span class="ml-2 text-xs opacity-70">→ {mapping.normalized}</span>
+                                <span class="ml-2 text-xs opacity-80">→ {mapping.normalized}</span>
                             {/if}
                         </button>
                         <button
@@ -607,7 +750,7 @@
         <label class="label" for="lemma-search">
             <span class="label-text">Search ONP dictionary</span>
             {#if !$dictionaryStore.loaded}
-                <span class="label-text-alt text-warning">Dictionary not loaded</span>
+                <span class="label-text-alt flex items-center gap-1"><TriangleAlert size={14} class="text-warning" aria-hidden="true" />Dictionary not loaded</span>
             {/if}
         </label>
         <input
@@ -615,6 +758,7 @@
             type="text"
             class="input input-bordered"
             placeholder="Headword, e.g. maðr"
+            data-autofocus
             bind:value={searchQuery}
             disabled={!$dictionaryStore.loaded}
         />
@@ -623,13 +767,13 @@
     {#if isSearching}
         <div class="flex items-center justify-center py-4">
             <span class="loading loading-spinner loading-sm"></span>
-            <span class="ml-2 text-sm opacity-70">Searching...</span>
+            <span class="ml-2 text-sm opacity-80">Searching...</span>
         </div>
     {:else if searchResults.length > 0}
         <div class="max-h-40 overflow-y-auto border border-base-300 rounded-lg">
             <ul class="menu menu-sm p-0" role="listbox" aria-label="Search results">
                 {#each searchResults as entry}
-                    <li>
+                    <li role="presentation">
                         <button
                             type="button"
                             role="option"
@@ -648,7 +792,7 @@
             </ul>
         </div>
     {:else if searchQuery.length >= 1}
-        <p class="text-sm opacity-70 text-center py-2">
+        <p class="text-sm opacity-80 text-center py-2">
             No headword “{searchQuery}”. Search for the dictionary form (maðr, not manni).
         </p>
     {/if}
@@ -676,10 +820,10 @@
             {#if isLoadingFull}
                 <div class="flex items-center py-2">
                     <span class="loading loading-spinner loading-xs"></span>
-                    <span class="ml-2 text-sm opacity-70">Loading definition...</span>
+                    <span class="ml-2 text-sm opacity-80">Loading definition...</span>
                 </div>
             {:else if fullEntryError}
-                <div role="status" class="alert alert-warning alert-soft text-sm py-2 mb-3">
+                <div role="status" class="alert alert-warning alert-soft text-base-content text-sm py-2 mb-3">
                     <span>
                         {fullEntryError} The definition isn't available; you can still
                         choose the word class and analysis below.
@@ -831,7 +975,7 @@
 
                 {#if msaString}
                     <div class="mt-3 p-2 bg-base-300 rounded">
-                        <span class="text-xs opacity-70">me:msa:</span>
+                        <span class="text-xs opacity-80">me:msa:</span>
                         <code class="ml-1 font-mono text-sm">{msaString}</code>
                     </div>
                 {/if}
@@ -875,9 +1019,20 @@
                         {importedStore.isImportedMode ? "Use the file's" : 'Use generated'}
                     </button>
                 {/if}
+                {#if derive}
+                    <button
+                        type="button"
+                        class="btn btn-ghost btn-sm"
+                        onclick={useDerived}
+                        disabled={deriving}
+                        title="Put in the normalized form the shorthand gives the word (then save)"
+                    >
+                        From the shorthand
+                    </button>
+                {/if}
             </div>
             {#if normChanged && !sessionConfirmation && (!selectedEntry || !msaString)}
-                <div class="text-xs opacity-60 mt-1">Saved without a lemma</div>
+                <div class="text-xs opacity-80 mt-1">Saved without a lemma</div>
             {/if}
         </div>
     {/if}

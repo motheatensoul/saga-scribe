@@ -8,7 +8,7 @@
         availableSchemas,
         selectedSchemaId,
     } from "$lib/stores/validation";
-    import { listSchemas, validateXml } from "$lib/tauri";
+    import { listSchemas, validateXml, type WordRecord } from "$lib/tauri";
     import { errorStore } from "$lib/stores/errors";
     import {
         CircleCheck,
@@ -18,8 +18,22 @@
     } from "@lucide/svelte";
     import { onMount } from "svelte";
 
-    let { xmlContent, onclose }: { xmlContent: string; onclose?: () => void } =
-        $props();
+    let {
+        xmlContent,
+        records = [],
+        recordsDsl = "",
+        onopenword,
+        onclose,
+    }: {
+        xmlContent: string;
+        /** Replaced words still to be decided (imported documents) */
+        records?: WordRecord[];
+        /** The DSL the records' positions are in */
+        recordsDsl?: string;
+        /** Opens the word panel on a word */
+        onopenword?: (word: number) => void;
+        onclose?: () => void;
+    } = $props();
 
     onMount(async () => {
         try {
@@ -72,16 +86,17 @@
     <div
         class="flex justify-between items-center p-3 border-b border-base-300"
     >
-        <h2 class="flex items-center gap-2 font-bold">
+        <h2 id="validation-title" class="flex items-center gap-2 font-bold">
             XML Validation
             {#if $validationResult?.valid === true}
-                <CircleCheck class="text-success" size={16} />
+                <CircleCheck class="text-success" size={16} aria-hidden="true" /><span class="sr-only">(valid)</span>
             {:else if $validationResult?.valid === false}
-                <CloseIcon class="text-error" size={16} />
+                <CloseIcon class="text-error" size={16} aria-hidden="true" /><span class="sr-only">(invalid)</span>
             {/if}
         </h2>
         <div class="flex gap-2 items-center">
             <select
+                aria-label="Schema"
                 class="select select-xs select-bordered bg-base-100 text-base-content"
                 value={$selectedSchemaId}
                 onchange={handleSchemaChange}
@@ -112,14 +127,44 @@
     </div>
 
     <div class="overflow-y-auto flex-1 p-2">
+        {#if records.length > 0}
+            <section class="mb-3 pb-2 border-b border-base-300" aria-labelledby="validation-records-title">
+                <h3 id="validation-records-title" class="flex items-center gap-1 font-bold text-xs mb-1">
+                    <TriangleAlert size={14} class="text-warning" aria-hidden="true" />
+                    Replaced words to decide ({records.length})
+                </h3>
+                <p class="text-xs opacity-80 mb-1">
+                    The XML has the suggested answer until you decide in the word panel.
+                </p>
+                <ul>
+                    {#each records as record (record.key)}
+                        <li class="grid grid-cols-[1fr_auto] gap-2 p-1.5 rounded hover:bg-base-content/10 items-center">
+                            <span class="wrap-break-word">
+                                {record.was} → {recordsDsl.slice(record.from, record.to)}
+                                <span class="opacity-80 text-xs">
+                                    ({record.lemma ?? record.msa}; suggested: {record.suggestion === "same" ? "same word" : "different word"})
+                                </span>
+                            </span>
+                            {#if record.word !== null && onopenword}
+                                {@const word = record.word}
+                                <button class="btn btn-ghost btn-xs" onclick={() => onopenword(word)}>
+                                    Open<span class="sr-only"> {recordsDsl.slice(record.from, record.to)} in the word panel</span>
+                                </button>
+                            {/if}
+                        </li>
+                    {/each}
+                </ul>
+            </section>
+        {/if}
         {#if $isValidating}
             <div class="text-center py-8 flex items-center justify-center gap-2">
                 <Loader class="animate-spin" size={20} />
                 <span>Validating...</span>
             </div>
         {:else if $validationError}
-            <div class="p-4 bg-error/20 rounded text-error">
-                {$validationError}
+            <div class="alert alert-error alert-soft text-base-content">
+                <CloseIcon size={18} class="text-error shrink-0" aria-hidden="true" />
+                <span>{$validationError}</span>
             </div>
         {:else if $validationResult}
             {#if $validationResult.valid}
@@ -131,13 +176,13 @@
                 </div>
             {:else}
                 <div class="mb-2 flex gap-4 text-xs">
-                    <span class="flex items-center gap-1 text-error">
-                        <CloseIcon size={14} />
+                    <span class="flex items-center gap-1">
+                        <CloseIcon size={14} class="text-error" aria-hidden="true" />
                         {$validationCounts.errors} error(s)
                     </span>
                     {#if $validationCounts.warnings > 0}
-                        <span class="flex items-center gap-1 text-warning">
-                            <TriangleAlert size={14} />
+                        <span class="flex items-center gap-1">
+                            <TriangleAlert size={14} class="text-warning" aria-hidden="true" />
                             {$validationCounts.warnings} warning(s)
                         </span>
                     {/if}
@@ -152,10 +197,11 @@
                             class:text-error={!error.isWarning}
                             class:text-warning={error.isWarning}
                         >
-                            {error.isWarning ? "⚠" : "✕"}
+                            <span aria-hidden="true">{error.isWarning ? "⚠" : "✕"}</span>
+                            <span class="sr-only">{error.isWarning ? "Warning:" : "Error:"}</span>
                         </span>
                         {#if error.line}
-                            <span class="opacity-50 text-xs">Line {error.line}</span>
+                            <span class="opacity-80 text-xs">Line {error.line}</span>
                         {:else}
                             <span></span>
                         {/if}
@@ -164,7 +210,7 @@
                 {/each}
             {/if}
         {:else}
-            <div class="text-center py-8 opacity-50">
+            <div class="text-center py-8 opacity-80">
                 Select a schema and click "Validate" to check your XML
             </div>
         {/if}

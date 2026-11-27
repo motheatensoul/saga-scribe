@@ -2,8 +2,8 @@
 Name=Saga Scribe
 Comment=TEI-XML manuscript transcription editor with custom DSL shorthand
 GenericName=Manuscript Transcription Editor
-Categories=Office;TextEditor;Education;Literature;
-Keywords=TEI;XML;transcription;manuscript;MENOTA;DSL;Old Norse;
+Categories=Office;TextEditor;TextTools;Education;Literature;
+Keywords=TEI;XML;transcription;manuscript;MENOTA;Old Norse;medieval;paleography;digital edition;DSE;MUFI;altnordisch;digitale edition;norrønt;fornnordisk;filologi;
 Exec=saga-scribe %f
 Icon=app.sagascribe.Sagascribe
 StartupWMClass=saga-scribe

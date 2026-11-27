@@ -67,12 +67,13 @@ export function generateStandaloneHtml(
             user-select: none;
         }
 
+        /* Greys no lighter than #666 (5.7:1 on white, WCAG AA) */
         .word-break-mark {
-            color: #888;
+            color: #666;
         }
 
         .paragraph-mark {
-            color: #aaa;
+            color: #666;
             margin-right: 0.25rem;
         }
 
@@ -132,7 +133,7 @@ export function generateStandaloneHtml(
         }
 
         .gap {
-            color: #888;
+            color: #666;
             font-style: italic;
         }
 

@@ -35,6 +35,10 @@ export const teiDslHighlightStyle = HighlightStyle.define([
   { tag: tags.separator, class: "cmt-separator" },
   // Gap [...]
   { tag: tags.special(tags.string), class: "cmt-gap" },
+  // Escaped character \c
+  { tag: tags.escape, class: "cmt-escape" },
+  // Numeral #.x.#
+  { tag: tags.number, class: "cmt-number" },
 ]);
 
 /**
@@ -47,6 +51,8 @@ const parserWithMetadata = parser.configure({
       PageBreak: tags.processingInstruction,
       LineBreak: tags.processingInstruction,
       ParagraphBreak: tags.processingInstruction,
+      ColumnBreak: tags.processingInstruction,
+      WordContinuationColumnBreak: tags.separator,
       WordContinuationPageBreak: tags.separator,
       WordContinuationLineBreak: tags.separator,
 
@@ -86,6 +92,19 @@ const parserWithMetadata = parser.configure({
 
       // Entity
       Entity: tags.atom,
+      // {mark=expansion}
+      Expansion: tags.keyword,
+
+      // Escaped character, numeral
+      Literal: tags.escape,
+      Numeral: tags.number,
+
+      // Markup (.q{…}, *{…}*): its delimiters; the content is shorthand
+      MarkupOpen: tags.keyword,
+      MarkupMiddle: tags.keyword,
+      MarkupClose: tags.keyword,
+      HandShift: tags.keyword,
+      Space: tags.special(tags.string),
 
       // Word boundary and compound join
       WordBoundary: tags.separator,
@@ -100,10 +119,9 @@ const parserWithMetadata = parser.configure({
  * @lezer/lr and @codemirror/language's nested @lezer/lr dependency
  */
 export const teiDslLanguage = LRLanguage.define({
+  // No commentTokens: `^{…}` is a note, not a comment, and CodeMirror's comment
+  // toggle would take Ctrl+/ (Help) in the editor.
   parser: parserWithMetadata as any,
-  languageData: {
-    commentTokens: { block: { open: "^{", close: "}" } },
-  },
 });
 
 /**
@@ -125,9 +143,10 @@ export const teiDslFolding = foldService.of((state, lineStart, _lineEnd) => {
   const line = state.doc.lineAt(lineStart);
   const lineText = state.sliceDoc(line.from, line.to);
 
-  // Check if this line starts with /// (page break) but not ~/// (word continuation)
+  // Check if this line starts with /// (page break) but not ~/// (word
+  // continuation) or ///c= (column break)
   const trimmed = lineText.trimStart();
-  if (!trimmed.startsWith("///")) {
+  if (!trimmed.startsWith("///") || trimmed.startsWith("///c=")) {
     return null;
   }
 
@@ -148,8 +167,8 @@ export const teiDslFolding = foldService.of((state, lineStart, _lineEnd) => {
     const idx = docText.indexOf("///", searchPos);
     if (idx === -1) break;
 
-    // Make sure it's not a word continuation (~///)
-    if (idx === 0 || docText[idx - 1] !== "~") {
+    // Make sure it's not a word continuation (~///) or a column break
+    if ((idx === 0 || docText[idx - 1] !== "~") && !docText.startsWith("///c=", idx)) {
       // Also check it's at the start of a line (or after whitespace)
       const charBefore = idx > 0 ? docText[idx - 1] : "\n";
       if (charBefore === "\n" || charBefore === " " || charBefore === "\t") {

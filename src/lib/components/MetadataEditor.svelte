@@ -1,4 +1,5 @@
 <script lang="ts">
+    import { dialogFocus } from "$lib/utils/dialogFocus";
     import { X as CloseButton, ChevronDown, ChevronRight, Plus, Trash2 } from "@lucide/svelte";
     import type {
         Metadata,
@@ -176,6 +177,7 @@
         aria-modal="true"
         aria-labelledby="metadata-editor-title"
         tabindex="-1"
+        {@attach dialogFocus}
     >
         <div
             class="bg-base-100 rounded-lg shadow-xl w-full max-w-4xl mx-4 max-h-[90vh] flex flex-col"
@@ -201,6 +203,7 @@
                 <!-- Title Statement Section -->
                 <div class="collapse collapse-arrow bg-base-200">
                     <input
+                        aria-label="Show Title &amp; Responsibility"
                         type="checkbox"
                         checked={sections.title}
                         onchange={() => toggleSection("title")}
@@ -274,28 +277,33 @@
                                     class="flex items-center gap-2 mt-2 p-2 bg-base-300 rounded"
                                 >
                                     <input
+                                        aria-label="Name of editor {i + 1}"
                                         type="text"
                                         class="input input-bordered input-sm flex-1"
                                         bind:value={editor.name}
                                         placeholder="Editor name"
                                     />
                                     <input
+                                        aria-label="Identifier type of editor {i + 1}"
                                         type="text"
                                         class="input input-bordered input-sm w-32"
                                         bind:value={editor.identifierType}
                                         placeholder="ORCID"
                                     />
                                     <input
+                                        aria-label="Identifier of editor {i + 1}"
                                         type="text"
                                         class="input input-bordered input-sm w-40"
                                         bind:value={editor.identifier}
                                         placeholder="0000-0000-0000-0000"
                                     />
                                     <button
-                                        class="btn btn-ghost btn-sm btn-circle text-error"
+                                        class="btn btn-ghost btn-sm btn-circle hover:bg-error/15 focus-visible:bg-error/15"
                                         onclick={() => removeEditor(i)}
+                                        aria-label="Remove editor {i + 1}"
+                                        title="Remove editor"
                                     >
-                                        <Trash2 size="14" />
+                                        <Trash2 size="14" aria-hidden="true" />
                                     </button>
                                 </div>
                             {/each}
@@ -319,6 +327,7 @@
                                     class="flex items-center gap-2 mt-2 p-2 bg-base-300 rounded"
                                 >
                                     <select
+                                        aria-label="Responsibility {i + 1}"
                                         class="select select-bordered select-sm w-40"
                                         bind:value={resp.resp}
                                     >
@@ -338,16 +347,19 @@
                                         >
                                     </select>
                                     <input
+                                        aria-label="Name for responsibility {i + 1}"
                                         type="text"
                                         class="input input-bordered input-sm flex-1"
                                         bind:value={resp.name}
                                         placeholder="Name"
                                     />
                                     <button
-                                        class="btn btn-ghost btn-sm btn-circle text-error"
+                                        class="btn btn-ghost btn-sm btn-circle hover:bg-error/15 focus-visible:bg-error/15"
                                         onclick={() => removeRespStmt(i)}
+                                        aria-label="Remove responsibility statement {i + 1}"
+                                        title="Remove responsibility statement"
                                     >
-                                        <Trash2 size="14" />
+                                        <Trash2 size="14" aria-hidden="true" />
                                     </button>
                                 </div>
                             {/each}
@@ -358,6 +370,7 @@
                 <!-- Publication Section -->
                 <div class="collapse collapse-arrow bg-base-200">
                     <input
+                        aria-label="Show Publication Information"
                         type="checkbox"
                         checked={sections.publication}
                         onchange={() => toggleSection("publication")}
@@ -420,6 +433,7 @@
                                 </label>
                                 <div class="flex gap-2">
                                     <select
+                                        aria-label="Digital identifier type"
                                         class="select select-bordered w-24"
                                         bind:value={editData.publicationStmt
                                             .idnoType}
@@ -465,6 +479,7 @@
                             </div>
                             {#if editData.publicationStmt.availability}
                             <input
+                                aria-label="Licence URL"
                                 type="text"
                                 class="input input-bordered input-sm"
                                 bind:value={editData.publicationStmt.availability
@@ -479,6 +494,7 @@
                 <!-- Manuscript Identifier Section -->
                 <div class="collapse collapse-arrow bg-base-200">
                     <input
+                        aria-label="Show Manuscript Identifier"
                         type="checkbox"
                         checked={sections.manuscript}
                         onchange={() => toggleSection("manuscript")}
@@ -595,6 +611,7 @@
                                     class="flex items-center gap-2 mt-2 p-2 bg-base-300 rounded"
                                 >
                                     <select
+                                        aria-label="Type of alternative identifier {i + 1}"
                                         class="select select-bordered select-sm w-32"
                                         bind:value={alt.idType}
                                     >
@@ -606,16 +623,19 @@
                                         >
                                     </select>
                                     <input
+                                        aria-label="Alternative identifier {i + 1}"
                                         type="text"
                                         class="input input-bordered input-sm flex-1"
                                         bind:value={alt.idno}
                                         placeholder="Identifier"
                                     />
                                     <button
-                                        class="btn btn-ghost btn-sm btn-circle text-error"
+                                        class="btn btn-ghost btn-sm btn-circle hover:bg-error/15 focus-visible:bg-error/15"
                                         onclick={() => removeAltIdentifier(i)}
+                                        aria-label="Remove alternative identifier {i + 1}"
+                                        title="Remove alternative identifier"
                                     >
-                                        <Trash2 size="14" />
+                                        <Trash2 size="14" aria-hidden="true" />
                                     </button>
                                 </div>
                             {/each}
@@ -626,6 +646,7 @@
                 <!-- Contents Section -->
                 <div class="collapse collapse-arrow bg-base-200">
                     <input
+                        aria-label="Show Manuscript Contents"
                         type="checkbox"
                         checked={sections.contents}
                         onchange={() => toggleSection("contents")}
@@ -688,6 +709,7 @@
                 <!-- Physical Description Section -->
                 <div class="collapse collapse-arrow bg-base-200">
                     <input
+                        aria-label="Show Physical Description"
                         type="checkbox"
                         checked={sections.physical}
                         onchange={() => toggleSection("physical")}
@@ -787,12 +809,14 @@
                                 >
                                     <div class="flex items-center gap-2">
                                         <input
+                                            aria-label="ID of hand {i + 1}"
                                             type="text"
                                             class="input input-bordered input-sm w-20"
                                             bind:value={hand.id}
                                             placeholder="H1"
                                         />
                                         <select
+                                            aria-label="Script of hand {i + 1}"
                                             class="select select-bordered select-sm w-32"
                                             bind:value={hand.script}
                                         >
@@ -810,6 +834,7 @@
                                             >
                                         </select>
                                         <select
+                                            aria-label="Scope of hand {i + 1}"
                                             class="select select-bordered select-sm w-28"
                                             bind:value={hand.scope}
                                         >
@@ -819,13 +844,16 @@
                                             <option value="minor">Minor</option>
                                         </select>
                                         <button
-                                            class="btn btn-ghost btn-sm btn-circle text-error ml-auto"
+                                            class="btn btn-ghost btn-sm btn-circle hover:bg-error/15 focus-visible:bg-error/15 ml-auto"
                                             onclick={() => removeHand(i)}
+                                            aria-label="Remove hand {i + 1}"
+                                            title="Remove hand"
                                         >
-                                            <Trash2 size="14" />
+                                            <Trash2 size="14" aria-hidden="true" />
                                         </button>
                                     </div>
                                     <input
+                                        aria-label="Description of hand {i + 1}"
                                         type="text"
                                         class="input input-bordered input-sm w-full"
                                         bind:value={hand.description}
@@ -840,6 +868,7 @@
                 <!-- History Section -->
                 <div class="collapse collapse-arrow bg-base-200">
                     <input
+                        aria-label="Show History"
                         type="checkbox"
                         checked={sections.history}
                         onchange={() => toggleSection("history")}
@@ -855,6 +884,7 @@
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
                                 <input
+                                    aria-label="Date of origin as written"
                                     type="text"
                                     class="input input-bordered"
                                     value={editData.history.origDate?.display ?? ""}
@@ -865,6 +895,7 @@
                                     placeholder="ca. 1270-1280"
                                 />
                                 <input
+                                    aria-label="Not before"
                                     type="text"
                                     class="input input-bordered"
                                     value={editData.history.origDate?.notBefore ?? ""}
@@ -875,6 +906,7 @@
                                     placeholder="Not before (1270)"
                                 />
                                 <input
+                                    aria-label="Not after"
                                     type="text"
                                     class="input input-bordered"
                                     value={editData.history.origDate?.notAfter ?? ""}
@@ -930,6 +962,7 @@
                 <!-- Languages Section -->
                 <div class="collapse collapse-arrow bg-base-200">
                     <input
+                        aria-label="Show Languages Used"
                         type="checkbox"
                         checked={sections.languages}
                         onchange={() => toggleSection("languages")}
@@ -939,7 +972,7 @@
                     </div>
                     <div class="collapse-content space-y-4">
                         <div class="flex items-center justify-between">
-                            <span class="text-sm text-base-content/70"
+                            <span class="text-sm text-base-content/80"
                                 >List all languages used in the transcription</span
                             >
                             <button
@@ -954,6 +987,7 @@
                                 class="flex items-center gap-2 p-2 bg-base-300 rounded"
                             >
                                 <select
+                                    aria-label="Language {i + 1}"
                                     class="select select-bordered select-sm w-48"
                                     value={lang.ident}
                                     onchange={(e) =>
@@ -970,6 +1004,7 @@
                                     {/each}
                                 </select>
                                 <input
+                                    aria-label="Share of language {i + 1} in percent"
                                     type="number"
                                     class="input input-bordered input-sm w-20"
                                     bind:value={lang.usage}
@@ -977,13 +1012,15 @@
                                     min="0"
                                     max="100"
                                 />
-                                <span class="text-sm text-base-content/70">%</span
+                                <span class="text-sm text-base-content/80">%</span
                                 >
                                 <button
-                                    class="btn btn-ghost btn-sm btn-circle text-error ml-auto"
+                                    class="btn btn-ghost btn-sm btn-circle hover:bg-error/15 focus-visible:bg-error/15 ml-auto"
                                     onclick={() => removeLanguage(i)}
+                                    aria-label="Remove language {i + 1}"
+                                    title="Remove language"
                                 >
-                                    <Trash2 size="14" />
+                                    <Trash2 size="14" aria-hidden="true" />
                                 </button>
                             </div>
                         {/each}

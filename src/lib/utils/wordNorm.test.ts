@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { wordNormalizedForm, wordsWithDiplomaticForm } from "./wordNorm";
+import { wordForms, wordNormalizedForm, wordsWithDiplomaticForm } from "./wordNorm";
 
 const word = (norm: string) =>
     `<w lemma="x"><choice><me:facs>f</me:facs><me:dipl>d</me:dipl><me:norm>${norm}</me:norm></choice></w>`;
@@ -39,5 +39,20 @@ describe("wordsWithDiplomaticForm", () => {
 
     it("finds nothing in XML that doesn't parse", () => {
         expect(wordsWithDiplomaticForm("<w>ok", "ok")).toEqual([]);
+    });
+});
+
+describe("wordForms", () => {
+    const entities = { aelig: { unicode: "U+00E6", char: "æ", description: "", category: "" } };
+
+    it("gives the n-th word's facsimile and diplomatic forms", () => {
+        const xml = `<body><p>${word("ok")} <w><choice><me:facs>b&aelig;<ex>k</ex>r</me:facs><me:dipl>bækr</me:dipl><me:norm>bækr</me:norm></choice></w></p></body>`;
+        expect(wordForms(xml, 1, entities)).toEqual({ facsimile: "bækr", diplomatic: "bækr" });
+        expect(wordForms(xml, 0, entities)).toEqual({ facsimile: "f", diplomatic: "d" });
+        expect(wordForms(xml, 2, entities)).toBeNull();
+    });
+
+    it("uses a single-level word's text for both", () => {
+        expect(wordForms("<p><w>ma<lb/>þr</w></p>", 0, {})).toEqual({ facsimile: "maþr", diplomatic: "maþr" });
     });
 });

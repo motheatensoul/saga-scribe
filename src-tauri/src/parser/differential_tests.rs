@@ -3,12 +3,48 @@
 //! gives the same nodes; wherever it rejected input, the new parser rejects it
 //! with the same message. The only intended difference: errors inside block
 //! content (`.head{...}` etc.) are now reported, where the old lexer accepted
-//! the block and its content failed later, when compiled.
+//! the block and its content failed later, when compiled. Syntax added
+//! since (`\c`, `#numeral#`, `//{n}`, `{mark=expansion}`, markup such as
+//! `.q{…}` and `*{…}*`, `///c=`) is new to the parser, so input with `\`,
+//! `#`, `//{`, an expansion or markup isn't compared. Supplied text (`<…>`) is now parsed as
+//! DSL, so errors in it are reported (as nested ones).
 
 use super::legacy_lexer::LegacyLexer;
 use super::syntax;
 
+/// Whether the parser reads `{mark=expansion}` in `source`, or fails at a
+/// brace (which now starts one): syntax the old lexer didn't know.
+fn uses_expansions(source: &str) -> bool {
+    fn any(nodes: &[syntax::SyntaxNode]) -> bool {
+        nodes.iter().any(|n| match &n.kind {
+            syntax::SyntaxKind::Expansion { .. }
+            | syntax::SyntaxKind::Markup { .. }
+            | syntax::SyntaxKind::Space { .. }
+            | syntax::SyntaxKind::HandShift { .. }
+            | syntax::SyntaxKind::ColumnBreak { .. } => true,
+            syntax::SyntaxKind::Supplied { children, .. }
+            | syntax::SyntaxKind::SuppliedBlock { children, .. }
+            | syntax::SyntaxKind::Deletion { children, .. }
+            | syntax::SyntaxKind::Addition { children, .. }
+            | syntax::SyntaxKind::Head { children, .. }
+            | syntax::SyntaxKind::Norm { children, .. }
+            | syntax::SyntaxKind::Unclear { children, .. }
+            | syntax::SyntaxKind::Numeral { children, .. }
+            | syntax::SyntaxKind::Gap { children, .. } => any(children),
+            _ => false,
+        })
+    }
+    let tree = syntax::parse(source);
+    let new_opener = |at: &str| {
+        at.starts_with('{') || ["*{", "&{", "${", "///c="].iter().any(|o| at.starts_with(o)) || syntax::markup_name(at).is_some()
+    };
+    any(&tree.nodes) || tree.diagnostics.iter().any(|d| new_opener(&source[d.span.start..]))
+}
+
 fn assert_equivalent(source: &str) {
+    if source.contains(['\\', '#']) || source.contains("//{") || uses_expansions(source) {
+        return;
+    }
     let legacy = LegacyLexer::new(source).parse();
     let tree = syntax::parse(source);
     match legacy {

@@ -30,15 +30,22 @@
 //! | `//` | `<lb/>` | Line break |
 //! | `//n` | `<lb n="n"/>` | Numbered line break |
 //! | `///n` | `<pb n="n"/>` | Page break |
-//! | `.abbr[a]{b}` | `<choice><abbr>a</abbr><expan>b</expan></choice>` | Abbreviation |
+//! | `{m=e}` | `<am>m</am>` on facs, `<ex>e</ex>` on dipl | Abbreviation mark and expansion |
+//! | `.abbr[a]{b}` | `<choice><abbr>a</abbr><expan>b</expan></choice>` | Whole-word abbreviation |
 //! | `[...]` | `<gap/>` | Gap/lacuna |
 //! | `[...3]` | `<gap quantity="3"/>` | Gap with character count |
 //! | `[...<txt>]` | `<gap/><supplied>txt</supplied>` | Gap with supplied reading |
 //! | `<txt>` | `<supplied>txt</supplied>` | Editorial supplied text |
-//! | `-{txt}-` | `<del>txt</del>` | Deletion |
-//! | `+{txt}+` | `<add>txt</add>` | Addition |
-//! | `?{txt}?` | `<unclear>txt</unclear>` | Unclear reading |
+//! | `-{dsl}-` | `<del>…</del>` | Deletion (content is shorthand) |
+//! | `+{dsl}+` | `<add>…</add>` | Addition (content is shorthand) |
+//! | `?{dsl}?` | `<unclear>…</unclear>` | Unclear reading (content is shorthand) |
+//! | `#.x.#` | `<num>.x.</num>` | Numeral |
+//! | `\c` | `c` | The character as text, part of the word |
 //! | `^{txt}` | `<note>txt</note>` | Editorial note |
+//! | `.q{dsl}` | `<q>…</q>` | Any element: around words between them, inside a word attached to letters |
+//! | `*{dsl}*`, `&{dsl}`, `${dsl}` | `<hi>`, `<seg>`, `<surplus>` | Short forms |
+//! | `.corr{a=b}`, `.trans{a=b}` | `<choice><sic>a</sic><corr>b</corr></choice>`, `<orig>`/`<reg>` | Pairs |
+//! | `.rdg[w]{dsl}`, `.space[n]`, `.hs{h}`, `///c=B` | `<rdg wit>`, `<space>`, `<handShift>`, `<cb>` | |
 //! | `:name:` | `&name;` | Entity reference |
 //! | `~//` | Word continuation across line break | |
 //! | `upp~haf` | Compound word join | |
@@ -90,7 +97,7 @@ mod corpus_tests;
 #[cfg(test)]
 mod tests;
 
-pub use compiler::{Compiler, CompilerConfig, LemmaMapping, WordKey};
+pub use compiler::{Compiler, CompilerConfig, LemmaMapping, Levels, WordKey};
 
 // Re-export for use by importer/patching
 pub use ast::Node;

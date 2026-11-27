@@ -3,6 +3,24 @@
 	themes: caramellatte --default, coffee --prefersdark;
 }
 
+/*
+ * caramellatte's primary is pure black, which makes buttons, the active tab and
+ * focus rings harsh on its cream background. Shift its colours one step: primary
+ * takes the theme's own secondary (dark coffee brown), secondary its accent (so a
+ * primary button turning secondary on hover still changes). Values copied from
+ * daisyUI's caramellatte; all pairs keep WCAG AA (docs/UI_STANDARDS.md).
+ *
+ * A plain rule, outside any layer, on purpose: daisyUI's themes live in
+ * `@layer base` behind an `:is()` selector of high specificity, which a
+ * `@plugin 'daisyui/theme'` override in the same layer doesn't beat.
+ */
+[data-theme='caramellatte'] {
+	--color-primary: oklch(22.45% 0.075 37.85);
+	--color-primary-content: oklch(90% 0.076 70.697);
+	--color-secondary: oklch(46.44% 0.111 37.85);
+	--color-secondary-content: oklch(90% 0.076 70.697);
+}
+
 /* Junicode variable font for MENOTA/MUFI medieval characters */
 /* The variable font supports weight range 300-700, width 75-125, and ENLA axis */
 @font-face {
@@ -204,13 +222,26 @@ body {
 
 .cm-search .cm-close-search:hover {
     opacity: 1;
-    color: var(--color-error);
+    color: var(--error-text);
     background-color: color-mix(in oklch, var(--color-base-content) 10%, transparent);
 }
 
-/* CodeMirror syntax highlighting - theme aware */
+/*
+ * Status colours as text. The themes' error and warning are too light for text in
+ * caramellatte, so text in those colours is blended towards base-content just enough
+ * for 4.5:1 in both themes (docs/UI_STANDARDS.md, Accessibility). They stay a brick
+ * red and an amber brown there, and change little in coffee.
+ */
+:root {
+	--error-text: color-mix(in oklch, var(--color-error) 55%, var(--color-base-content));
+	--warning-text: color-mix(in oklch, var(--color-warning) 35%, var(--color-base-content));
+}
+
+/* CodeMirror syntax highlighting - theme aware. These rules win over
+   daisyHighlightStyle (src/lib/editor/theme.ts), whose styles CodeMirror inserts
+   at the start of <head>; that one shows only where these set no colour */
 .cmt-keyword {
-	color: var(--color-error);
+	color: var(--error-text);
 	font-weight: bold;
 }
 
@@ -223,12 +254,12 @@ body {
 }
 
 .cmt-comment {
-	color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+	color: color-mix(in oklch, var(--color-base-content) 80%, transparent);
 	font-style: italic;
 }
 
 .cmt-emphasis {
-	color: var(--color-warning);
+	color: var(--warning-text);
 	font-style: italic;
 }
 
@@ -237,7 +268,7 @@ body {
 }
 
 .cmt-deleted {
-	color: var(--color-error);
+	color: var(--error-text);
 	text-decoration: line-through;
 }
 
@@ -252,11 +283,21 @@ body {
 }
 
 .cmt-separator {
-	color: var(--color-warning);
+	color: var(--warning-text);
 	font-weight: bold;
 }
 
 .cmt-gap {
 	color: var(--color-info);
 	font-style: italic;
+}
+
+/* An escaped character (\;), marked like the word markers */
+.cmt-escape {
+	color: var(--warning-text);
+}
+
+.cmt-number {
+	color: var(--color-primary);
+	font-weight: bold;
 }

@@ -1,70 +1,68 @@
 app-id: app.sagascribe.Sagascribe
 runtime: org.gnome.Platform
-runtime-version: '51'
+runtime-version: "51"
 sdk: org.gnome.Sdk
-# The app is compiled inside the SDK, so it links the runtime's own libraries
-# (WebKitGTK, libxml2, …) and gets their security updates with the runtime.
 sdk-extensions:
-  - org.freedesktop.Sdk.Extension.rust-stable
-  # libclang, for the libxml crate's bindings (bindgen)
-  - org.freedesktop.Sdk.Extension.llvm22
+    - org.freedesktop.Sdk.Extension.rust-stable
+    # libclang, for the libxml crate's bindings (bindgen)
+    - org.freedesktop.Sdk.Extension.llvm22
 command: saga-scribe
 
 finish-args:
-  # Wayland and X11 display access
-  - --socket=wayland
-  - --socket=fallback-x11
-  - --share=ipc
-  # GPU acceleration for WebKitGTK
-  - --device=dri
-  # Network access for ONP dictionary lookups
-  - --share=network
-  # Home directory access for reading/writing manuscript files
-  - --filesystem=home
-  # XDG directories for file dialogs
-  - --filesystem=xdg-documents
-  - --filesystem=xdg-download
-  # D-Bus access for file dialogs and notifications
-  - --talk-name=org.freedesktop.Notifications
-  - --talk-name=org.gtk.vfs.*
-  - --filesystem=xdg-run/gvfsd
+    # Wayland and X11 display access
+    - --socket=wayland
+    - --socket=fallback-x11
+    - --share=ipc
+    # GPU acceleration for WebKitGTK
+    - --device=dri
+    # Network access for ONP dictionary lookups
+    - --share=network
+    # Home directory access for reading/writing manuscript files
+    - --filesystem=home
+    # XDG directories for file dialogs
+    - --filesystem=xdg-documents
+    - --filesystem=xdg-download
+    # D-Bus access for file dialogs and notifications
+    - --talk-name=org.freedesktop.Notifications
+    - --talk-name=org.gtk.vfs.*
+    - --filesystem=xdg-run/gvfsd
 
 modules:
-  - name: saga-scribe
-    buildsystem: simple
-    build-options:
-      append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin
-      prepend-ld-library-path: /usr/lib/sdk/llvm22/lib
-      env:
-        CARGO_HOME: /run/build/saga-scribe/cargo
-        LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
-      # Cargo downloads crates (fine for our builds; Flathub would need
-      # vendored sources generated with flatpak-cargo-generator)
-      build-args:
-        - --share=network
-    build-commands:
-      # The frontend is built beforehand with `bun run build` (no Bun in the SDK)
-      - test -f build/index.html || { echo "Run 'bun run build' first"; exit 1; }
-      # tauri/custom-protocol embeds the frontend, as `tauri build` does
-      - cargo build --release --locked --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
-      # Binary, renamed so the wrapper (which points Tauri at the resources) runs first
-      - install -Dm755 src-tauri/target/release/saga-scribe ${FLATPAK_DEST}/bin/saga-scribe.bin
-      - install -Dm755 flatpak/saga-scribe-wrapper.sh ${FLATPAK_DEST}/bin/saga-scribe
-      # Bundled resources next to the binary
-      - for dir in entities normalizer dictionary schemas; do cp -r static/$dir ${FLATPAK_DEST}/bin/; done
-      - install -Dm644 flatpak/app.sagascribe.Sagascribe.desktop ${FLATPAK_DEST}/share/applications/app.sagascribe.Sagascribe.desktop
-      - install -Dm644 flatpak/app.sagascribe.Sagascribe.metainfo.xml ${FLATPAK_DEST}/share/metainfo/app.sagascribe.Sagascribe.metainfo.xml
-      - install -Dm644 src-tauri/icons/icon.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/app.sagascribe.Sagascribe.png
-      - install -Dm644 src-tauri/icons/128x128@2x.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/app.sagascribe.Sagascribe.png
-      - install -Dm644 src-tauri/icons/128x128.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/app.sagascribe.Sagascribe.png
-    sources:
-      - type: dir
-        path: ..
-        skip:
-          - .git
-          - .svelte-kit
-          - .flatpak-builder
-          - node_modules
-          - src-tauri/target
-          - flatpak-build
-          - flatpak-repo
+    - name: saga-scribe
+      buildsystem: simple
+      build-options:
+          append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin
+          prepend-ld-library-path: /usr/lib/sdk/llvm22/lib
+          env:
+              CARGO_HOME: /run/build/saga-scribe/cargo
+              LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
+          # Cargo downloads crates (fine for our builds; Flathub would need
+          # vendored sources generated with flatpak-cargo-generator)
+          build-args:
+              - --share=network
+      build-commands:
+          # The frontend is built beforehand with `bun run build` (no Bun in the SDK)
+          - test -f build/index.html || { echo "Run 'bun run build' first"; exit 1; }
+          # tauri/custom-protocol embeds the frontend, as `tauri build` does
+          - cargo build --release --locked --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
+          # Binary, renamed so the wrapper (which points Tauri at the resources) runs first
+          - install -Dm755 src-tauri/target/release/saga-scribe ${FLATPAK_DEST}/bin/saga-scribe.bin
+          - install -Dm755 flatpak/saga-scribe-wrapper.sh ${FLATPAK_DEST}/bin/saga-scribe
+          # Bundled resources next to the binary
+          - for dir in entities normalizer dictionary schemas; do cp -r static/$dir ${FLATPAK_DEST}/bin/; done
+          - install -Dm644 flatpak/app.sagascribe.Sagascribe.desktop ${FLATPAK_DEST}/share/applications/app.sagascribe.Sagascribe.desktop
+          - install -Dm644 flatpak/app.sagascribe.Sagascribe.metainfo.xml ${FLATPAK_DEST}/share/metainfo/app.sagascribe.Sagascribe.metainfo.xml
+          - install -Dm644 src-tauri/icons/icon.png ${FLATPAK_DEST}/share/icons/hicolor/512x512/apps/app.sagascribe.Sagascribe.png
+          - install -Dm644 src-tauri/icons/128x128@2x.png ${FLATPAK_DEST}/share/icons/hicolor/256x256/apps/app.sagascribe.Sagascribe.png
+          - install -Dm644 src-tauri/icons/128x128.png ${FLATPAK_DEST}/share/icons/hicolor/128x128/apps/app.sagascribe.Sagascribe.png
+      sources:
+          - type: dir
+            path: ..
+            skip:
+                - .git
+                - .svelte-kit
+                - .flatpak-builder
+                - node_modules
+                - src-tauri/target
+                - flatpak-build
+                - flatpak-repo

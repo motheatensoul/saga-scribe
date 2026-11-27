@@ -1,7 +1,7 @@
 use super::tei::parse;
 use crate::importer::tei::helpers;
 use crate::importer::tei::patching::{
-    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body,
+    apply_patches_and_reconstruct, compiler_config_for, compute_patches, render_body, Originals,
     PatchOperation, Patcher, RenderedBody,
 };
 use crate::identity::{Guidance, TextChange};
@@ -25,8 +25,9 @@ fn test_import_lb() {
 fn test_import_pb() {
     let xml = "<body>page 1<pb/>page 2<pb n=\"10v\"/>page 3</body>";
     let result = parse(xml).unwrap();
-    // pb adds a newline BEFORE the marker
-    assert_eq!(result.dsl, "page 1\n///page 2\n///10vpage 3");
+    // pb adds a newline before the marker, and the text after it starts a new
+    // line (glued, "///10vpage" would read as the page number)
+    assert_eq!(result.dsl, "page 1\n///\npage 2\n///10v\npage 3");
 }
 
 #[test]
@@ -112,7 +113,8 @@ fn test_import_preserves_msa_attribute() {
 fn test_import_del_add() {
     let xml = "<body><del>deleted</del><add>added</add></body>";
     let result = parse(xml).unwrap();
-    assert_eq!(result.dsl, "-{deleted}-+{added}+");
+    // Two elements, two tokens: `|` keeps them apart
+    assert_eq!(result.dsl, "-{deleted}-|+{added}+");
 }
 
 #[test]
@@ -134,7 +136,8 @@ fn test_import_note() {
 fn test_import_note_inline() {
     let xml = "<body>word<note>editorial comment</note>next</body>";
     let result = parse(xml).unwrap();
-    assert_eq!(result.dsl, "word^{editorial comment}next");
+    // Glued to the word, the note would be part of it (as in `<w>word<note>`)
+    assert_eq!(result.dsl, "word ^{editorial comment}|next");
 }
 
 // ============================================================================
@@ -149,6 +152,7 @@ fn compile_dsl(dsl: &str) -> String {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     Compiler::new().with_config(config).compile(dsl).expect("Compilation should succeed")
 }
@@ -161,6 +165,7 @@ fn compile_dsl_with_word_wrap(dsl: &str) -> String {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     Compiler::new().with_config(config).compile(dsl).expect("Compilation should succeed")
 }
@@ -409,6 +414,7 @@ fn test_entity_syntax_compiles_to_character() {
         auto_line_numbers: false,
         multi_level: false,
         wrap_pages: false,
+        levels: None,
     };
     let xml = Compiler::new()
         .with_config(config)
@@ -469,8 +475,8 @@ fn test_import_character_annotation() {
     let xml = r#"<body><c type="initial">M</c>aðr</body>"#;
     let result = parse(xml).unwrap();
 
-    // DSL contains the full text
-    assert_eq!(result.dsl.trim(), "Maðr");
+    // The full text, as the two segments it is read as
+    assert_eq!(result.dsl.trim(), "M|aðr");
 }
 
 #[test]
@@ -699,6 +705,7 @@ fn test_menota_file_roundtrip_stability() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     });
     let reconstructed_body =
         apply_patches_and_reconstruct(&imported_doc.segments, &patches, &mut compiler);
@@ -793,6 +800,7 @@ fn test_menota_file_imported_roundtrip_xml() {
         auto_line_numbers: false,
         multi_level: true,
         wrap_pages: false,
+        levels: None,
     });
 
     let reconstructed_body =
@@ -991,6 +999,23 @@ fn imported_roundtrip(xml: &str, edit: impl Fn(&str) -> String) -> Result<(Strin
     imported_render(xml, edit).map(|(original, rendered)| (original, rendered.xml))
 }
 
+/// The file of an import as a tree, with its segments' places.
+fn tree_source(
+    preamble: &Option<String>,
+    body: &str,
+    postamble: &Option<String>,
+    doc: &crate::importer::tei::segments::ImportedDocument,
+) -> Option<crate::importer::tei::apply::TreeSource> {
+    crate::importer::tei::apply::TreeSource::new(
+        preamble.as_deref().unwrap_or_default(),
+        body,
+        postamble.as_deref().unwrap_or_default(),
+        &doc.segments,
+        doc.spans.as_deref()?,
+    )
+    .ok()
+}
+
 /// Like [`imported_roundtrip`], with the full render result.
 fn imported_render(
     xml: &str,
@@ -1000,9 +1025,81 @@ fn imported_render(
     let doc = import.imported_document.expect("manifest");
     let original_body = import.original_body_xml.expect("body");
     let patches = compute_patches(&doc.segments, doc.dsl_rules, &edit(&import.dsl))?;
-    let mut compiler = Compiler::new().with_config(compiler_config_for(&doc));
-    let body = render_body(&doc, Some(&original_body), &patches, &mut compiler)?;
+    let tree = tree_source(&import.original_preamble, &original_body, &import.original_postamble, &doc);
+    let mut compiler = Compiler::new().with_config(compiler_config_for(&doc, Originals::new(tree.as_ref())));
+    // As a session holds it: without the copies of the XML the tree has
+    let mut doc = doc;
+    if let Some(tree) = &tree {
+        doc.drop_copies(|id| tree.segment_xml(id), |id| tree.segment_attributes(id));
+    }
+    let body = render_body(&doc, Some(&original_body), tree.as_ref(), &patches, &mut compiler)?;
     Ok((original_body, body))
+}
+
+// ============================================================================
+// EDITED WORDS KEEP THEIR MARKUP (document/merge.rs)
+// ============================================================================
+
+/// A MENOTA body with `words` in one paragraph.
+fn menota_body(words: &str) -> String {
+    format!(
+        r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
+<p>{words}</p>
+</body></text></TEI>"#
+    )
+}
+
+#[test]
+fn test_edit_keeps_expansion_in_a_diplomatic_only_word() {
+    // DG 8: the expansion has no mark; the shorthand reads "hæn{=n}aR"
+    let xml = menota_body(r#"<w xml:id="w28" lemma="hon"><me:dipl>hæn<ex>n</ex>aR</me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| {
+        assert!(d.contains("hæn{=n}aR"), "{d}");
+        d.replace("hæn{=n}aR", "hæn{=n}aRR")
+    })
+    .unwrap();
+    assert!(
+        body.contains(r#"<w xml:id="w28" lemma="hon"><me:dipl>hæn<ex>n</ex>aRR</me:dipl></w>"#),
+        "{body}"
+    );
+}
+
+#[test]
+fn test_edit_keeps_supplied_text_and_gap_attributes_and_adds_no_level() {
+    // AM 242 fol: an initial left for the rubricator, supplied on the dipl level
+    let xml = menota_body(
+        r#"<w><me:facs><gap extent="1" unit="initial"/>erollꝺin</me:facs><me:dipl><supplied reason="empty space" resp="KGJ">V</supplied>erollꝺin</me:dipl></w> <w><me:facs>ok</me:facs><me:dipl>ok</me:dipl></w>"#,
+    );
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("erollꝺin", "erollꝺinn")).unwrap();
+    assert!(body.contains(r#"<gap extent="1" unit="initial"/>erollꝺinn</me:facs>"#), "{body}");
+    assert!(body.contains(r#"<supplied reason="empty space" resp="KGJ">V</supplied>erollꝺinn</me:dipl>"#), "{body}");
+    assert!(!body.contains("me:norm"), "{body}");
+}
+
+#[test]
+fn test_edit_keeps_abbreviation_marks_and_expansions_inside_the_word() {
+    let xml = menota_body(
+        r#"<w lemma="konungr"><choice><me:facs>k<am>&bar;</am>r</me:facs><me:dipl>k<ex>onung</ex>r</me:dipl><me:norm>konungr</me:norm></choice></w> <w><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    // The mark and its expansion where they stand (DSL rules 7)
+    assert!(import.dsl.contains("k{:bar:=onung}r"), "{}", import.dsl);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("k{:bar:=onung}r", "k{:bar:=onung}rs")).unwrap();
+    assert!(body.contains("<me:facs>k<am>&bar;</am>rs</me:facs>"), "{body}");
+    assert!(body.contains("<me:dipl>k<ex>onung</ex>rs</me:dipl>"), "{body}");
+    // The normalized form is the one the shorthand gives: it follows
+    assert!(body.contains("<me:norm>konungrs</me:norm>"), "{body}");
+
+}
+
+#[test]
+fn test_edit_keeps_comments_and_unknown_elements_in_the_word() {
+    let xml = menota_body(
+        r#"<w><me:facs>ſmi<lb ed="ms" n="9"/><!--Kontrollera--><hi rend="right"></hi>ðaðir</me:facs><me:dipl>ſmi<lb ed="ms" n="9"/>ðaðir</me:dipl></w> <w><me:facs>ok</me:facs><me:dipl>ok</me:dipl></w>"#,
+    );
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("ðaðir", "ðaðirr")).unwrap();
+    assert!(body.contains(r#"ſmi<lb ed="ms" n="9"/><!--Kontrollera--><hi rend="right"/>ðaðirr</me:facs>"#), "{body}");
+    assert!(body.contains(r#"<me:dipl>ſmi<lb ed="ms" n="9"/>ðaðirr</me:dipl>"#), "{body}");
 }
 
 #[test]
@@ -1100,18 +1197,22 @@ fn test_menota_file_distant_edits_preserve_everything_else() {
     let Some(xml) = load_holmperg() else { return };
     let import = parse(&xml).unwrap();
     let doc = import.imported_document.unwrap();
-    // First plain word outside any block construct (a word inside `.head{...}`
+    // First plain word that is a word of its own (a word inside `.head{...}`
     // is part of one opaque segment and would regenerate the whole head).
-    let mut depth = 0i32;
-    let mut first = None;
-    for token in import.dsl.split_whitespace() {
-        if depth == 0 && token.len() > 3 && token.chars().all(char::is_alphabetic) {
-            first = Some(token.to_string());
-            break;
-        }
-        depth += token.matches('{').count() as i32 - token.matches('}').count() as i32;
-    }
-    let first = first.unwrap();
+    let first = doc
+        .segments
+        .iter()
+        .find_map(|s| match s {
+            Segment::Word { dsl_content, .. }
+                if dsl_content.len() > 3
+                    && dsl_content.chars().all(char::is_alphabetic)
+                    && import.dsl.contains(&format!(" {dsl_content} ")) =>
+            {
+                Some(dsl_content.clone())
+            }
+            _ => None,
+        })
+        .unwrap();
     // An edit of the word (one letter): it keeps its lemma. (Another word
     // in its place would be a new word, without the old word's lemma.)
     let typo: String = first.chars().take(first.chars().count() - 1).chain(['x']).collect();
@@ -1185,10 +1286,15 @@ fn test_paragraph_merge_of_plain_text_keeps_words_apart() {
 
 #[test]
 fn test_paragraph_split_inside_inline_element_is_an_error() {
-    let xml = "<TEI><text><body><p>a <hi>b c</hi> d</p></body></text></TEI>";
+    // Hidden markup: `<l>` (a verse line) isn't shown
+    let xml = "<TEI><text><body><p>a <l>b c</l> d</p></body></text></TEI>";
     let result = imported_roundtrip(xml, |d| d.replace("b c", "b .p c"));
-    let error = result.expect_err("a split inside <hi> would break the XML");
-    assert!(error.contains("inside <hi>"), "{error}");
+    let error = result.expect_err("a split inside <l> would break the XML");
+    assert!(error.contains("inside <l>"), "{error}");
+    // Shown markup: the shorthand can't have it
+    let xml = "<TEI><text><body><p>a <hi>b c</hi> d</p></body></text></TEI>";
+    let error = imported_roundtrip(xml, |d| d.replace("b c", "b .p c")).unwrap_err();
+    assert!(error.contains("A paragraph can't start inside *{…}*"), "{error}");
 }
 
 #[test]
@@ -1207,10 +1313,10 @@ fn test_menota_file_paragraph_edits_reimport_as_edited() {
     // Merge the 3rd paragraph into the 2nd, and split one later on
     let third = dsl.match_indices(" .p ").nth(2).unwrap().0;
     let edited = format!("{}{}", &dsl[..third], &dsl[third + 3..]);
-    // Split after the first sentence end (". " closes an <s>) that allows it;
-    // mid-sentence splits are refused, as <s> can't be split
+    // Split after the first sentence end (`}` closes a `.s{…}`) that allows
+    // it; a paragraph can't start inside a sentence
     let mut result = None;
-    for (at, _) in edited.match_indices(". ").skip(5).take(50) {
+    for (at, _) in edited.match_indices("} ").filter(|(at, _)| *at > third).skip(5).take(50) {
         let mut candidate = edited.clone();
         candidate.insert_str(at + 1, " .p");
         if let Ok(rendered) = imported_roundtrip(&xml, |_| candidate.clone()) {
@@ -1334,7 +1440,7 @@ fn test_dsl_compiled_and_reimported_reads_the_same() {
     let dsl = ".p //1 Maþr het :thorn:orir þo~at .abbr[k:bar:]{konungr} :middot: \
                fro~//2sto þings , ok -{x}- +{y}+ .p //3 þa :middot: geck .";
     for multi_level in [true, false] {
-        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level, wrap_pages: false };
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level, wrap_pages: false, levels: None };
         let xml = Compiler::new().with_config(config).compile(dsl).unwrap();
         let ns = r#"xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0""#;
         let reread = parse(&format!("<TEI {ns}><text><body>{xml}</body></text></TEI>")).unwrap().dsl;
@@ -1345,6 +1451,32 @@ fn test_dsl_compiled_and_reimported_reads_the_same() {
             "multi_level={multi_level}\nXML: {xml}\nDSL: {reread}"
         );
     }
+}
+
+#[test]
+fn test_content_after_a_page_break_is_set_off_from_its_number() {
+    // A note right after the page break (Holm A 49) became part of the number
+    let xml = r#"<body><p><pb ed="ms" n="109r"/><note>Förekomst <hi>av</hi></note>
+<w>jn</w>.</p></body>"#;
+    let import = parse(xml).unwrap();
+    assert!(import.dsl.contains("///109r\n^{"), "{}", import.dsl);
+    let (original, body) = imported_roundtrip(xml, |d| d.to_string()).unwrap();
+    assert_eq!(original, body);
+
+    // Documents imported with rules 1 keep their glued DSL
+    let doc = import.imported_document.unwrap();
+    let stored = crate::importer::tei::extraction::segments_to_dsl(&doc.segments, 1);
+    assert!(stored.contains("///109r^{"), "{}", stored);
+}
+
+#[test]
+fn test_note_with_angle_bracket_imports_as_valid_dsl() {
+    // AM 243 b α: "ð < t" records what a letter was corrected from
+    let xml = r#"<body><p><w>seð</w><note>ð &lt; t</note> <w>annarra</w></p></body>"#;
+    let import = parse(xml).unwrap();
+    assert!(crate::parser::syntax::parse(&import.dsl).diagnostics.is_empty(), "{}", import.dsl);
+    let (original, body) = imported_roundtrip(xml, |d| d.to_string()).unwrap();
+    assert_eq!(original, body);
 }
 
 #[test]
@@ -1360,8 +1492,14 @@ fn test_documents_imported_before_rule_changes_keep_their_dsl() {
     assert_eq!(old.dsl_rules, 0);
 
     // Its stored DSL glues entity punctuation to words ("þa:middot:"); one
-    // unrelated edit must still be one change, not one per middle dot
+    // unrelated edit must still be one change, not one per middle dot.
+    // (Before rules 10, no markup was shown.)
     doc.dsl_rules = 0;
+    for segment in &mut doc.segments {
+        if let Segment::Structural { shown, .. } = segment {
+            *shown = None;
+        }
+    }
     let stored = crate::importer::tei::extraction::segments_to_dsl(&doc.segments, 0);
     assert!(!stored.contains(" :middot: "));
     let edited = stored.replacen(" logum ", " logvm ", 1);
@@ -1389,7 +1527,9 @@ fn change_between(old: &str, new: &str) -> TextChange {
 struct Session {
     doc: crate::importer::tei::segments::ImportedDocument,
     body: String,
+    tree: Option<crate::importer::tei::apply::TreeSource>,
     patcher: Patcher,
+    config: crate::parser::CompilerConfig,
     dsl: String,
 }
 
@@ -1398,7 +1538,15 @@ impl Session {
         let import = parse(xml).unwrap();
         let doc = import.imported_document.unwrap();
         let patcher = Patcher::new(&doc.segments, doc.dsl_rules);
-        let mut session = Session { doc, body: import.original_body_xml.unwrap(), patcher, dsl: import.dsl.clone() };
+        let body = import.original_body_xml.unwrap();
+        let tree = tree_source(&import.original_preamble, &body, &import.original_postamble, &doc);
+        assert!(tree.is_some(), "the file maps onto its segments");
+        let config = compiler_config_for(&doc, Originals::new(tree.as_ref()));
+        let mut doc = doc;
+        if let Some(tree) = &tree {
+            doc.drop_copies(|id| tree.segment_xml(id), |id| tree.segment_attributes(id));
+        }
+        let mut session = Session { doc, body, tree, patcher, config, dsl: import.dsl.clone() };
         session.compile(&import.dsl, false).unwrap();
         session
     }
@@ -1413,8 +1561,8 @@ impl Session {
     fn compile_with(&mut self, dsl: &str, change: TextChange, blind: bool) -> Result<String, String> {
         let guidance = Guidance { base_revision: self.patcher.revision(), changes: vec![change] };
         let (patches, state) = self.patcher.compute(dsl, (!blind).then_some(&guidance))?;
-        let mut compiler = Compiler::new().with_config(compiler_config_for(&self.doc));
-        let body = render_body(&self.doc, Some(&self.body), &patches, &mut compiler)?;
+        let mut compiler = Compiler::new().with_config(self.config.clone());
+        let body = render_body(&self.doc, Some(&self.body), self.tree.as_ref(), &patches, &mut compiler)?;
         self.patcher.commit(state);
         self.dsl = dsl.to_string();
         Ok(body.xml)
@@ -1551,9 +1699,546 @@ fn test_guided_character_edits_always_reimport_as_edited() {
 fn test_word_space_between_entities_survives_import() {
     // One <w> whose written words meet at entities: `&et; &thorn;a`
     for dsl in ["a:thorn:~:middot:", ":et:~:thorn:a"] {
-        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false };
+        let config = CompilerConfig { word_wrap: true, auto_line_numbers: false, multi_level: true, wrap_pages: false, levels: None };
         let xml = Compiler::new().with_config(config).compile(dsl).unwrap();
         let back = parse(&format!(r#"<TEI xmlns:me="http://www.menota.org/ns/1.0"><text><body>{xml}</body></text></TEI>"#)).unwrap().dsl;
         assert_eq!(back, dsl, "{xml}");
     }
+}
+
+#[test]
+fn test_edit_keeps_a_level_with_only_markup() {
+    // AM 36 fol: the word's only level holds a gap and no text
+    let xml = menota_body(r#"<w><me:dipl><gap extent="1"/></me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("[...]", "[...]x", 1)).unwrap();
+    assert!(body.contains(r#"<w><me:dipl><gap extent="1"/>x</me:dipl></w>"#), "{body}");
+}
+
+#[test]
+fn test_edit_word_of_escaped_symbols() {
+    // `<w>~</w>` is `\~`, which reads as punctuation but is still the word
+    let xml = menota_body(r#"<w><me:dipl>~</me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    assert_eq!(parse(&xml).unwrap().dsl, r".p \~ ok");
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen(r"\~", r"\~x", 1)).unwrap();
+    assert!(body.contains("<w><me:dipl>~x</me:dipl></w>"), "{body}");
+}
+
+#[test]
+fn test_shorthand_reads_as_the_files_tokens() {
+    let cases = [
+        // A note after a word, with nothing between them, is set off by a space
+        (r#"<w><me:dipl>skrims</me:dipl></w><note>sic</note> <w><me:dipl>ok</me:dipl></w>"#, ".p skrims ^{sic} ok"),
+        // Two words written together
+        (r#"<w><me:dipl>þꝩi</me:dipl></w><w><me:dipl>at</me:dipl></w>"#, ".p þꝩi|at"),
+        // Punctuation inside a word, and a numeral
+        (r#"<w><me:dipl>iðran;</me:dipl></w> <num><choice><me:facs>.x.</me:facs><me:dipl>.x.</me:dipl></choice></num>"#, r".p iðran\; #.x.#"),
+        // Two commas in one <pc>, and a <pc> inside a word
+        (r#"<w><me:dipl>sína</me:dipl></w><pc>,,</pc> <w><me:dipl><pc>.</pc>ij<pc>.</pc></me:dipl></w>"#, r".p sína,\, \.ij\."),
+        // A word continued across a break, then another word right after
+        (r#"<w><me:dipl>míſ<lb n="2"/></me:dipl></w> <w><me:dipl>kun</me:dipl></w>"#, ".p míſ~//2|kun"),
+    ];
+    for (words, expected) in cases {
+        let xml = menota_body(words);
+        let import = parse(&xml).unwrap();
+        assert_eq!(import.dsl, expected);
+        let segments = import.imported_document.unwrap().segments;
+        let from_xml: Vec<String> =
+            segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
+        assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap(), "{expected}");
+    }
+}
+
+#[test]
+fn test_break_numbers_and_supplied_markup_read_as_tokens() {
+    let cases = [
+        (r#"<w><me:dipl>a</me:dipl></w> <lb n="56r"/><w><me:dipl>ok</me:dipl></w>"#, ".p a\n//{56r} ok"),
+        (r#"<w><me:dipl>a<lb n="-3"/>b</me:dipl></w>"#, ".p a~//{-3}b"),
+        (r#"<w><me:dipl>sa<supplied>m<lb n="14"/>þ</supplied>yct</me:dipl></w>"#, ".p sa<m~//14þ>yct"),
+        (r#"<w><me:dipl>sægír</me:dipl></w><pc>: –</pc>"#, r".p sægír:\ \–"),
+    ];
+    for (words, expected) in cases {
+        let xml = menota_body(words);
+        let import = parse(&xml).unwrap();
+        assert_eq!(import.dsl, expected);
+        let segments = import.imported_document.unwrap().segments;
+        let from_xml: Vec<String> =
+            segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
+        assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap(), "{expected}");
+    }
+    // An edited word keeps its supplied text with markup
+    let xml = menota_body(r#"<w><me:dipl>sa<supplied resp="ed">m<lb n="14"/>þ</supplied>yct</me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("yct", "ycth")).unwrap();
+    assert!(body.contains(r#"<me:dipl>sa<supplied resp="ed">m<lb n="14"/>þ</supplied>ycth</me:dipl>"#), "{body}");
+}
+
+#[test]
+fn test_letter_typed_at_the_end_goes_inside_layout_whitespace() {
+    // AM 619 4to, Holm A 80: levels laid out on lines of their own
+    let xml = menota_body("<w>\n<me:dipl> <ex>ok</ex> </me:dipl>\n</w> <w><me:dipl>mælom</me:dipl></w>");
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("{=ok}", "{=ok}k", 1)).unwrap();
+    assert!(body.contains("<me:dipl> <ex>ok</ex>k </me:dipl>"), "{body}");
+    let (_, body) = imported_roundtrip(&xml, |d| d.replacen("{=ok}", "k{=ok}", 1)).unwrap();
+    assert!(body.contains("<me:dipl> k<ex>ok</ex> </me:dipl>"), "{body}");
+}
+
+#[test]
+fn test_deleting_the_only_word_of_a_wrapper_removes_the_wrapper() {
+    // DN bind 4 nr 19: a numeral written as a word, `<num><w>…</w></num>`
+    let xml = menota_body(
+        r#"<w><me:dipl>alen</me:dipl></w> <num n="50"><w><me:dipl>fímtígí</me:dipl></w></num> <w><me:dipl>en</me:dipl></w>"#,
+    );
+    assert_eq!(parse(&xml).unwrap().dsl, ".p alen fímtígí en");
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace(" fímtígí", "")).unwrap();
+    assert_eq!(body, original.replace(r#"<num n="50"><w><me:dipl>fímtígí</me:dipl></w></num>"#, ""));
+    // A wrapper with something else left in it stays
+    let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w> <s><w><me:dipl>b</me:dipl></w> <w><me:dipl>c</me:dipl></w></s>"#);
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace(".s{b ", ".s{")).unwrap();
+    assert_eq!(body, original.replace(r#"<w><me:dipl>b</me:dipl></w>"#, ""));
+    // So does a paragraph or division, even if empty
+    let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w></p><p><w><me:dipl>b</me:dipl></w>"#);
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace(" b", "")).unwrap();
+    assert_eq!(body, original.replace(r#"<w><me:dipl>b</me:dipl></w>"#, ""));
+}
+
+#[test]
+fn test_deletions_and_unclear_readings_with_markup_read_as_tokens() {
+    let cases = [
+        (r#"<w><me:facs><del>ny<gap/></del>t</me:facs></w>"#, ".p -{ny[...]}-t"),
+        (r#"<w><me:facs>þ<unclear>&er;</unclear></me:facs></w>"#, ".p þ?{:er:}?"),
+        // Text that would read as shorthand is escaped
+        (r#"<w><me:facs><del>a:b:c</del></me:facs></w>"#, r".p -{a\:b\:c}-"),
+    ];
+    for (words, expected) in cases {
+        let xml = menota_body(words);
+        let import = parse(&xml).unwrap();
+        assert_eq!(import.dsl, expected);
+        let segments = import.imported_document.unwrap().segments;
+        let from_xml: Vec<String> =
+            segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
+        assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap(), "{expected}");
+    }
+    // An edited word keeps the gap in its deletion (Holm D 4)
+    let xml = menota_body(r#"<w><me:facs><del>ny<gap reason="damage"/></del>t</me:facs></w> <w><me:facs>ok</me:facs></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("}-t", "}-tt")).unwrap();
+    assert!(body.contains(r#"<me:facs><del>ny<gap reason="damage"/></del>tt</me:facs>"#), "{body}");
+}
+
+#[test]
+fn test_edited_numeral_keeps_its_attributes_and_markup() {
+    let xml = menota_body(
+        r#"<w><me:facs>ok</me:facs></w> <num value="10"><me:facs>.<foreign rend="red">x</foreign>.</me:facs><me:dipl>.x.</me:dipl></num> <w><me:facs>ok</me:facs></w>"#,
+    );
+    let (_, body) = imported_roundtrip(&xml, |d| {
+        assert!(d.contains("#.x.#"), "{d}");
+        d.replace(".x.#", ".xv.#")
+    })
+    .unwrap();
+    assert!(
+        body.contains(r#"<num value="10"><me:facs>.<foreign rend="red">x</foreign>v.</me:facs><me:dipl>.xv.</me:dipl></num>"#),
+        "{body}"
+    );
+}
+
+const MOVABLE: &str = r#"<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:me="http://www.menota.org/ns/1.0"><text><body>
+<p><w lemma="á"><me:dipl>a</me:dipl></w> <w lemma="bé" me:msa="xNC"><me:dipl>b<foreign rend="red">e</foreign></me:dipl></w> <w lemma="sé"><me:dipl>c</me:dipl></w></p>
+</body></text></TEI>"#;
+const MOVED_WORD: &str = r#"<w lemma="bé" me:msa="xNC"><me:dipl>b<foreign rend="red">e</foreign></me:dipl></w>"#;
+
+#[test]
+fn test_a_word_cut_and_pasted_elsewhere_is_moved_with_its_markup() {
+    let mut session = Session::open(MOVABLE);
+    assert_eq!(session.dsl, ".p a be c");
+    // Cut "be " and paste it after "c"
+    let cut = TextChange { from_a: 5, to_a: 8, from_b: 5, to_b: 5 };
+    session.compile_with(".p a c", cut, false).unwrap();
+    let paste = TextChange { from_a: 6, to_a: 6, from_b: 6, to_b: 9 };
+    let xml = session.compile_with(".p a c be", paste, false).unwrap();
+    let (moved, c) = (xml.find(MOVED_WORD), xml.find(r#"lemma="sé""#));
+    assert!(moved.is_some() && moved > c, "the word, as written, after c: {xml}");
+
+    // In one compile, and without the editor's guidance too
+    for blind in [false, true] {
+        let mut session = Session::open(MOVABLE);
+        let xml = session.compile(".p a c be", blind).unwrap();
+        assert!(xml.find(MOVED_WORD) > xml.find(r#"lemma="sé""#), "blind: {blind}: {xml}");
+        // And moved back, it is the file again
+        let xml = session.compile(".p a be c", blind).unwrap();
+        assert!(MOVABLE.contains(&xml), "blind: {blind}: {xml}");
+    }
+}
+
+#[test]
+fn test_a_moved_word_keeps_its_identity() {
+    let session = Session::open(MOVABLE);
+    let (patches, state) = session.patcher.compute(".p a c be", None).unwrap();
+    assert!(patches.iter().any(|p| matches!(p, PatchOperation::Insert { moved: Some(_), .. })), "{patches:?}");
+    // "be" is still original token 2 (after .p and a)
+    assert_eq!(state.ids, vec![0, 1, 3, 2]);
+}
+
+#[test]
+fn test_words_moved_ambiguously_are_not_taken_for_moves() {
+    // Two "ok" deleted, one inserted: which one moved can't be told
+    let xml = menota_body(r#"<w lemma="ok"><me:dipl>ok</me:dipl></w> <w><me:dipl>x</me:dipl></w> <w lemma="ok"><me:dipl>ok</me:dipl></w> <w><me:dipl>y</me:dipl></w>"#);
+    let session = Session::open(&xml);
+    assert_eq!(session.dsl, ".p ok x ok y");
+    let (patches, _) = session.patcher.compute(".p x y ok", None).unwrap();
+    assert!(!patches.iter().any(|p| matches!(p, PatchOperation::Insert { moved: Some(_), .. })), "{patches:?}");
+}
+
+#[test]
+fn test_a_project_saved_with_older_rules_is_brought_onto_the_tree() {
+    use crate::importer::tei::extraction::segments_to_dsl;
+    use crate::importer::tei::onto_tree;
+    use crate::importer::tei::segments::DSL_RULES;
+    let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w><w><me:dipl>b</me:dipl></w> <w><me:dipl>c</me:dipl></w> <w><me:dipl>d</me:dipl></w>"#);
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p a|b c d");
+    let body = import.original_body_xml.clone().unwrap();
+    let (pre, post) = (import.original_preamble.clone().unwrap(), import.original_postamble.clone().unwrap());
+    // The same file as imported with rules 2, before neighbours were set apart
+    let mut stored = import.imported_document.clone().unwrap();
+    stored.dsl_rules = 2;
+    let old = segments_to_dsl(&stored.segments, 2);
+    assert_eq!(old.trim(), ".p ab c d");
+
+    // Unedited: rewritten to the current form
+    let on_tree = onto_tree(&stored, old.trim(), &pre, &body, &post).unwrap();
+    assert_eq!((on_tree.dsl.as_str(), on_tree.rewritten), (".p a|b c d", 1));
+    assert_eq!(on_tree.document.dsl_rules, DSL_RULES);
+
+    // An edit stays as typed, and so do the layout and the words around it
+    let on_tree = onto_tree(&stored, ".p ab\nc dd", &pre, &body, &post).unwrap();
+    assert_eq!(on_tree.dsl, ".p a|b\nc dd");
+    // Edited where the rules differ: left as typed
+    let on_tree = onto_tree(&stored, ".p abx c d", &pre, &body, &post).unwrap();
+    assert_eq!((on_tree.dsl.as_str(), on_tree.rewritten), (".p abx c d", 0));
+
+    // A project of this version is left as it is
+    let current = import.imported_document.unwrap();
+    let on_tree = onto_tree(&current, ".p a|b c dd", &pre, &body, &post).unwrap();
+    assert_eq!((on_tree.dsl.as_str(), on_tree.rewritten), (".p a|b c dd", 0));
+}
+
+#[test]
+fn test_a_new_word_gets_the_files_levels() {
+    // A diplomatic-only charter: no <choice>, no facsimile or normalized level
+    let xml = menota_body(r#"<w><me:dipl>a</me:dipl></w> <w><me:dipl>b</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace(" b", " b cc")).unwrap();
+    assert!(body.contains("<w>\n  <me:dipl>cc</me:dipl>\n</w>"), "{body}");
+    // Two levels in a <choice>
+    let xml = menota_body(
+        r#"<w><choice><me:facs>a</me:facs><me:dipl>a</me:dipl></choice></w> <w><choice><me:facs>b</me:facs><me:dipl>b</me:dipl></choice></w>"#,
+    );
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace(" b", " b cc")).unwrap();
+    assert!(body.contains("<choice>\n    <me:facs>cc</me:facs>\n    <me:dipl>cc</me:dipl>\n  </choice>"), "{body}");
+    assert!(!body.contains("<me:norm>"), "{body}");
+}
+
+#[test]
+fn test_a_plain_word_in_a_file_with_levels_is_edited() {
+    // DN bind 13 nr 11: most words plain, the others diplomatic
+    let xml = menota_body(r#"<w>dernest</w> <w><me:dipl>och</me:dipl></w> <w><me:dipl>att</me:dipl></w>"#);
+    let (_, body) = imported_roundtrip(&xml, |d| d.replace("dernest", "dernestt")).unwrap();
+    assert!(body.contains("<w>dernestt</w>"), "{body}");
+}
+
+#[test]
+fn test_only_one_lineation_is_shown_and_older_projects_lose_the_other() {
+    use crate::importer::tei::onto_tree;
+    use crate::importer::tei::segments::DSL_RULES;
+    // A DN charter: the manuscript's lines and the printed edition's
+    let xml = menota_body(
+        r#"<lb ed="ms" n="1"/><w><me:dipl>a</me:dipl></w> <lb ed="DN" n="7"/><w><me:dipl>b</me:dipl></w> <w><me:dipl>c<lb ed="DN" n="8"/>d</me:dipl></w> <lb ed="ms" n="2"/><w><me:dipl>e</me:dipl></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    let profile = import.imported_document.as_ref().unwrap().profile.clone().unwrap();
+    assert_eq!(profile.line_edition.as_deref(), Some("ms"));
+    assert_eq!(import.dsl, ".p \n//1 a b cd\n//2 e");
+    // Unedited, the file comes back as it was; edited around the hidden breaks too
+    let (original, body) = imported_roundtrip(&xml, |d| d.to_string()).unwrap();
+    assert_eq!(body, original);
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace(" b ", " bb ").replace("cd", "cdd")).unwrap();
+    assert!(body.contains(r#"<lb ed="DN" n="7"/><w><me:dipl>bb</me:dipl></w>"#), "{body}");
+    assert!(body.contains(r#"<me:dipl>c<lb ed="DN" n="8"/>dd</me:dipl>"#), "{body}");
+    assert_ne!(body, original);
+    // The other lineation can be chosen
+    let dn = crate::importer::tei::parse_with(&xml, Some(Some("DN".into()))).unwrap();
+    assert_eq!(dn.dsl, ".p a\n//7 b c~//8d e");
+
+    // A project imported before, showing all line breaks, loses the other's
+    let before = crate::importer::tei::parse_with(&xml, Some(None)).unwrap();
+    let mut stored = before.imported_document.unwrap();
+    (stored.dsl_rules, stored.profile) = (5, None);
+    let (pre, body, post) = (before.original_preamble.unwrap(), before.original_body_xml.unwrap(), before.original_postamble.unwrap());
+    let on_tree = onto_tree(&stored, &before.dsl, &pre, &body, &post).unwrap();
+    assert_eq!(on_tree.document.dsl_rules, DSL_RULES);
+    assert_eq!(crate::importer::tei::patching::dsl_tokens(&on_tree.dsl).unwrap(), crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap());
+}
+
+#[test]
+fn test_stored_shorthand_is_kept_where_it_reads_as_the_file() {
+    use crate::importer::tei::patching::keep_as_written;
+    let projected = ".p a b c\n//2 d";
+    // Layout kept
+    assert_eq!(keep_as_written(".p a  b\n c //2   d", projected), (".p a  b\n c //2   d".to_string(), 0));
+    // The XML wins where they differ
+    assert_eq!(keep_as_written(".p a  bx\n c //2   d", projected), (".p a  b\n c //2   d".to_string(), 1));
+    assert_eq!(keep_as_written(".p a  b //2 d", projected), (".p a  b c //2 d".to_string(), 1));
+    assert_eq!(keep_as_written(".p a  b c e //2 d", projected), (".p a  b c  //2 d".to_string(), 1));
+}
+
+#[test]
+fn test_abbreviations_are_read_where_they_stand() {
+    let dsl = |words: &str| parse(&menota_body(words)).unwrap().dsl;
+    // A letter with the mark fused into it
+    assert_eq!(
+        dsl(r#"<w><choice><me:facs><am>&kbar;</am>gs</me:facs><me:dipl>k<ex>onun</ex>gs</me:dipl><me:norm>konungs</me:norm></choice></w>"#),
+        ".p {:kbar:=konun}gs"
+    );
+    // A whole word for a sign
+    assert_eq!(
+        dsl(r#"<w><choice><me:facs><am>&et;</am></me:facs><me:dipl><ex>ok</ex></me:dipl><me:norm>ok</me:norm></choice></w>"#),
+        ".p {:et:=ok}"
+    );
+    // Facsimile only, with a mark (Holm A 49)
+    assert_eq!(dsl(r#"<w><me:facs>k<am>&bar;</am>r</me:facs></w>"#), ".p k{:bar:=}r");
+    // The levels differ in letterforms too: the facsimile's, with the expansion
+    assert_eq!(
+        dsl(r#"<w><choice><me:facs>ꝼ<am>&bar;</am>r</me:facs><me:dipl>f<ex>yri</ex>r</me:dipl><me:norm>fyrir</me:norm></choice></w>"#),
+        ".p ꝼ{:bar:=yri}r"
+    );
+    // Marks and expansions that don't pair up: the whole word
+    assert_eq!(
+        dsl(r#"<w><choice><me:facs>ꝼ<am>&bar;</am>r</me:facs><me:dipl>fyrir</me:dipl><me:norm>fyrir</me:norm></choice></w>"#),
+        ".p .abbr[ꝼ:bar:r]{fyrir}"
+    );
+}
+
+#[test]
+fn test_a_project_with_whole_word_abbreviations_is_brought_onto_rules_7() {
+    use crate::importer::tei::onto_tree;
+    let xml = menota_body(
+        r#"<w lemma="konungr"><choice><me:facs>k<am>&bar;</am>r</me:facs><me:dipl>k<ex>onung</ex>r</me:dipl><me:norm>konungr</me:norm></choice></w> <w><choice><me:facs>ok</me:facs><me:dipl>ok</me:dipl><me:norm>ok</me:norm></choice></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p k{:bar:=onung}r ok");
+    // As imported with rules 6: the word as a whole
+    let mut stored = import.imported_document.clone().unwrap();
+    stored.dsl_rules = 6;
+    stored.profile = None;
+    for segment in &mut stored.segments {
+        if let Segment::Word { dsl_content, .. } = segment {
+            if dsl_content.contains('{') {
+                *dsl_content = ".abbr[k:bar:r]{konungr}".into();
+            }
+        }
+    }
+    let (pre, body, post) = (import.original_preamble.unwrap(), import.original_body_xml.unwrap(), import.original_postamble.unwrap());
+    let on_tree = onto_tree(&stored, ".p .abbr[k:bar:r]{konungr} ok", &pre, &body, &post).unwrap();
+    assert_eq!((on_tree.dsl.as_str(), on_tree.rewritten), (".p k{:bar:=onung}r ok", 1));
+}
+
+#[test]
+fn test_an_expansion_after_a_hyphen_is_not_a_deletion() {
+    // DG 8: "k{=on}-{=ong}r", where `-{` would open a deletion
+    let xml = menota_body(r#"<w><me:dipl>k<ex>on</ex>-<ex>ong</ex>r</me:dipl></w>"#);
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, r".p k{=on}\-{=ong}r");
+    let (original, body) = imported_roundtrip(&xml, |d| d.to_string()).unwrap();
+    assert_eq!(body, original);
+}
+
+#[test]
+fn test_an_expansion_after_an_unclear_reading_keeps_it_closed() {
+    // AM 162 B: an unclear reading right before an expansion: `}?{` is its close
+    let xml = menota_body(r#"<w><me:dipl><unclear>a</unclear><ex>n</ex>d</me:dipl></w>"#);
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p ?{a}?{=n}d");
+    let (original, body) = imported_roundtrip(&xml, |d| d.to_string()).unwrap();
+    assert_eq!(body, original);
+}
+
+/// Column breaks and changes of hand are shown (rules 11), and typed,
+/// changed or deleted in an imported file like page breaks.
+#[test]
+fn test_column_breaks_and_hands_in_imported_files() {
+    let xml = wrap_body(r#"<p><w>a</w><cb n="A"/><handShift new="h1"/> <w>b</w></p>"#);
+    assert_eq!(parse(&xml).unwrap().dsl, ".p a\n///c=A .hs{h1} b");
+    let body = |edit: &dyn Fn(&str) -> String| imported_render(&xml, |d| edit(d)).map(|(_, b)| b.xml);
+    assert_eq!(body(&|d| d.replace("///c=A", "///c=B")).unwrap(), r#"<body><p><w>a</w><cb n="B"/><handShift new="h1"/> <w>b</w></p></body>"#);
+    assert_eq!(body(&|d| d.replace(".hs{h1}", ".hs{h2}")).unwrap(), r#"<body><p><w>a</w><cb n="A"/><handShift new="h2"/> <w>b</w></p></body>"#);
+    assert_eq!(body(&|d| d.replace(".hs{h1}", "")).unwrap(), r#"<body><p><w>a</w><cb n="A"/> <w>b</w></p></body>"#);
+    let typed = body(&|d| d.replace("} b", "} .hs{h3} b ///c=C")).unwrap();
+    assert!(typed.contains(r#"<handShift new="h3"/>"#) && typed.contains(r#"<cb n="C"/>"#), "{typed}");
+    // Inside a word, markup is part of the word
+    assert!(imported_render(&xml, |dsl| dsl.replace("a\n", "*{a}*x\n")).is_ok());
+}
+
+/// Markup typed around words in an imported file wraps them; removed, its
+/// content stays in its place; renamed, its content and attributes go into
+/// an element of the new name. The rest of the file is untouched.
+#[test]
+fn test_markup_around_words_is_edited_in_the_tree() {
+    let body = |inner: &str| wrap_body(&format!("<p><w>a</w> <w>b</w> <w>c</w>{inner}</p>"));
+    let xml = body(" <q who=\"A\"><w>d</w> <w>e</w></q> <w>f</w>");
+    let render = |edit: &dyn Fn(&str) -> String| {
+        imported_render(&xml, |dsl| edit(dsl)).map(|(_, body)| body.xml.trim_start_matches("<body>").trim_end_matches("</body>").to_string())
+    };
+    // Wrap
+    assert_eq!(
+        render(&|dsl| dsl.replace("a b c", "a .s{b c}")).unwrap(),
+        "<p><w>a</w> <s><w>b</w> <w>c</w></s> <q who=\"A\"><w>d</w> <w>e</w></q> <w>f</w></p>"
+    );
+    // Wrap with a new word in it, and nested
+    assert_eq!(
+        render(&|dsl| dsl.replace("a b c", ".s{a .name{b} x} c")).unwrap().replace('\n', ""),
+        "<p><s><w>a</w> <name><w>b</w></name><w>x</w></s> <w>c</w> <q who=\"A\"><w>d</w> <w>e</w></q> <w>f</w></p>"
+    );
+    // Unwrap
+    assert_eq!(
+        render(&|dsl| dsl.replace(".q{d e}", "d e")).unwrap(),
+        "<p><w>a</w> <w>b</w> <w>c</w> <w>d</w> <w>e</w> <w>f</w></p>"
+    );
+    // Rename, keeping the attributes
+    assert_eq!(
+        render(&|dsl| dsl.replace(".q{d e}", "&{d e}")).unwrap(),
+        "<p><w>a</w> <w>b</w> <w>c</w> <seg who=\"A\"><w>d</w> <w>e</w></seg> <w>f</w></p>"
+    );
+    // A word deleted from markup leaves the markup
+    assert_eq!(
+        render(&|dsl| dsl.replace(".q{d e}", ".q{e}")).unwrap(),
+        "<p><w>a</w> <w>b</w> <w>c</w> <q who=\"A\"> <w>e</w></q> <w>f</w></p>"
+    );
+    // Crossing the end of other markup: refused
+    let error = render(&|dsl| dsl.replace(".q{d e} f", ".q{d .s{e} f").replace("a b c", "a b c}")).unwrap_err();
+    assert!(error.contains("doesn't close") || error.contains("same element") || error.contains("Unclosed") || error.contains("Expected"), "{error}");
+
+}
+
+/// Pairs around words: added, renamed and removed in the tree.
+#[test]
+fn test_pairs_around_words_are_edited_in_the_tree() {
+    let xml = wrap_body("<p><w>a</w> <w>b</w> <choice><sic><w>c</w></sic><corr><w>d</w></corr></choice> <w>e</w></p>");
+    assert_eq!(parse(&xml).unwrap().dsl, ".p a b .corr{ c=d} e");
+    let render = |to: &dyn Fn(&str) -> String| imported_render(&xml, |d| to(d)).map(|(_, b)| b.xml);
+    // Renamed
+    assert_eq!(
+        render(&|d| d.replace(".corr{", ".trans{")).unwrap(),
+        "<body><p><w>a</w> <w>b</w> <choice><orig><w>c</w></orig><reg><w>d</w></reg></choice> <w>e</w></p></body>"
+    );
+    // Removed: both halves' words stay
+    assert_eq!(render(&|d| d.replace(".corr{ c=d}", "c d")).unwrap(), "<body><p><w>a</w> <w>b</w> <w>c</w><w>d</w> <w>e</w></p></body>");
+    // Added around a word, with a new word for the correction
+    assert_eq!(
+        render(&|d| d.replace("a b", ".corr{ a=x} b")).unwrap().replace('\n', ""),
+        "<body><p><choice><sic><w>a</w></sic><corr><w>x</w></corr></choice> <w>b</w> <choice><sic><w>c</w></sic><corr><w>d</w></corr></choice> <w>e</w></p></body>"
+    );
+    // Its = alone can't go
+    assert!(render(&|d| d.replace("c=d", "c d")).is_err());
+}
+
+#[test]
+fn test_markup_across_elements_is_refused() {
+    let xml = wrap_body("<p><s><w>a</w> <w>b</w></s> <w>c</w></p>");
+    let render = |from: &str, to: &str| imported_render(&xml, |dsl| dsl.replace(from, to)).map(|(_, b)| b.xml);
+    // Inside `<s>`: fine
+    assert_eq!(render(".s{a b} c", ".s{a .q{b}} c").unwrap(), "<body><p><s><w>a</w> <q><w>b</w></q></s> <w>c</w></p></body>");
+    // Its end moved: later, it takes what comes after; earlier, what is
+    // after the end goes out of it
+    assert_eq!(render(".s{a b} c", ".s{a b c}").unwrap(), "<body><p><s><w>a</w> <w>b</w> <w>c</w></s></p></body>");
+    // (here the word is taken for moved out of it)
+    assert_eq!(render(".s{a b} c", ".s{a} b c").unwrap(), "<body><p><s><w>a</w> </s>\n<w>b</w> <w>c</w></p></body>");
+    assert_eq!(render(".s{a b} c", ".s{a .q{b} c}").unwrap(), "<body><p><s><w>a</w> <q><w>b</w></q> <w>c</w></s></p></body>");
+        // A word moved out of it goes with its markup
+    assert_eq!(render(".s{a b} c", ".s{a} .q{b c}").unwrap(), "<body><p><s><w>a</w> </s><q>\n<w>b</w> <w>c</w></q></p></body>");
+
+}
+
+/// Markup around words is shown (DSL rules 10), and reads back as the same
+/// tokens; unedited, the file comes back byte for byte.
+#[test]
+fn test_markup_around_words_is_shown() {
+    let xml = wrap_body(
+        "<p><q><w>Ok</w> <w>sagði</w></q> <persName><forename><w>Ari</w></forename> <w>fróði</w></persName><pc>.</pc>\
+         <choice><sic><w>nu</w></choice> <hi rend=\"red\"><w>A</w></hi><seg type=\"nb\"><w>b</w></seg></p>"
+            .replace("<choice><sic><w>nu</w></choice>", "<choice><sic><w>nu</w></sic><corr><w>nú</w></corr></choice>")
+            .as_str(),
+    );
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p .q{Ok sagði} .psname{.fname{Ari} fróði} . .corr{ nu=nú} *{ A}* &{ b}");
+    let doc = import.imported_document.as_ref().unwrap();
+    let from_xml: Vec<String> = doc.segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
+    assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap());
+    let (_, body) = imported_render(&xml, |dsl| dsl.to_string()).unwrap();
+    assert_eq!(body.xml, xml);
+}
+
+
+/// A project from before markup was shown (rules 9) gets it in its
+/// shorthand when opened, where it stands among the unedited words, so the
+/// first compile doesn't take it out of the file.
+#[test]
+fn test_markup_goes_into_an_older_projects_shorthand() {
+    use crate::importer::tei::extraction::segments_to_dsl;
+    use crate::importer::tei::onto_tree;
+    use crate::importer::tei::patching::keep_as_written;
+    let xml = menota_body(
+        r#"<w><me:dipl>a</me:dipl></w> <q><w><me:dipl>b</me:dipl></w> <persName><w><me:dipl>c</me:dipl></w></persName></q> <w><me:dipl>d</me:dipl></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p a .q{b .psname{c}} d");
+    let body = import.original_body_xml.clone().unwrap();
+    let (pre, post) = (import.original_preamble.clone().unwrap(), import.original_postamble.clone().unwrap());
+    let mut stored = import.imported_document.clone().unwrap();
+    stored.dsl_rules = 9;
+    for segment in &mut stored.segments {
+        if let Segment::Structural { shown, .. } = segment {
+            *shown = None;
+        }
+    }
+    let old = segments_to_dsl(&stored.segments, 9);
+    assert_eq!(old.trim(), ".p a b c d");
+    let on_tree = onto_tree(&stored, old.trim(), &pre, &body, &post).unwrap();
+    assert_eq!(on_tree.dsl, ".p a .q{b .psname{c}} d");
+    // With edits around it, and a new word at its edge outside it
+    let on_tree = onto_tree(&stored, ".p ax b\nc y d", &pre, &body, &post).unwrap();
+    assert_eq!(on_tree.dsl, ".p ax .q{b\n.psname{c}} y d");
+    let patches = compute_patches(&on_tree.document.segments, on_tree.document.dsl_rules, &on_tree.dsl).unwrap();
+    assert!(!patches.iter().any(|p| matches!(p, PatchOperation::Delete { .. })), "{patches:?}");
+
+    // A project saved as its file (2.0) keeps its shorthand, the markup put in
+    let (dsl, _) = keep_as_written(".p a b\nc d", &import.dsl);
+    let tokens = crate::importer::tei::patching::dsl_tokens;
+    assert_eq!(tokens(&dsl).unwrap(), tokens(&import.dsl).unwrap(), "{dsl}");
+}
+
+
+
+/// Markup inside a word is shown where it stands (rules 10), unless it
+/// would read as markup around the word; an edit of the word keeps it on the
+/// levels that have it.
+#[test]
+fn test_markup_inside_words_is_shown() {
+    let xml = menota_body(
+        r#"<w><me:facs><hi rend="orncp">A</hi>nnat</me:facs><me:dipl>Annat</me:dipl></w> <w><me:facs><c type="littNot">S</c>tephan</me:facs><me:dipl>Stephan</me:dipl></w> <w><me:facs><hi>ok</hi></me:facs><me:dipl>ok</me:dipl></w> <w><me:dipl>mikill<choice><sic>mikit</sic><corr>mikit</corr></choice></me:dipl></w>"#,
+    );
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p *{A}*nnat .c{S}tephan *{ok}* mikill.corr{mikit=mikit}");
+    // A correction that is the whole word (AM 178 fol): an edit goes where it is typed
+    let pair = menota_body(r#"<w><me:dipl><choice><sic>hiørt</sic><corr>hiørtur</corr></choice></me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    assert_eq!(parse(&pair).unwrap().dsl, ".p .corr{hiørt=hiørtur} ok");
+    let (original, body) = imported_roundtrip(&pair, |d| d.replace("hiørtur}", "hiørturx}")).unwrap();
+    assert_eq!(body, original.replace("hiørtur<", "hiørturx<"));
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace("*{A}*nnat", "*{A}*nnatt")).unwrap();
+    assert_eq!(body, original.replace("<hi rend=\"orncp\">A</hi>nnat</me:facs><me:dipl>Annat", "<hi rend=\"orncp\">A</hi>nnatt</me:facs><me:dipl>Annatt"));
+}
+
+#[test]
+fn test_column_breaks_and_spaces_inside_words() {
+    let xml = menota_body(r#"<w><me:facs>hel<cb n="B"/>lo</me:facs></w> <w><me:facs>a<space quantity="3"/>b</me:facs></w>"#);
+    let import = parse(&xml).unwrap();
+    assert_eq!(import.dsl, ".p hel~///c={B}lo a.space[3]b");
+    let (original, body) = imported_roundtrip(&xml, |d| d.replace("lo ", "lox ")).unwrap();
+    assert_eq!(body, original.replace("lo</me:facs>", "lox</me:facs>"));
 }
