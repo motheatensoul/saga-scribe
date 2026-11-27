@@ -342,7 +342,9 @@ fn write_segments(segments: &[Segment], dsl_rules: u32, mut places: Option<&mut 
                     } else if !dsl.is_empty() && !dsl.ends_with(|c: char| c.is_whitespace() || c == '{' || c == '=') {
                         dsl.push(' ');
                     }
-                    pending_space = false;
+                    // A pair around words has a space in it: without, it would
+                    // be a correction inside a word (`.corr{a=b}`)
+                    pending_space = matches!(shown.as_str(), ".corr{" | ".trans{");
                 } else {
                     if last_was_linebreak {
                         // A page number runs to the next space

@@ -2142,7 +2142,7 @@ fn test_markup_around_words_is_shown() {
             .as_str(),
     );
     let import = parse(&xml).unwrap();
-    assert_eq!(import.dsl, ".p .q{Ok sagði} .psname{.fname{Ari} fróði} . .corr{nu=nú} *{A}* &{b}");
+    assert_eq!(import.dsl, ".p .q{Ok sagði} .psname{.fname{Ari} fróði} . .corr{ nu=nú} *{A}* &{b}");
     let doc = import.imported_document.as_ref().unwrap();
     let from_xml: Vec<String> = doc.segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
     assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap());
@@ -2201,6 +2201,11 @@ fn test_markup_inside_words_is_shown() {
     );
     let import = parse(&xml).unwrap();
     assert_eq!(import.dsl, ".p *{A}*nnat .c{S}tephan ok mikill.corr{mikit=mikit}");
+    // A correction that is the whole word (AM 178 fol): an edit goes where it is typed
+    let pair = menota_body(r#"<w><me:dipl><choice><sic>hiørt</sic><corr>hiørtur</corr></choice></me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
+    assert_eq!(parse(&pair).unwrap().dsl, ".p .corr{hiørt=hiørtur} ok");
+    let (original, body) = imported_roundtrip(&pair, |d| d.replace("hiørtur}", "hiørturx}")).unwrap();
+    assert_eq!(body, original.replace("hiørtur<", "hiørturx<"));
     let (original, body) = imported_roundtrip(&xml, |d| d.replace("*{A}*nnat", "*{A}*nnatt")).unwrap();
     assert_eq!(body, original.replace("<hi rend=\"orncp\">A</hi>nnat</me:facs><me:dipl>Annat", "<hi rend=\"orncp\">A</hi>nnatt</me:facs><me:dipl>Annatt"));
 }

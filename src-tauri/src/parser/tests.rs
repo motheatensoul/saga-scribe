@@ -1523,6 +1523,8 @@ fn test_pairs_in_a_choice() {
         xml,
         "<w>nu<choice><sic>ſagt</sic><corr>sagt</corr></choice></w><choice><orig><w>a</w><w>b</w></orig><reg><w>b</w><w>a</w></reg></choice>"
     );
+    // Without spaces, a pair is inside its word
+    assert_eq!(squash(&compile_plain(".corr{a=b} c").unwrap()), "<w><choice><sic>a</sic><corr>b</corr></choice></w><w>c</w>");
     assert!(compile_plain(".corr{sagt}").is_err());
 }
 

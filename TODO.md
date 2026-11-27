@@ -132,12 +132,9 @@ when it is done (and record it in CHANGELOG.md if users notice).
       319; inside a word's levels `<c>` 9,180, `<hi>` 7,408, `<sic>`/`<corr>` 1,462/1,196
       (mostly in a `<choice>` there), `<seg>` 908, `<cb>` 771, `<space>` 64, `<subst>` 48;
       between tokens `<cb>` 2,676, `<handShift>` 85;
-    - a `<choice><sic>…</sic><corr>…</corr></choice>` inside a word's level (AM 178 fol)
-      reads as both texts run together (`hiørthiørtur`), and a letter typed at its end is
-      lost (the level is kept as it was); it should read `.corr{hiørt=hiørtur}`;
     - (done 2026-11-22: markup inside a word is shown where it covers part of it, from
       the level the shorthand follows) markup over a whole word (`<w><hi>ok</hi></w>`,
-      a whole-word `<choice><sic>…</sic><corr>…</corr></choice>`) stays hidden: shown, it
+      stays hidden: shown, it
       would read as markup around the word. Text typed at its edge goes outside it, so
       the word then shows it (`Aꝸ` reads `*{A}*ꝸ` once compiled or opened again). The
       import dialog still counts markup inside words as unsupported;

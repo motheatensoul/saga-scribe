@@ -178,7 +178,7 @@ fn test_entity_reference_content_is_not_copied() {
 /// but hides here, as it covers the whole word: an edit at its edge makes it
 /// partial, and the word then reads with it.
 fn hides_inline_markup(word_xml: &str) -> bool {
-    ["<hi", "<c ", "<c>", "<seg", "<surplus", "<damage", "<sic"].iter().any(|m| word_xml.contains(m))
+    ["<hi", "<c ", "<c>", "<seg", "<surplus", "<damage"].iter().any(|m| word_xml.contains(m))
 }
 
 fn corpus_files() -> Vec<std::path::PathBuf> {

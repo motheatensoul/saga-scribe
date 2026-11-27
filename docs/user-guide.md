@@ -149,7 +149,8 @@ ${abc}       Surplus text (<surplus>)
 .name{…}     A name (<name>); also .title{…}, .gloss{…}, .damage{…}, .subst{…}
 .psname{…}   Person's name (<persName>), with .fname{…} for the forename (<forename>)
 .plname{…}   Place name (<placeName>), with .country{…}, .region{…}, .settlement{…}
-.corr{ſagt=sagt}   An error and its correction (<choice><sic>…</sic><corr>…</corr></choice>)
+.corr{ſagt=sagt}   An error and its correction (<choice><sic>…</sic><corr>…</corr></choice>);
+                   without spaces in it, inside the word; with, around words
 .trans{a b=b a}    Transposed words and their order (<choice><orig>…</orig><reg>…</reg></choice>)
 .rdg[AM70]{…}      A witness's reading (<rdg wit="AM70">)
 .space[3]    Space left by the scribe (<space quantity="3"/>)

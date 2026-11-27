@@ -223,7 +223,10 @@ fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
 ///   tags `Structural` segments with `shown` set.
 /// - 11: column breaks are shown, `///c=n` (`ColumnBreak` segments, before
 ///   structure), and changes of hand, `.hs{new}`.
-pub const DSL_RULES: u32 = 11;
+/// - 12: a pair without spaces in it (`.corr{a=b}`) is inside a word, so a
+///   correction that is a whole word's level is shown; a pair around words
+///   has a space after its start (`.corr{ a=b}`).
+pub const DSL_RULES: u32 = 12;
 
 impl ImportedDocument {
     /// Drops the copies of the file's XML that words and punctuation hold

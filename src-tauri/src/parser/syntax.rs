@@ -670,7 +670,10 @@ impl<'a> Parser<'a> {
             let children = self.parse_nested(span.clone());
             (span, children)
         });
-        let around = !self.glued(start, self.pos);
+        // A pair without spaces in it is a correction inside a word
+        // (`.corr{hiørt=hiørtur}`), as MENOTA has it
+        let one_word = markup.pair.is_some() && !self.src[start..self.pos].contains(char::is_whitespace);
+        let around = !self.glued(start, self.pos) && !one_word;
         if around {
             let paragraph = children
                 .iter()
