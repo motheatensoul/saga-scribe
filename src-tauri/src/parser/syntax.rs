@@ -265,6 +265,9 @@ pub fn unescape(content: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
+/// Markup that, without spaces in it, is inside a word even on its own.
+pub const INSIDE_WORDS: &[&str] = &["hi", "c", "seg", "surplus", "damage", "subst"];
+
 /// Constructs written `.name{` that aren't markup (`.p` is standalone).
 const NOT_MARKUP: &[&str] = &["p", "supplied", "norm", "head", "abbr"];
 
@@ -670,9 +673,11 @@ impl<'a> Parser<'a> {
             let children = self.parse_nested(span.clone());
             (span, children)
         });
-        // A pair without spaces in it is a correction inside a word
-        // (`.corr{hiørt=hiørtur}`), as MENOTA has it
-        let one_word = markup.pair.is_some() && !self.src[start..self.pos].contains(char::is_whitespace);
+        // Markup that is the text of a word (a correction, highlighting, a
+        // character) without spaces in it is inside a word: `.corr{hiørt=hiørtur}`,
+        // `*{ok}*`; around words it has a space (`*{ ok}*`)
+        let one_word = (markup.pair.is_some() || INSIDE_WORDS.contains(&markup.name.as_str()))
+            && !self.src[start..self.pos].contains(char::is_whitespace);
         let around = !self.glued(start, self.pos) && !one_word;
         if around {
             let paragraph = children

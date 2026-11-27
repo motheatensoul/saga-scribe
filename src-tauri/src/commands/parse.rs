@@ -1070,6 +1070,9 @@ pub(crate) fn compile_imported_source(
     // editor's changes to keep track of which word is which
     let mut timer = perf::timer();
     let (mut patches, state) = source.patcher.compute(edited_dsl, guidance)?;
+    if let Some(tree) = source.tree.as_mut() {
+        tree.prepare(&state.ids);
+    }
     timer.lap("compile.compute_patches", [("patches", patches.len().into())]);
 
     // Replaced and deleted words, with the patcher's answers as suggestions;
@@ -1098,6 +1101,7 @@ pub(crate) fn compile_imported_source(
     )?;
     // Where the word panel finds the elements, kept once the rest is done
     let applied = body.tree.take();
+    let created = std::mem::take(&mut body.created);
     timer.lap("compile.render_body", []);
 
     // Which word is which: lemmas follow their words (no guidance: the
@@ -1219,13 +1223,14 @@ pub(crate) fn compile_imported_source(
     timer.lap("compile.write_lemmas", [("lemmas", lemmas.len().into())]);
 
     // Only a successful compile becomes the basis for the next one
+    let ids = state.ids.clone();
     source.patcher.commit(state);
     source.words = Some(words);
     source.last_records.clone_from(&records);
     source.last_body.clone_from(&body_xml);
     source.last_word_offsets = word_offsets;
     if let Some(tree) = source.tree.as_mut() {
-        tree.set_current(applied);
+        tree.set_current(applied, created, &ids);
     }
 
     // Combine with preamble (everything before body) and postamble (everything after)
@@ -1697,11 +1702,14 @@ mod imported_identity_tests {
         let edited = dsl.replace("a b", "ax b");
         let out = compile(&mut source, &edited, None, &[]);
         assert!(out.xml.contains(r#"<s n="1"><lb n="1" ed="ms"/>"#), "{}", out.xml);
-        // A word typed since: its markup isn't in the file yet
-        let edited = edited.replace("ax b", "ax .q{y} b");
-        compile(&mut source, &edited, None, &[]);
+        // Markup typed since: its attributes stay with it through later edits
+        let typed = edited.replace("ax b", "ax .q{y} b");
+        compile_guided(&mut source, &edited, &typed, &[], &[]);
         let q = source.word_elements(1).unwrap().into_iter().find(|e| e.name == "q").unwrap();
-        assert!(source.set_element_attributes("q", q.ordinal, &[("who".into(), "A".into())]).is_err());
+        source.set_element_attributes("q", q.ordinal, &[("who".into(), "A".into())]).unwrap();
+        let again = typed.replace("ax", "axe");
+        let out = compile_guided(&mut source, &typed, &again, &[], &[]);
+        assert!(out.xml.contains(r#"<q who="A">"#), "{}", out.xml);
     }
 
     /// The metadata editor writes into the file's header, and only where

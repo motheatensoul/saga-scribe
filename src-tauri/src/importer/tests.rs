@@ -2110,10 +2110,32 @@ fn test_markup_around_words_is_edited_in_the_tree() {
         render(&|dsl| dsl.replace(".q{d e}", ".q{e}")).unwrap(),
         "<p><w>a</w> <w>b</w> <w>c</w> <q who=\"A\"> <w>e</w></q> <w>f</w></p>"
     );
-    // Across the end of existing markup: refused
-    let error = render(&|dsl| dsl.replace("c .q{d e}", ".s{c .q{d} e}")).unwrap_err();
-    assert!(error.contains("doesn't close") || error.contains("same element"), "{error}");
+    // Crossing the end of other markup: refused
+    let error = render(&|dsl| dsl.replace(".q{d e} f", ".q{d .s{e} f").replace("a b c", "a b c}")).unwrap_err();
+    assert!(error.contains("doesn't close") || error.contains("same element") || error.contains("Unclosed") || error.contains("Expected"), "{error}");
 
+}
+
+/// Pairs around words: added, renamed and removed in the tree.
+#[test]
+fn test_pairs_around_words_are_edited_in_the_tree() {
+    let xml = wrap_body("<p><w>a</w> <w>b</w> <choice><sic><w>c</w></sic><corr><w>d</w></corr></choice> <w>e</w></p>");
+    assert_eq!(parse(&xml).unwrap().dsl, ".p a b .corr{ c=d} e");
+    let render = |to: &dyn Fn(&str) -> String| imported_render(&xml, |d| to(d)).map(|(_, b)| b.xml);
+    // Renamed
+    assert_eq!(
+        render(&|d| d.replace(".corr{", ".trans{")).unwrap(),
+        "<body><p><w>a</w> <w>b</w> <choice><orig><w>c</w></orig><reg><w>d</w></reg></choice> <w>e</w></p></body>"
+    );
+    // Removed: both halves' words stay
+    assert_eq!(render(&|d| d.replace(".corr{ c=d}", "c d")).unwrap(), "<body><p><w>a</w> <w>b</w> <w>c</w><w>d</w> <w>e</w></p></body>");
+    // Added around a word, with a new word for the correction
+    assert_eq!(
+        render(&|d| d.replace("a b", ".corr{ a=x} b")).unwrap().replace('\n', ""),
+        "<body><p><choice><sic><w>a</w></sic><corr><w>x</w></corr></choice> <w>b</w> <choice><sic><w>c</w></sic><corr><w>d</w></corr></choice> <w>e</w></p></body>"
+    );
+    // Its = alone can't go
+    assert!(render(&|d| d.replace("c=d", "c d")).is_err());
 }
 
 #[test]
@@ -2122,13 +2144,15 @@ fn test_markup_across_elements_is_refused() {
     let render = |from: &str, to: &str| imported_render(&xml, |dsl| dsl.replace(from, to)).map(|(_, b)| b.xml);
     // Inside `<s>`: fine
     assert_eq!(render(".s{a b} c", ".s{a .q{b}} c").unwrap(), "<body><p><s><w>a</w> <q><w>b</w></q></s> <w>c</w></p></body>");
-    // A word moved out of it goes with its markup
+    // Its end moved: later, it takes what comes after; earlier, what is
+    // after the end goes out of it
+    assert_eq!(render(".s{a b} c", ".s{a b c}").unwrap(), "<body><p><s><w>a</w> <w>b</w> <w>c</w></s></p></body>");
+    // (here the word is taken for moved out of it)
+    assert_eq!(render(".s{a b} c", ".s{a} b c").unwrap(), "<body><p><s><w>a</w> </s>\n<w>b</w> <w>c</w></p></body>");
+    assert_eq!(render(".s{a b} c", ".s{a .q{b} c}").unwrap(), "<body><p><s><w>a</w> <q><w>b</w></q> <w>c</w></s></p></body>");
+        // A word moved out of it goes with its markup
     assert_eq!(render(".s{a b} c", ".s{a} .q{b c}").unwrap(), "<body><p><s><w>a</w> </s><q>\n<w>b</w> <w>c</w></q></p></body>");
-    // Moving its end: refused
-    for to in [".s{a .q{b} c}", ".s{a b c}"] {
-        let error = render(".s{a b} c", to).unwrap_err();
-        assert!(error.contains("same element"), "{to}: {error}");
-    }
+
 }
 
 /// Markup around words is shown (DSL rules 10), and reads back as the same
@@ -2142,7 +2166,7 @@ fn test_markup_around_words_is_shown() {
             .as_str(),
     );
     let import = parse(&xml).unwrap();
-    assert_eq!(import.dsl, ".p .q{Ok sagði} .psname{.fname{Ari} fróði} . .corr{ nu=nú} *{A}* &{b}");
+    assert_eq!(import.dsl, ".p .q{Ok sagði} .psname{.fname{Ari} fróði} . .corr{ nu=nú} *{ A}* &{ b}");
     let doc = import.imported_document.as_ref().unwrap();
     let from_xml: Vec<String> = doc.segments.iter().filter_map(crate::importer::tei::patching::segment_dsl_token).collect();
     assert_eq!(from_xml, crate::importer::tei::patching::dsl_tokens(&import.dsl).unwrap());
@@ -2200,7 +2224,7 @@ fn test_markup_inside_words_is_shown() {
         r#"<w><me:facs><hi rend="orncp">A</hi>nnat</me:facs><me:dipl>Annat</me:dipl></w> <w><me:facs><c type="littNot">S</c>tephan</me:facs><me:dipl>Stephan</me:dipl></w> <w><me:facs><hi>ok</hi></me:facs><me:dipl>ok</me:dipl></w> <w><me:dipl>mikill<choice><sic>mikit</sic><corr>mikit</corr></choice></me:dipl></w>"#,
     );
     let import = parse(&xml).unwrap();
-    assert_eq!(import.dsl, ".p *{A}*nnat .c{S}tephan ok mikill.corr{mikit=mikit}");
+    assert_eq!(import.dsl, ".p *{A}*nnat .c{S}tephan *{ok}* mikill.corr{mikit=mikit}");
     // A correction that is the whole word (AM 178 fol): an edit goes where it is typed
     let pair = menota_body(r#"<w><me:dipl><choice><sic>hiørt</sic><corr>hiørtur</corr></choice></me:dipl></w> <w><me:dipl>ok</me:dipl></w>"#);
     assert_eq!(parse(&pair).unwrap().dsl, ".p .corr{hiørt=hiørtur} ok");

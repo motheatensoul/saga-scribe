@@ -567,6 +567,13 @@ fn changed_only(original: &str, out: &str, regions: &[std::ops::Range<usize>]) -
     for (i, gap) in gaps.iter().enumerate() {
         let found = if i == 0 { out.starts_with(gap).then_some(0) } else { out[at..].find(gap).map(|k| at + k) };
         let Some(found) = found else {
+            if std::env::var("DEBUG_LOCAL").is_ok() {
+                let head = &gap[..gap.floor_char_boundary(60.min(gap.len()))];
+                let start = out[at..].find(head).map_or(at, |k| at + k);
+                let common = gap.chars().zip(out[start..].chars()).take_while(|(a, b)| a == b).map(|(c, _)| c.len_utf8()).sum::<usize>();
+                let near = |t: &str, k: usize| t[t.floor_char_boundary(k.saturating_sub(150))..t.floor_char_boundary((k + 250).min(t.len()))].to_string();
+                eprintln!("  want: {:?}\n  got:  {:?}", near(gap, common), near(&out[start..], common));
+            }
             let shown: String = gap.chars().take(80).collect();
             return Err(format!("the XML between edits {} and {} changed: {shown:?}", i.max(1) - 1, i));
         };

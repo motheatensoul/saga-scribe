@@ -124,27 +124,25 @@ when it is done (and record it in CHANGELOG.md if users notice).
     - (done 2026-11-22, DSL rules 10: markup around tokens is shown on import, its tags
       `Structural` segments with `shown`; wrapping, unwrapping and renaming are applied
       to the tree, `apply.rs`; older projects get it in their shorthand, `rewrite_unedited`)
-      left for imported files: moving where kept markup ends (`.s{a b} c` to
-      `.s{a b c}`) and editing pairs are refused (`<cb>` and `<handShift>` are shown
+      moving where kept markup ends and adding, renaming and removing pairs work too
+      (2026-11-27; `<cb>` and `<handShift>` are shown
       since DSL rules 11, 2026-11-27; `<cb>` inside a word isn't). Corpus survey
       of where each sits (2026-11-22): around tokens `<s>` 8,419, `<seg>` 8,446, `<q>`
       5,592, `<name>` 4,981, `<rdg>` 4,505, `<persName>` 754, `<hi>` 3,201, `<surplus>`
       319; inside a word's levels `<c>` 9,180, `<hi>` 7,408, `<sic>`/`<corr>` 1,462/1,196
       (mostly in a `<choice>` there), `<seg>` 908, `<cb>` 771, `<space>` 64, `<subst>` 48;
       between tokens `<cb>` 2,676, `<handShift>` 85;
-    - (done 2026-11-22: markup inside a word is shown where it covers part of it, from
-      the level the shorthand follows) markup over a whole word (`<w><hi>ok</hi></w>`,
-      stays hidden: shown, it
-      would read as markup around the word. Text typed at its edge goes outside it, so
-      the word then shows it (`Aꝸ` reads `*{A}*ꝸ` once compiled or opened again). The
-      import dialog still counts markup inside words as unsupported;
+    - (done 2026-11-22/27: markup inside a word is shown, from the level the shorthand
+      follows; over a whole word too, `*{ok}*`, DSL rules 13) the import dialog still
+      counts markup inside words as unsupported;
     - markup inside a word that is on some levels only (`<hi>` on facs and dipl): the
       shorthand puts it on every level;
     - (done 2026-11-26/27: the word panel's **Markup** tab,
       `TreeSource::word_elements` / `set_element_attributes`; new documents are trees
-      too, `create_document`) markup added in the shorthand since the file was opened
-      gets attributes only after saving and opening again (its node isn't in the
-      file's tree the session holds);
+      too, `create_document`; markup typed since the file was opened keeps its
+      attributes by its token, `TreeSource::token_attributes`, 2026-11-27) they are
+      lost if a compile can't follow which token is which (no editor guidance), until
+      saved;
     - (done 2026-11-27: auto line numbers and pages as paragraphs are edits of the
       tree, `Profile::auto_line_numbers` / `pages_as_paragraphs`) the shorthand shows
       a typed `//` as typed until the project is opened again (then `//3`).

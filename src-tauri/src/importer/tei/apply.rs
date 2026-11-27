@@ -66,6 +66,13 @@ pub struct TreeSource {
     current: Option<Tree>,
     /// Attributes were set in the word panel: the body is no longer the file's
     attributes_set: bool,
+    /// Attributes set on elements added in the shorthand, by the token they
+    /// come from (its tracked ID): every compile writes them again
+    token_attributes: HashMap<u64, Vec<(String, String)>>,
+    /// This compile's tokens with such attributes, by token index
+    by_index: HashMap<usize, Vec<(String, String)>>,
+    /// The elements the last compile added, and the token (ID) of each
+    created_ids: HashMap<NodeId, u64>,
 }
 
 /// An element of the file as the word panel shows it: found again by its
@@ -190,6 +197,9 @@ impl TreeSource {
             replaced_nodes: HashMap::new(),
             current: None,
             attributes_set: false,
+            token_attributes: HashMap::new(),
+            by_index: HashMap::new(),
+            created_ids: HashMap::new(),
         })
     }
 
@@ -221,9 +231,24 @@ impl TreeSource {
         !self.replaced.is_empty() || self.attributes_set
     }
 
-    /// Keeps the tree a compile wrote (`None`: the file's, unedited).
-    pub fn set_current(&mut self, tree: Option<Tree>) {
+    /// Keeps the tree a compile wrote (`None`: the file's, unedited), and
+    /// which token (by tracked ID, `ids`) each element it added comes from.
+    pub fn set_current(&mut self, tree: Option<Tree>, created: HashMap<NodeId, usize>, ids: &[u64]) {
         self.current = tree;
+        self.created_ids = created.into_iter().filter_map(|(node, j)| Some((node, *ids.get(j)?))).collect();
+    }
+
+    /// Before a compile: the attributes of elements added in the shorthand,
+    /// by the index of their token in this compile (`ids`, tracked IDs).
+    pub fn prepare(&mut self, ids: &[u64]) {
+        self.by_index = if self.token_attributes.is_empty() {
+            HashMap::new()
+        } else {
+            ids.iter()
+                .enumerate()
+                .filter_map(|(j, id)| Some((j, self.token_attributes.get(id)?.clone())))
+                .collect()
+        };
     }
 
     /// The tree as the last compile wrote it.
@@ -327,10 +352,8 @@ impl TreeSource {
             .filter(|&n| tree.element(n).is_some_and(|e| e.name == name))
             .nth(ordinal)
             .ok_or_else(|| format!("There is no such <{name}>"))?;
-        if !Tree::is_older(node, self.tree.node_count()) || self.tree.element(node).is_none_or(|e| e.name != name) {
-            return Err("This element was added in the shorthand; its attributes can be set once the project is saved and opened again".into());
-        }
-        let before = self.tree.element(node).map(|e| e.attributes.clone()).unwrap_or_default();
+        let added = !Tree::is_older(node, self.tree.node_count()) || self.tree.element(node).is_none_or(|e| e.name != name);
+        let before = tree.element(node).map(|e| e.attributes.clone()).unwrap_or_default();
         let valid = |n: &str| {
             let mut chars = n.chars();
             chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
@@ -345,6 +368,19 @@ impl TreeSource {
             if was != now {
                 return Err(format!("A <{name}>'s {fixed} is set in the shorthand"));
             }
+        }
+        // Added in the shorthand: kept by its token, written by every compile
+        if added {
+            let id = *self.created_ids.get(&node).ok_or("This element can't be found again; save the project and open it again to set its attributes")?;
+            self.token_attributes.insert(id, attributes.to_vec());
+            let current = self.current.as_mut().ok_or("no tree")?;
+            for a in before.iter().filter(|a| !attributes.iter().any(|(n, _)| *n == a.name)) {
+                current.set_attribute(node, &a.name, None)?;
+            }
+            for (n, v) in attributes {
+                current.set_attribute(node, n, Some(v))?;
+            }
+            return Ok(());
         }
         let names: HashSet<&str> = attributes.iter().map(|(n, _)| n.as_str()).collect();
         for tree in std::iter::once(&mut self.tree).chain(self.current.as_mut()) {
@@ -452,6 +488,9 @@ struct Applier<'a> {
     paragraph: Option<NodeId>,
     /// Markup renamed: the element now in its place
     renamed: HashMap<NodeId, NodeId>,
+    /// Halves of pairs added: their `<choice>`, and for the first the
+    /// second's name
+    pair_halves: HashMap<NodeId, (NodeId, Option<&'static str>)>,
 }
 
 impl Applier<'_> {
@@ -574,19 +613,29 @@ impl Applier<'_> {
     /// since its start; kept markup must end here in the file too. Returns
     /// the anchor after it.
     fn close(&mut self, anchor: Anchor) -> Option<Anchor> {
-        let element = self.open.pop()?;
+        let mut element = self.open.pop()?;
         if self.wraps.last() == Some(&element) {
             let last = self.anchor_node(anchor)?;
             self.absorb(last)?;
             self.wraps.pop();
+            // A pair's second half: its `<choice>` ends with it
+            if let Some(&(choice, None)) = self.pair_halves.get(&element) {
+                if self.open.last() == Some(&choice) {
+                    self.open.pop();
+                    self.wraps.pop();
+                    element = choice;
+                }
+            }
         } else {
             let last = self.anchor_node(anchor)?;
             if last != element && !self.is_inside(last, element) {
                 return None;
             }
+            // If it ended earlier than in the file, a token after its end
+            // still in it goes out of it, with what follows (`leave_closed`)
             self.closed.insert(element);
         }
-        if !self.wraps.is_empty() {
+        if !self.open.is_empty() {
             self.absorb(element)?;
         }
         Some(Anchor::After(element))
@@ -601,9 +650,10 @@ impl Applier<'_> {
                 self.paragraph = None;
             }
         }
-        // Outermost first: what goes into nested markup goes into its outer
-        for i in 0..self.wraps.len() {
-            let wrap = self.wraps[i];
+        // Outermost first: what goes into nested markup goes into its outer;
+        // into kept markup too, which then ends later than in the file
+        for i in 0..self.open.len() {
+            let wrap = self.open[i];
             if last != wrap && !self.is_inside(last, wrap) {
                 self.absorb_into(wrap, last)?;
             }
@@ -660,20 +710,37 @@ impl Applier<'_> {
         None
     }
 
-    /// Whether segment `id` is in kept markup whose end has passed.
-    fn in_closed(&self, id: usize) -> bool {
+    /// Segment `id` in kept markup whose end the shorthand has passed (it
+    /// ends earlier than in the file): it goes out of it, after it, with
+    /// everything that follows it there.
+    fn leave_closed(&mut self, id: usize) -> Option<()> {
         let node = match self.source.places.get(id).cloned().flatten() {
             Some(Place::Node(node) | Place::Open(node) | Place::Close(node) | Place::Text { node, .. }) => node,
-            None => return false,
+            None => return Some(()),
         };
-        let mut current = self.tree.parent(node);
-        while let Some(parent) = current {
-            if self.closed.contains(&parent) {
-                return true;
+        loop {
+            // The outermost closed markup it is in, and its child holding it
+            let mut top = node;
+            let mut closed = None;
+            let mut current = self.tree.parent(node);
+            let mut child = node;
+            while let Some(parent) = current {
+                if self.closed.contains(&parent) {
+                    closed = Some(parent);
+                    top = child;
+                }
+                child = parent;
+                current = self.tree.parent(parent);
             }
-            current = self.tree.parent(parent);
+            let Some(element) = closed else { return Some(()) };
+            let from = self.tree.index_in_parent(top)?;
+            let rest: Vec<NodeId> = self.tree.children(element)[from..].to_vec();
+            let parent = self.tree.parent(element)?;
+            let at = self.tree.index_in_parent(element)? + 1;
+            for (i, moved) in rest.into_iter().enumerate() {
+                self.tree.move_to(moved, parent, at + i);
+            }
         }
-        false
     }
 
     fn is_inside(&self, node: NodeId, ancestor: NodeId) -> bool {
@@ -691,7 +758,20 @@ impl Applier<'_> {
     fn anchor_node(&mut self, anchor: Anchor) -> Option<NodeId> {
         match anchor {
             Anchor::After(node) | Anchor::Start(node) => Some(node),
-            Anchor::Segment(id) => self.node(id),
+            // Without splitting text for nothing: its text node will do
+            Anchor::Segment(id) => match self.source.places.get(id)?.clone()? {
+                Place::Text { node, .. } => Some(*self.pieces.get(&node).and_then(|p| p.last()).map(|(_, n)| n).unwrap_or(&node)),
+                Place::Node(node) | Place::Open(node) | Place::Close(node) => Some(*self.renamed.get(&node).unwrap_or(&node)),
+            },
+        }
+    }
+
+    /// Sets the attributes set in the word panel on element `node`, added
+    /// for token `token`.
+    fn adorn(&mut self, node: NodeId, token: Option<usize>) {
+        let Some(attributes) = token.and_then(|j| self.source.by_index.get(&j)) else { return };
+        for (name, value) in attributes {
+            let _ = self.tree.set_attribute(node, name, Some(value));
         }
     }
 
@@ -709,6 +789,16 @@ impl Applier<'_> {
     /// Puts an element's content in a new element `markup` (shorthand such
     /// as `.seg{`) stands for, with the old element's attributes.
     fn rename(&mut self, element: NodeId, markup: &str) -> Option<()> {
+        // A pair: its halves take the new pair's names
+        if let Some((first, second)) = pair_names(markup) {
+            let halves: Vec<NodeId> = self.tree.children(element).iter().copied().filter(|&c| self.tree.element(c).is_some()).collect();
+            if let [a, b] = halves.as_slice() {
+                let (a, b) = (*a, *b);
+                self.rename_to(a, first)?;
+                self.rename_to(b, second)?;
+            }
+            return Some(());
+        }
         let new = markup_element(markup)?;
         let old = self.tree.element(element)?.clone();
         if old.name == new.name && new.attributes.is_empty() {
@@ -732,6 +822,34 @@ impl Applier<'_> {
         self.renamed.insert(element, node);
         self.shown.insert(node);
         Some(())
+    }
+
+    /// Puts an element's content and attributes in an element named `name`.
+    fn rename_to(&mut self, element: NodeId, name: &str) -> Option<()> {
+        let old = self.tree.element(element)?.clone();
+        if local(&old.name) == name {
+            return Some(());
+        }
+        let parent = self.tree.parent(element)?;
+        let index = self.tree.index_in_parent(element)?;
+        let prefix = old.name.split_once(':').map(|(p, _)| format!("{p}:")).unwrap_or_default();
+        let replacement = Element { name: format!("{prefix}{name}"), namespaces: Vec::new(), attributes: old.attributes };
+        let node = self.tree.insert(parent, index, NodeKind::Element(Box::new(replacement)));
+        for (i, child) in self.tree.children(element).to_vec().into_iter().enumerate() {
+            self.tree.move_to(child, node, i);
+        }
+        self.tree.remove(element);
+        self.renamed.insert(element, node);
+        Some(())
+    }
+}
+
+/// The halves of a pair whose start is `opener` (`.corr{`: `sic`, `corr`).
+fn pair_names(opener: &str) -> Option<(&'static str, &'static str)> {
+    match opener {
+        ".corr{" => Some(("sic", "corr")),
+        ".trans{" => Some(("orig", "reg")),
+        _ => None,
     }
 }
 
@@ -796,6 +914,7 @@ pub(super) fn apply_to_tree(
         closed: HashSet::new(),
         paragraph: None,
         renamed: HashMap::new(),
+        pair_halves: HashMap::new(),
     };
     let mut anchor: Option<Anchor> = None;
     let mut anchor_segment: Option<usize> = None;
@@ -820,6 +939,7 @@ pub(super) fn apply_to_tree(
                 let element = Element { name: "p".into(), namespaces: Vec::new(), attributes: Vec::new() };
                 let node = applier.tree.insert(parent, index, NodeKind::Element(Box::new(element)));
                 applier.created.insert(node, *token);
+                applier.adorn(node, *token);
                 applier.paragraph = Some(node);
                 anchor = Some(Anchor::Start(node));
             }
@@ -848,11 +968,46 @@ pub(super) fn apply_to_tree(
                 }
                 anchor = Some(Anchor::Start(new));
             }
+            // A pair added: its `<choice>` with the first half open in it
+            PatchOperation::Insert { dsl, token, .. } if pair_names(dsl).is_some() => {
+                let (first, second) = pair_names(dsl)?;
+                let (parent, index) = applier.position(anchor?)?;
+                let element = |name: &str| Element { name: name.into(), namespaces: Vec::new(), attributes: Vec::new() };
+                let choice = applier.tree.insert(parent, index, NodeKind::Element(Box::new(element("choice"))));
+                let half = applier.tree.insert(choice, 0, NodeKind::Element(Box::new(element(first))));
+                applier.created.insert(choice, *token);
+                applier.created.insert(half, *token);
+                applier.adorn(choice, *token);
+                applier.wraps.extend([choice, half]);
+                applier.open.extend([choice, half]);
+                applier.pair_halves.insert(half, (choice, Some(second)));
+                anchor = Some(Anchor::Start(half));
+            }
+            // Its `=`: the first half ends, the second starts
+            PatchOperation::Insert { dsl, token, .. }
+                if dsl == "=" && applier.open.last().is_some_and(|h| applier.pair_halves.get(h).is_some_and(|(_, s)| s.is_some())) =>
+            {
+                let half = *applier.open.last()?;
+                let last = applier.anchor_node(anchor?)?;
+                applier.absorb(last)?;
+                applier.open.pop();
+                applier.wraps.pop();
+                let (choice, second) = applier.pair_halves.get(&half).copied()?;
+                let element = Element { name: second?.into(), namespaces: Vec::new(), attributes: Vec::new() };
+                let at = applier.tree.children(choice).len();
+                let node = applier.tree.insert(choice, at, NodeKind::Element(Box::new(element)));
+                applier.created.insert(node, *token);
+                applier.wraps.push(node);
+                applier.open.push(node);
+                applier.pair_halves.insert(node, (choice, None));
+                anchor = Some(Anchor::Start(node));
+            }
             PatchOperation::Insert { dsl, token, .. } if markup_token(dsl) == Some(MarkupPart::Open) => {
                 let (parent, index) = applier.position(anchor?)?;
                 let element = markup_element(dsl)?;
                 let node = applier.tree.insert(parent, index, NodeKind::Element(Box::new(element)));
                 applier.created.insert(node, *token);
+                applier.adorn(node, *token);
                 applier.wraps.push(node);
                 applier.open.push(node);
                 anchor = Some(Anchor::Start(node));
@@ -886,6 +1041,9 @@ pub(super) fn apply_to_tree(
                     let xml = inserted_xml(dsl, *moved, segments, originals, compiler);
                     let roots = applier.insert_xml(&xml, parent, index + 1, *token)?;
                     applier.mark_moved(&roots, *moved);
+                    if let Some(&first) = roots.iter().find(|&&r| applier.tree.element(r).is_some()) {
+                        applier.adorn(first, *token);
+                    }
                     // Automatic line numbers: one more than the line before
                     if compiler.config().auto_line_numbers && matches!(kind, TokenKind::LineBreak(None)) {
                         if let Some(&lb) = roots.iter().find(|&&r| applier.tree.element(r).is_some_and(|e| local(&e.name) == "lb")) {
@@ -923,9 +1081,9 @@ pub(super) fn apply_to_tree(
                 if matches!(segment, Segment::Paragraph { .. } | Segment::Structural { shown: None, .. }) {
                     applier.paragraph = None;
                 }
-                if part.is_none() && !applier.closed.is_empty() && applier.in_closed(*segment_id) {
-                    // In kept markup whose end the shorthand has passed
-                    return None;
+                // A token the shorthand has after kept markup's end
+                if part.is_none() && !applier.closed.is_empty() && super::patching::segment_token_text(segment).is_some() {
+                    applier.leave_closed(*segment_id)?;
                 }
                 anchor = Some(match patch {
                     // Markup: kept or renamed (its start), removed, or ended
@@ -935,7 +1093,7 @@ pub(super) fn apply_to_tree(
                             applier.rename(node, new_dsl)?;
                         }
                         let node = applier.node(*segment_id)?;
-                        if !applier.wraps.is_empty() {
+                        if !applier.open.is_empty() {
                             applier.absorb(node)?;
                         }
                         applier.open.push(node);
@@ -949,6 +1107,13 @@ pub(super) fn apply_to_tree(
                     PatchOperation::Delete { .. } if part == Some(MarkupPart::Open) => {
                         let node = applier.node(*segment_id)?;
                         applier.shown.remove(&node);
+                        // A pair: its halves go too, their content stays
+                        if matches!(segment, Segment::Structural { shown: Some(s), .. } if pair_names(s).is_some()) {
+                            let halves: Vec<NodeId> = applier.tree.children(node).iter().copied().filter(|&c| applier.tree.element(c).is_some()).collect();
+                            for half in halves {
+                                applier.unwrap(half)?;
+                            }
+                        }
                         applier.unwrap(node)?
                     }
                     // A pair's `=`, kept; or the end of markup removed (its
@@ -1047,7 +1212,7 @@ pub(super) fn apply_to_tree(
                     }
                     _ => Anchor::Segment(*segment_id),
                 });
-                if !applier.wraps.is_empty() || applier.paragraph.is_some() {
+                if !applier.open.is_empty() || applier.paragraph.is_some() {
                     let last = applier.anchor_node(anchor?)?;
                     applier.absorb(last)?;
                 }
@@ -1117,5 +1282,6 @@ pub(super) fn apply_to_tree(
             }
         }
     }
-    Some(RenderedBody { xml: written[start..end].to_string(), edited_words, words, stale: applier.stale, tree: Some(applier.tree) })
+    let created: HashMap<NodeId, usize> = applier.created.iter().filter_map(|(&node, &token)| Some((node, token?))).collect();
+    Some(RenderedBody { xml: written[start..end].to_string(), edited_words, words, stale: applier.stale, tree: Some(applier.tree), created })
 }

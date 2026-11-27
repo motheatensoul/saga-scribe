@@ -706,6 +706,9 @@ pub fn rewrite_unedited(
             let before = if dsl[..at].ends_with(char::is_whitespace) || at == 0 { "" } else { "\n" };
             let after = if dsl[at..].starts_with(char::is_whitespace) { "" } else { " " };
             format!("{before}{shown}{after}")
+        } else if opens && super::extraction::spaced_opener(&shown) {
+            let before = if joins(dsl[..at].chars().next_back()) { " " } else { "" };
+            format!("{before}{shown} ")
         } else if opens && joins(dsl[..at].chars().next_back()) {
             format!(" {shown}")
         } else if !opens && dsl[at..].chars().next().is_some_and(|c| !c.is_whitespace() && c != '}' && c != '=') {
@@ -1186,7 +1189,7 @@ pub fn dsl_tokens(dsl: &str) -> Result<Vec<String>, String> {
 }
 
 /// The DSL text a segment contributes to the token stream, if any.
-fn segment_token_text(seg: &Segment) -> Option<String> {
+pub(super) fn segment_token_text(seg: &Segment) -> Option<String> {
     match seg {
         Segment::Word { dsl_content, .. } | Segment::Punctuation { dsl_content, .. } => {
             (!dsl_content.trim().is_empty()).then(|| dsl_content.clone())
@@ -1377,7 +1380,7 @@ pub fn render_body(
             // a `<w` in a comment
             if let Some(tree) = tree {
                 let words = tree.word_offsets().into_iter().map(|w| (w, Origin::Source(w))).collect();
-                return Ok(RenderedBody { xml: body.to_string(), edited_words: Vec::new(), words, stale: Vec::new(), tree: None });
+                return Ok(RenderedBody { xml: body.to_string(), edited_words: Vec::new(), words, stale: Vec::new(), tree: None, created: HashMap::new() });
             }
             let mut out = Output::with_capacity(body.len());
             out.push(body, Origin::Source(0));
@@ -1436,6 +1439,8 @@ pub struct RenderedBody {
     pub stale: Vec<(usize, Vec<String>)>,
     /// The file's tree with the edits applied, when they were applied to it
     pub tree: Option<crate::document::Tree>,
+    /// The nodes the edits added to it, by the edited token each comes from
+    pub created: HashMap<crate::document::NodeId, usize>,
 }
 
 impl RenderedBody {
@@ -1615,24 +1620,20 @@ fn separate_markup_edits(segments: &[Segment], patches: &[PatchOperation]) -> Ve
 /// Describes the first edit that can't be made.
 fn check_markup_edits(segments: &[Segment], patches: &[PatchOperation]) -> Result<bool, String> {
     let by_id: HashMap<usize, &Segment> = segments.iter().map(|s| (s.id(), s)).collect();
-    #[derive(PartialEq)]
+    #[derive(PartialEq, Clone, Copy)]
     enum Open {
         Kept,
         Removed,
         Added,
     }
-    let mut stack: Vec<Open> = Vec::new();
+    // Each open markup, and whether it is a pair
+    let mut stack: Vec<(Open, bool)> = Vec::new();
     let mut edited = false;
     let mismatch = || "Markup around words doesn't close where it was opened: each start (such as .q{) needs its end (}) around the same words".to_string();
     for patch in patches {
-        let (part, kind, renamed) = match patch {
+        let (part, kind, pair) = match patch {
             PatchOperation::Insert { dsl, .. } => match markup_token(dsl) {
-                Some(part) => {
-                    if is_pair_opener(dsl) {
-                        return Err(format!("{dsl}…}} can't be added to an imported file yet"));
-                    }
-                    (part, Open::Added, false)
-                }
+                Some(part) => (part, Open::Added, is_pair_opener(dsl)),
                 None => continue,
             },
             PatchOperation::Keep { segment_id } | PatchOperation::Delete { segment_id } | PatchOperation::Modify { segment_id, .. } => {
@@ -1643,25 +1644,38 @@ fn check_markup_edits(segments: &[Segment], patches: &[PatchOperation]) -> Resul
                     _ => "",
                 };
                 let deleted = matches!(patch, PatchOperation::Delete { .. });
-                let renamed = matches!(patch, PatchOperation::Modify { new_dsl, .. } if new_dsl != shown);
-                let pair = is_pair_opener(shown) || part == MarkupPart::Middle;
-                if (deleted || renamed) && (pair || (part == MarkupPart::Open && matches!(patch, PatchOperation::Modify { new_dsl, .. } if is_pair_opener(new_dsl)))) {
-                    return Err("A pair (.corr{…=…}, .trans{…=…}) can't be changed in an imported file yet".to_string());
+                if let PatchOperation::Modify { new_dsl, .. } = patch {
+                    // A pair stays a pair (`.corr{` to `.trans{`), other markup other markup
+                    if part == MarkupPart::Open && is_pair_opener(shown) != is_pair_opener(new_dsl) {
+                        return Err("A pair (.corr{…=…}, .trans{…=…}) can be renamed only to another pair".to_string());
+                    }
+                    edited |= new_dsl != shown;
                 }
-                (part, if deleted { Open::Removed } else { Open::Kept }, renamed)
+                (part, if deleted { Open::Removed } else { Open::Kept }, is_pair_opener(shown))
             }
         };
-        edited |= kind != Open::Kept || renamed;
-        // Ends are alike: each closes the innermost markup open in the
-        // edited shorthand (removed ones aren't in it)
-        match (part, kind) {
-            (MarkupPart::Open, Open::Removed) | (MarkupPart::Close, Open::Removed) | (MarkupPart::Middle, _) => {}
-            (MarkupPart::Open, kind) => stack.push(kind),
-            (MarkupPart::Close, _) => {
-                if stack.pop().is_none() {
-                    return Err(mismatch());
+        edited |= kind != Open::Kept;
+        let removed = kind == Open::Removed;
+        match part {
+            MarkupPart::Open => stack.push((kind, pair)),
+            // A pair's `=` goes or stays with it
+            MarkupPart::Middle => {
+                let fits = stack.iter().rev().find(|(k, _)| (*k == Open::Removed) == removed).is_some_and(|(_, pair)| *pair);
+                if !fits {
+                    return Err("A pair's = goes or stays with its .corr{ or .trans{".to_string());
                 }
             }
+            // Ends are alike: each closes the innermost markup open in the
+            // edited shorthand; removed ones, the innermost removed one
+            MarkupPart::Close => match stack.iter().rposition(|(k, _)| (*k == Open::Removed) == removed) {
+                Some(at) => {
+                    stack.remove(at);
+                }
+                // The end of kept markup taken out: it ends elsewhere, at an
+                // end added there
+                None if removed => {}
+                None => return Err(mismatch()),
+            },
         }
     }
     if !stack.is_empty() {
@@ -1871,7 +1885,7 @@ impl Output {
                 (at, origin)
             })
             .collect();
-        RenderedBody { xml: self.xml, edited_words, words, stale: Vec::new(), tree: None }
+        RenderedBody { xml: self.xml, edited_words, words, stale: Vec::new(), tree: None, created: HashMap::new() }
     }
 }
 

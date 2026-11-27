@@ -160,7 +160,10 @@ ${abc}       Surplus text (<surplus>)
 Where the markup stands on its own between words, it goes around the words it holds,
 each still a word of its own (`.psname{.fname{Ari} fróði}` is a `<persName>` around two
 `<w>`). Attached to letters, it is inside the word (`*{A}*nnat` is `<w><hi>A</hi>nnat</w>`,
-on each level of a MENOTA word). Markup around words can't contain a paragraph break
+on each level of a MENOTA word). Markup that belongs to a word's text (`*{…}*`, `&{…}`,
+`${…}`, `.c{…}`, `.damage{…}`, `.subst{…}` and the pairs) is inside the word also on its
+own, as long as there is no space in it: `*{ok}*` is `<w><hi>ok</hi></w>`, `*{ ok}*` is
+`<hi><w>ok</w></hi>`. Markup around words can't contain a paragraph break
 (`.p`). For imported files, see [TEI-XML](#tei-xml).
 
 ### Abbreviations
@@ -600,8 +603,9 @@ element; deleting its start and end takes the element away and leaves its words;
 its name (`.q{` to `.seg{`) puts the words in an element of the new name, with the old one's
 attributes. Markup has to start and end in the same element of the file: around words of
 one sentence, say, not from the middle of one sentence into the next. Moving where
-existing markup ends, and changing a pair (`.corr{…=…}`), isn't possible in the shorthand
-yet. Projects imported before have the markup put into their shorthand when opened.
+existing markup ends takes the words after it in, or puts them out after it. A pair
+(`.corr{…=…}`) can be added around words, renamed (`.corr{` to `.trans{`) or removed (its
+start, `=` and end together; the words of both halves stay). Projects imported before have the markup put into their shorthand when opened.
 Inside a word, `<hi>`, `<c>`, `<seg>`, `<surplus>`, `<damage>` and a `<sic>`/`<corr>` pair
 are shown where they stand (`*{A}*nnat`, `.c{S}tephan`, `mikill.corr{mikit=mikit}`) when they
 cover part of the word; markup over the whole word stays hidden there (it would read as
@@ -643,8 +647,8 @@ saved or exported (so are a new document's, once its file is made):
   attributes: change, remove or add them, then **Apply** sets them in the file. Clicking a
   line number or page number in the rendered text opens this tab for the word after the
   break. Attributes the shorthand writes, such as a break's number (`n`), are set in the
-  shorthand and shown read-only. Markup added in the shorthand gets its attributes once
-  the project has been saved and opened again.
+  shorthand and shown read-only. Markup typed in the shorthand can be given attributes
+  right away; they stay with it as you edit around it.
 - A paragraph can be split by adding `.p` and joined by removing one. A split has to fall
   between elements such as sentences (`<s>`), not inside one.
 - If the shorthand contains an error, the document is not saved or exported, rather than

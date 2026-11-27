@@ -226,7 +226,10 @@ fn known_decisions<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<
 /// - 12: a pair without spaces in it (`.corr{a=b}`) is inside a word, so a
 ///   correction that is a whole word's level is shown; a pair around words
 ///   has a space after its start (`.corr{ a=b}`).
-pub const DSL_RULES: u32 = 12;
+/// - 13: likewise highlighting, characters, segments, surplus text, damage
+///   and substitutions (`*{ok}*` is inside its word, `*{ ok}*` around it), so
+///   such markup over a whole word is shown.
+pub const DSL_RULES: u32 = 13;
 
 impl ImportedDocument {
     /// Drops the copies of the file's XML that words and punctuation hold

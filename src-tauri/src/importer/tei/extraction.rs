@@ -151,6 +151,13 @@ fn is_entity_punctuation(dsl: &str) -> bool {
 /// - Structural elements are skipped (not represented in DSL)
 ///
 /// `dsl_rules` is the document's [`DSL_RULES`](super::segments::DSL_RULES) version.
+/// Whether markup's start is followed by a space around words: a pair, or
+/// markup of a word's text, is inside a word without one (`.corr{a=b}`,
+/// `*{ok}*`, rules 12 and 13).
+pub(crate) fn spaced_opener(shown: &str) -> bool {
+    matches!(shown, ".corr{" | ".trans{" | "*{" | "&{" | "${" | ".c{" | ".damage{" | ".subst{")
+}
+
 pub fn segments_to_dsl(segments: &[Segment], dsl_rules: u32) -> String {
     write_segments(segments, dsl_rules, None)
 }
@@ -342,14 +349,13 @@ fn write_segments(segments: &[Segment], dsl_rules: u32, mut places: Option<&mut 
                     } else if !dsl.is_empty() && !dsl.ends_with(|c: char| c.is_whitespace() || c == '{' || c == '=') {
                         dsl.push(' ');
                     }
-                    // A pair around words has a space in it: without, it would
-                    // be a correction inside a word (`.corr{a=b}`)
-                    pending_space = matches!(shown.as_str(), ".corr{" | ".trans{");
+                    pending_space = false;
                 } else {
                     if last_was_linebreak {
                         // A page number runs to the next space
                         dsl.push('\n');
-                    } else {
+                    } else if !dsl.trim_end_matches([' ', '\t']).ends_with('{') {
+                        // (Not the space a start keeps, below)
                         dsl.truncate(dsl.trim_end_matches([' ', '\t']).len());
                     }
                     // After its end, the next word is set apart
@@ -359,6 +365,12 @@ fn write_segments(segments: &[Segment], dsl_rules: u32, mut places: Option<&mut 
                 let at = dsl.len();
                 dsl.push_str(shown);
                 place(&mut places, segment.id(), at..dsl.len());
+                // A pair or markup of a word's text around words has a space
+                // in it: without, it would be inside a word (`.corr{a=b}`,
+                // `*{ok}*`, rules 12 and 13)
+                if spaced_opener(shown) {
+                    dsl.push(' ');
+                }
                 last_was_linebreak = false;
                 previous = None;
             }
